@@ -139,6 +139,22 @@ replace_once(
     '    InitializeProtocol();\n',
 )
 
+# The basic release skips upstream cloud version checks, so validate a pending
+# local OTA image after the application has initialized its selected protocol.
+replace_once(
+    UPSTREAM / "main" / "application.cc",
+    '    // Initialize the protocol\n'
+    '    InitializeProtocol();\n\n'
+    '    // Signal completion to main loop\n',
+    '    // Initialize the protocol\n'
+    '    InitializeProtocol();\n\n'
+    '    // Confirm the pending OTA image only after core startup succeeds.\n'
+    '    if (last_error_message_.empty()) {\n'
+    '        ota_->MarkCurrentVersionValid();\n'
+    '    }\n\n'
+    '    // Signal completion to main loop\n',
+)
+
 # Show the ChatAI TPIOS wordmark briefly before the ready status.
 replace_once(
     UPSTREAM / "main" / "application.cc",
