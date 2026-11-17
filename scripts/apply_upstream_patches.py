@@ -143,10 +143,10 @@ replace_once(
 # local OTA image after the application has initialized its selected protocol.
 replace_once(
     UPSTREAM / "main" / "application.cc",
-    '    // Initialize the protocol\n'
+    '    // Start Gemini Live without contacting XiaoZhi cloud services.\n'
     '    InitializeProtocol();\n\n'
     '    // Signal completion to main loop\n',
-    '    // Initialize the protocol\n'
+    '    // Start Gemini Live without contacting XiaoZhi cloud services.\n'
     '    InitializeProtocol();\n\n'
     '    // Confirm the pending OTA image only after core startup succeeds.\n'
     '    if (last_error_message_.empty()) {\n'
