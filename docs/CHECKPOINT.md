@@ -43,7 +43,7 @@ These are user-reported hardware results. Do not treat them as proof that every 
 - Verify the 30-voice selector and language setting against the selected Gemini Live model.
 - Verify microphone gain adjustment (0–20 dB) does not introduce unacceptable clipping or noise.
 - OTA has **not** yet been tested on hardware. The OTA file is reserved for testing future firmware versions after the current USB-installed firmware is known-good.
-- Verify OTA success, reboot into the new slot, persistence of Wi-Fi/Gemini settings, and rollback/recovery on the actual board.
+- Verify OTA settings persistence and rollback/recovery on the actual board. OTA installation and reboot are now user-confirmed successful.
 - Verify OLED, microphone capture quality, speaker output, buttons, and volume independently.
 
 ## USB-FLASH vs OTA
@@ -127,3 +127,46 @@ The repository HEAD and fixed source file were re-fetched from `main`. Do not cl
 - GitHub Actions is manual-only (`workflow_dispatch`). Never add push/PR triggers.
 - Never run Actions, builds, flashing, or hardware operations without the user's explicit permission.
 - Report hardware behavior as verified only when the user or an actual test confirms it.
+
+
+## Hardware checkpoint update — OTA success and two Web Admin issues (2026-11-18 ICT)
+
+### Confirmed successful on the actual ESP32-S3
+- [x] User installed the application-only firmware image through Web Admin OTA.
+- [x] OTA installation completed successfully and the ESP32 restarted into the updated firmware.
+- [x] OTA is now hardware-confirmed for installation/reboot. Do not describe it as untested.
+- [ ] Settings persistence across this OTA has not yet been verified individually.
+- [ ] Rollback/recovery has not yet been hardware-tested.
+
+### Newly reported issues requiring investigation and fixes
+1. **Web Admin save reports failure.**
+   - User reports that after changing settings in Web Admin and pressing Save, the UI reports that saving failed.
+   - Source inspection: the page POSTs the full configuration to `/api/config`; the server validates the JSON and checks the request Origin against `http://<current DHCP IP>`.
+   - The exact runtime HTTP status/error has not yet been captured, so do not assume a single cause. Diagnose the actual response and validate each setting by GET-after-POST and reboot persistence.
+   - Source inspection also found microphone gain is applied to the audio codec but is not currently written to NVS, while the GET handler reads it from NVS. Fix this as part of reliable save/persistence.
+   - Preserve the API key secrecy and blank-key-means-keep-existing behavior.
+
+2. **LAN IP changes after OTA/reconnect.**
+   - User observed the device changing from `192.168.1.110` to `192.168.1.115` after OTA.
+   - This is consistent with DHCP assigning a different lease after Wi-Fi reconnect/reboot; it is not evidence that OTA erased settings.
+   - User wants a stable local address that does not require checking the router for a new IP.
+   - Preferred solution to investigate: advertise a stable mDNS hostname (for example `http://chatai-tpios.local`) after station Wi-Fi connects, and keep the DHCP IP visible as a fallback/diagnostic. Verify ESP-IDF mDNS component availability and the board's network event lifecycle before editing.
+   - A fixed DHCP reservation/static IP is a separate alternative; do not silently hard-code `192.168.1.110`, because that address may be occupied or differ on another router.
+   - Ensure same-origin validation accepts the chosen local hostname safely, without opening the write APIs to arbitrary cross-origin requests.
+
+### Current source findings relevant to the fixes
+- `firmware/board/chatai-tpios/web_admin_server.cc`: `IsSameOrigin()` currently accepts only an Origin exactly equal to `http://` plus the current DHCP IP. This must be reconciled with a stable `.local` hostname if mDNS is added.
+- `ConfigPostHandler()` persists Gemini fields, wake phrase, and speaker volume; microphone gain currently calls `SetInputGain()` but is not saved to NVS.
+- `ConfigGetHandler()` reads microphone gain from NVS, so the UI can appear to revert that setting after reload.
+- `firmware/board/chatai-tpios/web_admin.html`: Save posts JSON to `/api/config`, displays the server's `error` on non-2xx responses, then reloads the form after a successful response. Capture the actual HTTP error from the device before attributing the reported failure to a specific validation rule.
+- No firmware source changes for these two issues have been made yet.
+
+### Build duration
+- User reports manual GitHub Actions firmware builds take approximately 6–7 minutes.
+- This is expected to include upstream source preparation, ESP-IDF/toolchain setup, CMake configuration, compilation, and artifact packaging. Do not optimize or remove required build steps without measured evidence.
+
+### Next work order
+1. Keep the OTA hardware success recorded as confirmed.
+2. Trace and fix Web Admin save end-to-end: validation, NVS writes, GET-after-save values, and reboot persistence.
+3. Add stable mDNS hostname support with safe same-origin handling; retain current IP as fallback.
+4. Run static/source checks. Do not trigger GitHub Actions or perform OTA/hardware operations without explicit user permission.
