@@ -125,8 +125,43 @@
         <p class="hint">API key được lưu trong NVS và không hiển thị lại. Không chia sẻ key cho người khác.</p>
       </div>
       <div class="field">
+        <label for="botName">Tên trợ lý</label>
+        <input id="botName" maxlength="48" value="ChatAI" placeholder="ChatAI">
+      </div>
+      <div class="field">
         <label for="model">Model Live</label>
         <input id="model" maxlength="96" value="gemini-3.8-live">
+      </div>
+      <div class="field">
+        <label for="voiceName">Giọng nói Gemini Live</label>
+        <select id="voiceName">
+          <option>Zephyr</option><option>Kore</option><option>Orus</option><option>Autonoe</option>
+          <option>Umbriel</option><option>Erinome</option><option>Laomedeia</option><option>Schedar</option>
+          <option>Achird</option><option>Sadachbia</option><option selected>Puck</option><option>Fenrir</option>
+          <option>Aoede</option><option>Enceladus</option><option>Algieba</option><option>Algenib</option>
+          <option>Achernar</option><option>Gacrux</option><option>Zubenelgenubi</option><option>Sadaltager</option>
+          <option>Charon</option><option>Leda</option><option>Callirrhoe</option><option>Iapetus</option>
+          <option>Despina</option><option>Rasalgethi</option><option>Alnilam</option><option>Pulcherrima</option>
+          <option>Vindemiatrix</option><option>Sulafat</option>
+        </select>
+        <p class="hint">30 giọng dựng sẵn của Gemini Live. Giọng mới áp dụng ở phiên kết nối tiếp theo.</p>
+      </div>
+      <div class="field">
+        <label for="languageCode">Ngôn ngữ giọng phản hồi</label>
+        <select id="languageCode">
+          <option value="vi-VN" selected>Tiếng Việt</option><option value="en-US">English (US)</option>
+          <option value="en-IN">English (India)</option><option value="hi-IN">Hindi</option>
+          <option value="ja-JP">日本語</option><option value="ko-KR">한국어</option>
+          <option value="th-TH">ไทย</option><option value="id-ID">Bahasa Indonesia</option>
+          <option value="fr-FR">Français</option><option value="de-DE">Deutsch</option>
+          <option value="es-US">Español (US)</option><option value="it-IT">Italiano</option>
+          <option value="nl-NL">Nederlands</option><option value="pt-BR">Português (Brasil)</option>
+          <option value="ru-RU">Русский</option><option value="ar-EG">العربية</option>
+          <option value="bn-BD">বাংলা</option><option value="mr-IN">मराठी</option>
+          <option value="pl-PL">Polski</option><option value="ro-RO">Română</option>
+          <option value="ta-IN">தமிழ்</option><option value="te-IN">తెలుగు</option>
+          <option value="tr-TR">Türkçe</option><option value="uk-UA">Українська</option>
+        </select>
       </div>
       <div class="field">
         <label for="systemPrompt">System Prompt</label>
@@ -145,18 +180,21 @@
         <div class="range-header"><span>Âm lượng loa</span><span class="range-value" id="volumeValue">70%</span></div>
         <input type="range" min="0" max="100" value="70" id="volume">
       </div>
-      <div class="toggle-row">
-        <div><div class="toggle-label">Độ nhạy micro</div><div class="toggle-sub">Chưa có điều khiển gain trong driver hiện tại</div></div>
-        <span class="range-value">Mặc định</span>
+      <div class="range-row">
+        <div class="range-header"><span>Gain micro (phần mềm)</span><span class="range-value" id="micGainValue">0 dB</span></div>
+        <input type="range" min="0" max="20" step="1" value="0" id="micGain">
+        <p class="hint">Tăng mức tín hiệu micro từ 0 đến +20 dB; mức cao có thể làm tăng nhiễu và méo tiếng.</p>
       </div>
     </section>
 
     <section class="section hidden" id="featuresSection">
       <div class="section-title">⚙️ Tính năng</div>
-      <div class="toggle-row">
-        <div><div class="toggle-label">Wake Word</div><div class="toggle-sub">Chưa được bật trong cấu hình firmware ChatAI hiện tại</div></div>
-        <label class="toggle"><input type="checkbox" disabled><span class="slider"></span></label>
+      <div class="field">
+        <label for="wakeWord">Tên đánh thức bằng giọng nói</label>
+        <input id="wakeWord" maxlength="32" value="Hey ChatAI" placeholder="Hey ChatAI">
+        <p class="hint">Dùng chữ cái tiếng Anh và dấu cách, ví dụ “Hey ChatAI”. Có thể đổi tên và lưu; bộ MultiNet sẽ nhận diện cụm từ gần cách phát âm này.</p>
       </div>
+      <div class="info">Có thể đánh thức bằng giọng nói hoặc nhấn BOOT. Giữ BOOT khoảng 2 giây để vào cấu hình Wi-Fi.</div>
       <div class="toggle-row">
         <div><div class="toggle-label">Tự kết nối lại Wi-Fi</div><div class="toggle-sub">Được quản lý tự động bởi Wi-Fi manager</div></div>
         <label class="toggle"><input type="checkbox" checked disabled><span class="slider"></span></label>
@@ -165,7 +203,7 @@
 
     <section class="section hidden" id="oledSection">
       <div class="section-title">📺 Màn hình OLED</div>
-      <div class="info">OLED 128×64 · Hiển thị trạng thái hệ thống và hội thoại. Chế độ đồng hồ/tên bot/sóng âm chưa có API cấu hình trong firmware hiện tại.</div>
+      <div class="info">OLED 128×64 · Logo ChatAI TPIOS khi khởi động, trạng thái “ChatAI sẵn sàng” và tiến trình cập nhật OTA.</div>
     </section>
 
     <section class="section hidden" id="otaSection">
@@ -185,10 +223,20 @@
       </div>
       <div class="result" id="otaResult"></div>
     </section>
+
+    <section class="section hidden" id="deviceActionsSection">
+      <div class="section-title">🛠️ Quản lý thiết bị</div>
+      <div class="field"><button class="secondary-btn" id="rebootBtn" type="button">Khởi động lại thiết bị</button></div>
+      <div class="field">
+        <button class="secondary-btn" id="factoryResetBtn" type="button">Khôi phục cài đặt gốc</button>
+        <p class="hint">Xóa Wi-Fi, API key và toàn bộ cấu hình đã lưu trong NVS. Sau đó thiết bị trở về chế độ cấu hình ban đầu.</p>
+      </div>
+      <div class="result" id="deviceActionResult"></div>
+    </section>
   </div>
 
   <div class="save-wrap hidden" id="saveWrap">
-    <button class="save-btn" id="saveBtn" type="button">💾 Lưu cấu hình Gemini & âm thanh</button>
+    <button class="save-btn" id="saveBtn" type="button">💾 Lưu toàn bộ cấu hình</button>
   </div>
 </div>
 <div class="toast" id="toast"></div>
