@@ -28,6 +28,17 @@ jobs:
           path: xiaozhi-src
           command: idf.py reconfigure && python3 ../scripts/patch_wifi_portal.py && idf.py reconfigure && idf.py build && idf.py merge-bin
 
+      - name: Publish application-only image for Web Admin OTA
+        run: sudo mv xiaozhi-src/build/xiaozhi.bin xiaozhi-src/build/ChatAI-TPIOS-v0.1.1-OTA.bin
+
+      - name: Upload OTA application image
+        uses: actions/upload-artifact@v4
+        with:
+          name: ChatAI-TPIOS-v0.1.1-OTA
+          path: xiaozhi-src/build/ChatAI-TPIOS-v0.1.1-OTA.bin
+          if-no-files-found: error
+          retention-days: 14
+
       - name: Rename USB image to an unambiguous ChatAI filename
         run: sudo mv xiaozhi-src/build/merged-binary.bin xiaozhi-src/build/ChatAI-TPIOS-v0.1.1-USB-FLASH.bin
 
