@@ -20,9 +20,9 @@ jobs:
       - name: Read firmware build number
         id: version
         run: |
-          VERSION="$(tr -d '[:space:]' < firmware/BUILD_NUMBER)"
+          VERSION="$(tr -d '[:space:]' < firmware/VERSION)"
           if [[ ! "$VERSION" =~ ^[1-9][0-9]*$ ]]; then
-            echo "Invalid firmware/BUILD_NUMBER: $VERSION"
+            echo "Invalid firmware/VERSION: $VERSION"
             exit 1
           fi
           echo "value=$VERSION" >> "$GITHUB_OUTPUT"
