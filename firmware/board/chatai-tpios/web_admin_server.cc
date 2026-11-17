@@ -20,6 +20,7 @@
 #include <cstring>
 #include <algorithm>
 #include <cctype>
+#include <cstdio>
 
 extern const char index_html_start[] asm("_binary_wifi_configuration_html_start");
 
@@ -129,7 +130,7 @@ esp_err_t ConfigGetHandler(httpd_req_t* req) {
     cJSON_AddStringToObject(root, "model", gemini.GetString("model", "gemini-3.8-live").c_str());
     cJSON_AddStringToObject(root, "system_prompt", gemini.GetString(
         "system_prompt",
-        "You are ChatAI TPIOS, a helpful Vietnamese voice assistant. Speak naturally in Vietnamese unless the user asks for another language. Keep replies concise and conversational."
+        "A helpful Vietnamese voice assistant. Speak naturally in Vietnamese unless the user asks for another language. Keep replies concise and conversational."
     ).c_str());
     cJSON_AddBoolToObject(root, "enabled", gemini.GetBool("enabled", false));
     cJSON_AddStringToObject(root, "bot_name", gemini.GetString("bot_name", "ChatAI").c_str());
@@ -231,10 +232,12 @@ esp_err_t ConfigPostHandler(httpd_req_t* req) {
         if (language_code) settings.SetString("language_code", language_code->valuestring);
     }
     bool wake_word_applied = false;
-    if (wake_word || mic_gain) {
+    if (wake_word) {
         Settings settings("chatai", true);
-        if (wake_word) settings.SetString("wake_word", wake_word->valuestring);
-        if (mic_gain) Board::GetInstance().GetAudioCodec()->SetInputGain(static_cast<float>(mic_gain->valueint));
+        settings.SetString("wake_word", wake_word->valuestring);
+    }
+    if (mic_gain) {
+        Board::GetInstance().GetAudioCodec()->SetInputGain(static_cast<float>(mic_gain->valueint));
     }
     if (wake_word) {
         wake_word_applied = Application::GetInstance().GetAudioService().SetWakeWordPhrase(wake_word->valuestring);
