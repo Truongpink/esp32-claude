@@ -4,7 +4,7 @@ Firmware project based on the upstream XiaoZhi ESP32 codebase, pinned to **v2.6.
 
 ## Current repository state
 
-This repository contains the ChatAI TPIOS hardware-board overlay, Gemini Live protocol, PCM bridge integration, local Web Admin, streamed OTA upload handler, and an idempotent source patcher. The pinned upstream firmware is fetched at preparation time; it is not copied wholesale into this repository.
+This repository contains the ChatAI TPIOS hardware-board overlay, Gemini Live protocol, PCM bridge integration, local Web Admin, and an idempotent source patcher. The pinned upstream firmware is fetched at preparation time; it is not copied wholesale into this repository. OTA is deferred and is not part of the current basic firmware release.
 
 - Target: ESP32-S3
 - Board profile: ChatAI TPIOS (separate board identity; does not overwrite the upstream Bread Compact profile)
@@ -14,7 +14,7 @@ This repository contains the ChatAI TPIOS hardware-board overlay, Gemini Live pr
 - Pinned upstream tag: `v2.6.0`
 - Pinned upstream commit: `4de00aed740595a8713b01f8332b9b2cf30685bc`
 
-## Build status — successful
+## Last successful build
 
 The manual GitHub Actions workflow completed successfully on 2026-11-17:
 
@@ -22,7 +22,7 @@ The manual GitHub Actions workflow completed successfully on 2026-11-17:
 - Branch / commit: `main` / `39d50a15c64447eb33ba0733af0ee5b57ab512de`
 - Toolchain: ESP-IDF v6.1, target `esp32s3`
 - All workflow steps passed, including upstream preparation, compilation and artifact upload.
-- Artifact: `ChatAI-TPIOS-ESP32S3-firmware`; its payload is the application image `xiaozhi.bin` only.
+- The current workflow has since been changed to produce `ChatAI-TPIOS-v0.1.1-USB-FLASH` from `merged-binary.bin`; that newer workflow configuration has not yet been run.
 
 This is a successful CI compile, not yet a physical-board validation. The image has not been confirmed flashed or tested on the user's device.
 
@@ -33,7 +33,7 @@ This is a successful CI compile, not yet a physical-board validation. The image 
 - Initial Gemini Live WebSocket protocol and PCM bridge (16 kHz mono PCM16 input, 24 kHz mono PCM16 output), with transcription, turn-complete and interruption handling.
 - Gemini configuration stored in NVS and selected only when enabled/configured; upstream XiaoZhi protocol remains the fallback.
 - Local Web Admin for status and Gemini settings, without PIN/login as requested.
-- Local streamed application `.bin` OTA handler that writes to the inactive app slot and validates the image before changing the boot partition.
+- OTA upload and update flow are deferred; the current Web Admin exposes device status and Gemini configuration only.
 - Manual-only GitHub Actions build workflow; no push/PR build triggers.
 
 ## Next phase: physical bring-up
