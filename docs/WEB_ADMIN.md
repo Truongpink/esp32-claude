@@ -1,5 +1,12 @@
 # Local Web Admin
 
+The device has two distinct local web entry points, depending on its Wi-Fi mode:
+
+- **Wi-Fi setup (AP mode):** hold the BOOT button for 2 seconds after startup. Connect the phone to `ChatAI-TPIOS-<suffix>` and open `http://192.168.4.1/`. This is the upstream captive portal for scanning and saving the home Wi-Fi credentials.
+- **Device administration (station mode):** after the ESP32 joins the home Wi-Fi, its setup AP is stopped. Open `http://<device-ip>/` from a phone or computer on the same LAN. The IP is shown by `GET /api/status` and can also be found in the router's connected-device list.
+
+The two addresses are not interchangeable: `192.168.4.1` is the ESP32's AP address and is only available while setup AP mode is active. In station mode, use the LAN IP assigned by the router.
+
 The ChatAI TPIOS board starts a small HTTP server on port 80 after station Wi-Fi connects and stops it when Wi-Fi disconnects or enters provisioning mode.
 
 - Open `http://<device-ip>/` from a browser on the same LAN.
