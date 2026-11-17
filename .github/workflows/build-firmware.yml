@@ -29,7 +29,7 @@ jobs:
           command: idf.py build && idf.py merge-bin
 
       - name: Rename USB image to an unambiguous ChatAI filename
-        run: mv xiaozhi-src/build/merged-binary.bin xiaozhi-src/build/ChatAI-TPIOS-v0.1.1-USB-FLASH.bin
+        run: sudo mv xiaozhi-src/build/merged-binary.bin xiaozhi-src/build/ChatAI-TPIOS-v0.1.1-USB-FLASH.bin
 
       - name: Upload complete USB flash image
         uses: actions/upload-artifact@v4
