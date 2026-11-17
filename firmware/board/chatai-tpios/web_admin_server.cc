@@ -353,19 +353,6 @@ void WebAdminServer::Start() {
         ESP_LOGE(TAG, "Could not register local Web Admin routes");
         return;
     }
-    // Reaching this point means board/audio initialization, Wi-Fi connection,
-    // and local HTTP route registration succeeded on the new image.
-    const esp_partition_t* running = esp_ota_get_running_partition();
-    esp_ota_img_states_t image_state;
-    if (esp_ota_get_state_partition(running, &image_state) == ESP_OK &&
-        image_state == ESP_OTA_IMG_PENDING_VERIFY) {
-        const esp_err_t validation = esp_ota_mark_app_valid_cancel_rollback();
-        if (validation == ESP_OK) {
-            ESP_LOGI(TAG, "OTA image passed local startup checks");
-        } else {
-            ESP_LOGE(TAG, "Could not mark OTA image valid: %s", esp_err_to_name(validation));
-        }
-    }
     ESP_LOGI(TAG, "Local Web Admin started on port 80");
 }
 

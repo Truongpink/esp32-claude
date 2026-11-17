@@ -102,6 +102,39 @@ replace_once(
     '    }\n',
 )
 
+
+# Mark an OTA image valid after the application activation sequence, not in the
+# board's Wi-Fi callback. The latter runs before the main activation task.
+replace_once(
+    UPSTREAM / "main" / "application.cc",
+    '#include "gemini_live_protocol.h"\n',
+    '#include "gemini_live_protocol.h"\n#include <esp_ota_ops.h>\n',
+)
+replace_once(
+    UPSTREAM / "main" / "application.cc",
+    '    // Initialize the protocol\n'
+    '    InitializeProtocol();\n'
+    '\n'
+    '    // Signal completion to main loop\n'
+    '    xEventGroupSetBits(event_group_, MAIN_EVENT_ACTIVATION_DONE);\n',
+    '    // Initialize the protocol\n'
+    '    InitializeProtocol();\n'
+    '\n'
+    '    // Mark a pending OTA image valid only after application activation initializes\n'
+    '    // its board, network and protocol objects.\n'
+    '    const esp_partition_t* running = esp_ota_get_running_partition();\n'
+    '    esp_ota_img_states_t image_state;\n'
+    '    if (esp_ota_get_state_partition(running, &image_state) == ESP_OK &&\n'
+    '        image_state == ESP_OTA_IMG_PENDING_VERIFY) {\n'
+    '        const esp_err_t validation = esp_ota_mark_app_valid_cancel_rollback();\n'
+    '        if (validation == ESP_OK) ESP_LOGI(TAG, "OTA image passed application activation checks");\n'
+    '        else ESP_LOGE(TAG, "Could not mark OTA image valid: %s", esp_err_to_name(validation));\n'
+    '    }\n'
+    '\n'
+    '    // Signal completion to main loop\n'
+    '    xEventGroupSetBits(event_group_, MAIN_EVENT_ACTIVATION_DONE);\n',
+)
+
 # Add a bounded raw-PCM bridge for Gemini Live while preserving the default Opus path.
 def patch_pcm_audio_bridge() -> None:
     header = UPSTREAM / "main" / "audio" / "audio_service.h"
