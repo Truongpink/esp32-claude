@@ -114,6 +114,14 @@
       <div class="info" id="deviceStatus">Đang tải...</div>
     </section>
 
+    <section class="section hidden" id="audioDiagnosticsSection">
+      <div class="section-title">🎙️ Chẩn đoán Gemini Live</div>
+      <div class="info" id="audioDiagnostics">Đang tải trạng thái âm thanh...</div>
+      <div class="field">
+        <button class="save-btn" id="refreshAudioDiagnostics" type="button">↻ Làm mới chẩn đoán</button>
+      </div>
+    </section>
+
     <section class="section hidden" id="geminiSection">
       <div class="section-title">✨ Gemini Live AI</div>
       <div class="field">
@@ -283,6 +291,27 @@ function togglePass(id) {
 }
 function showSection(id) { $(id).classList.remove('hidden'); }
 
+function renderAudioDiagnostics(status) {
+  $('audioDiagnostics').textContent =
+    'Phiên Gemini Live: ' + (status.live_session_connected ? 'Đã kết nối' : 'Chưa kết nối') +
+    '\\nLuồng microphone: ' + (status.mic_streaming ? 'Đang gửi' : 'Đang dừng') +
+    '\\nGói mic gửi thành công: ' + (status.mic_chunks_sent || 0) +
+    '\\nGói âm thanh Gemini nhận: ' + (status.response_audio_chunks || 0) +
+    '\\nLỗi gần nhất: ' + (status.live_last_error || 'Không có');
+  showSection('audioDiagnosticsSection');
+}
+async function refreshAudioDiagnostics() {
+  const button = $('refreshAudioDiagnostics');
+  button.disabled = true;
+  try {
+    const response = await fetch('/api/status', {cache:'no-store'});
+    if (!response.ok) throw new Error('Không đọc được trạng thái thiết bị');
+    renderAudioDiagnostics(await response.json());
+  } catch (error) {
+    $('audioDiagnostics').textContent = error.message;
+  } finally { button.disabled = false; }
+}
+
 async function scanWifi() {
   const list = $('wifiList');
   list.textContent = 'Đang quét mạng...';
@@ -348,6 +377,7 @@ async function loadAdmin() {
     '\nAPI key: ' + (status.key_configured ? 'Đã lưu' : 'Chưa cấu hình') +
     '\nFirmware: ' + (status.version || 'unknown') +
     '\nPhân vùng đang chạy: ' + (status.partition || 'unknown');
+  renderAudioDiagnostics(status);
   $('botName').value = config.bot_name || 'ChatAI';
   $('model').value = config.model || 'gemini-3.8-live';
   $('voiceName').value = config.voice_name || 'Puck';
@@ -371,6 +401,8 @@ async function loadAdmin() {
     $('otaResult').textContent = 'OTA chưa được bật hoặc thiết bị không có phân vùng OTA hợp lệ.';
   }
 }
+
+$('refreshAudioDiagnostics').addEventListener('click', refreshAudioDiagnostics);
 
 $('volume').addEventListener('input', () => { $('volumeValue').textContent = $('volume').value + '%'; });
 $('micGain').addEventListener('input', () => { $('micGainValue').textContent = $('micGain').value + ' dB'; });
