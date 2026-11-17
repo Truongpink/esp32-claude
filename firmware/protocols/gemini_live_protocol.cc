@@ -76,6 +76,7 @@ bool GeminiLiveProtocol::SendSetup() {
     std::string msg = PrintJson(root); cJSON_Delete(root); return !msg.empty() && websocket_->Send(msg);
 }
 bool GeminiLiveProtocol::OpenAudioChannel() {
+    error_occurred_ = false;
     Settings cfg("gemini", false);
     api_key_ = cfg.GetString("api_key"); model_ = cfg.GetString("model", "gemini-3.8-live");
     system_instruction_ = cfg.GetString("system_instruction", "You are ChatAI TPIOS, a helpful Vietnamese voice assistant. Speak naturally in Vietnamese unless the user asks for another language. Keep replies concise and conversational.");
@@ -152,11 +153,15 @@ void GeminiLiveProtocol::HandleServerMessage(const cJSON* root) {
         const cJSON* m = cJSON_GetObjectItem(error, "message"); last_server_error_ = cJSON_IsString(m) ? m->valuestring : "Gemini Live server error";
         xEventGroupSetBits(event_group_, kSetupFailed); Fail(last_server_error_); return;
     }
-    const cJSON* content = cJSON_GetObjectItem(root, "serverContent"); if (cJSON_IsObject(content)) HandleServerContent(content);
-    const cJSON* input = cJSON_GetObjectItem(root, "inputTranscription");
-    if (cJSON_IsObject(input)) { const cJSON* t = cJSON_GetObjectItem(input, "text"); if (cJSON_IsString(t)) EmitTranscript("stt", nullptr, t->valuestring); }
-    const cJSON* output = cJSON_GetObjectItem(root, "outputTranscription");
-    if (cJSON_IsObject(output)) { const cJSON* t = cJSON_GetObjectItem(output, "text"); if (cJSON_IsString(t)) { if (!output_turn_started_) { output_turn_started_ = true; EmitTranscript("tts", "start", ""); } EmitTranscript("tts", "sentence_start", t->valuestring); } }
+    const cJSON* content = cJSON_GetObjectItem(root, "serverContent");
+    if (cJSON_IsObject(content)) {
+        HandleServerContent(content);
+    } else {
+        const cJSON* input = cJSON_GetObjectItem(root, "inputTranscription");
+        if (cJSON_IsObject(input)) { const cJSON* t = cJSON_GetObjectItem(input, "text"); if (cJSON_IsString(t)) EmitTranscript("stt", nullptr, t->valuestring); }
+        const cJSON* output = cJSON_GetObjectItem(root, "outputTranscription");
+        if (cJSON_IsObject(output)) { const cJSON* t = cJSON_GetObjectItem(output, "text"); if (cJSON_IsString(t)) { if (!output_turn_started_) { output_turn_started_ = true; EmitTranscript("tts", "start", ""); } EmitTranscript("tts", "sentence_start", t->valuestring); } }
+    }
     if (cJSON_IsObject(cJSON_GetObjectItem(root, "goAway"))) ESP_LOGW(TAG, "Gemini Live server requested session shutdown");
 }
 void GeminiLiveProtocol::HandleServerContent(const cJSON* content) {
@@ -189,5 +194,8 @@ void GeminiLiveProtocol::EmitTranscript(const char* type, const char* state, con
 }
 void GeminiLiveProtocol::EmitTtsStop() { if (output_turn_started_) { EmitTranscript("tts", "stop", ""); output_turn_started_ = false; listening_ = false; audio_service_.EnablePcmBridge(false); } }
 void GeminiLiveProtocol::Fail(const std::string& message) {
-    if (error_occurred_) return; error_occurred_ = true; if (on_network_error_) on_network_error_(message);
+    if (error_occurred_) return;
+    error_occurred_ = true;
+    if (!setup_complete_ && event_group_) xEventGroupSetBits(event_group_, kSetupFailed);
+    if (on_network_error_) on_network_error_(message);
 }
