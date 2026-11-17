@@ -62,12 +62,19 @@ This document is a source-verified design, not a claim that Gemini Live is alrea
 
 The upstream patcher now adds an optional, bounded PCM bridge to `AudioService`:
 
-- `EnablePcmBridge(true)` routes processed 16 kHz mono PCM frames from `AudioEngine::OnOutput` into a four-frame queue instead of the Opus encoder.
+- `EnablePcmBridge(true)` routes processed 16 kHz mono PCM frames from `AudioEngine::OnOutput` into a four-frame queue instead of the Opus encoder. The pinned upstream initializes the AFE with `OPUS_FRAME_DURATION_MS = 60`, so each frame is 960 samples and the queue holds at most about 240 ms of captured audio.
 - `PopPcmInput()` lets the Gemini transport drain captured frames without blocking the audio/AFE task.
 - `PushPcmPlayback()` queues decoded PCM directly for the existing speaker output task, bypassing Opus decoding.
 - `ClearPcmPlayback()` clears queued PCM for interruption handling.
 - The bridge defaults to disabled. When disabled, the original Opus encode/decode path remains selected.
 
-This is only the audio-service seam. It does not yet establish a Gemini WebSocket session, base64/JSON framing, 24 kHz output resampling, turn/VAD control, or reconnect/session-resumption behavior. The transport must validate the server's audio sample rate and convert to the codec's output rate before calling `PushPcmPlayback()`. PCM playback is queued directly into the same bounded output queue consumed by `AudioOutputTask`, bypassing the Opus decoder. `ClearPcmPlayback()` clears that queue; a currently playing output frame may finish, so interruption latency is bounded by the current output frame. See [Gemini Live wire protocol](GEMINI_LIVE_WIRE_PROTOCOL.md) for the setup gate, JSON frames, PCM formats and control events.
+This is only the audio-service seam. It does not yet establish a Gemini WebSocket session, base64/JSON framing, 24 kHz output resampling, turn/VAD control, or reconnect/session-resumption behavior. Gemini recommends 20–40 ms uplink chunks, so the 60 ms AFE frames must be split into three 20 ms chunks by the transport. The transport must validate the server's audio sample rate and convert to the codec's output rate before calling `PushPcmPlayback()`. PCM playback is queued directly into the same bounded output queue consumed by `AudioOutputTask`, bypassing the Opus decoder. `ClearPcmPlayback()` clears that queue; a currently playing output frame may finish, so interruption latency is bounded by the current output frame. See [Gemini Live wire protocol](GEMINI_LIVE_WIRE_PROTOCOL.md) for the setup gate, JSON frames, PCM formats and control events.
 
 The patch is applied to the pinned upstream source at build preparation time by `scripts/apply_upstream_patches.py`. It has not been compiled or exercised on hardware yet.
+
+
+## Application event-loop integration findings
+
+The existing `Application` main loop drains Opus packets only on `MAIN_EVENT_SEND_AUDIO`. The new PCM queue is separate, so a Gemini transport cannot rely on `Protocol::SendAudio()` or the existing Opus send event. The next integration must add a narrow PCM-available notification from `AudioService` to the application event loop, then let `GeminiLiveProtocol::ProcessPending()` drain the bounded PCM queue and send JSON messages. Keep WebSocket receive callbacks short: decode bounded audio payloads and enqueue them with `PushPcmPlayback()`; do not perform codec output in the receive callback.
+
+The upstream `WebSocket` implementation is supplied by `78/esp-ml307` and is already exposed through `Board::GetNetwork()->CreateWebSocket()`. Its send API accepts text frames and its default maximum outgoing payload is 65,535 bytes. The same component's debug connection log includes the URL path, so standard API-key query authentication must not be enabled until that log is redacted. Prefer the documented ephemeral-token endpoint with `Authorization: Token` when a token broker is available.

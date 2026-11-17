@@ -5,7 +5,7 @@ This document records the current Gemini Live wire contract for the firmware tra
 ## Connection and setup
 
 - Use a TLS WebSocket (WSS) connection to the Gemini Live API endpoint for the selected supported model.
-- Authenticate with a Gemini API credential. Prefer a short-lived/ephemeral credential issued by a trusted token broker rather than embedding a long-lived API key in a distributable firmware image.
+- Authentication options for raw WebSocket clients:\n  - Standard API key: append `?key=<API_KEY>` to the `BidiGenerateContent` endpoint. This is the simplest bring-up path, but the key must never be logged; the upstream WebSocket wrapper currently logs its URL/path at debug level, so the Gemini integration must redact query strings or patch that log before using this option.\n  - Ephemeral token (preferred for a deployed device): use the `BidiGenerateContentConstrained` endpoint and send the short-lived token in `Authorization: Token <token>` (or `access_token` query parameter). A token broker must authenticate the local device/user and mint the token using the Gemini AuthToken API. Do not put the long-lived API key in firmware or Web Admin.
 - Send exactly one `setup` message after the WebSocket is established.
 - Do not send audio until the server returns `setupComplete`.
 - Keep the selected model name and endpoint in one configuration location; verify the currently supported model immediately before implementation rather than pinning an old example model.
@@ -79,7 +79,7 @@ If the actual codec output rate differs from 24 kHz, resample before queueing. T
 
 - The receive callback must only parse/copy bounded payloads and enqueue work; it must not call blocking codec APIs.
 - Never buffer an entire conversation or an unbounded audio stream in RAM.
-- Base64 temporarily increases payload size; size all message buffers for the encoded form and reject oversized frames.
+- Base64 temporarily increases payload size; size all message buffers for the encoded form and reject oversized frames. The current WebSocket wrapper rejects outgoing payloads over 65,535 bytes and logs the URL path at debug level; never put credentials in logged URL text.
 - Do not log API keys, bearer tokens, full setup URLs containing credentials, or audio payloads.
 - Keep network send/receive work separate from AFE and speaker output tasks.
 
