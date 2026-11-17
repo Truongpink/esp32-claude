@@ -10,7 +10,7 @@
 #include <cstring>
 #include <algorithm>
 #include <atomic>
-#include <esp_app_desc.h>
+#include <esp_err.h>
 #include <esp_ota_ops.h>
 #include <esp_partition.h>
 #include <esp_system.h>
