@@ -31,7 +31,7 @@ This is a successful CI compile, not yet a physical-board validation. The image 
 - Separate ChatAI TPIOS ESP32-S3 board overlay and OLED SSD1306 128×64 configuration.
 - Reproducible fetch of the pinned XiaoZhi source and idempotent overlay patching.
 - Initial Gemini Live WebSocket protocol and PCM bridge (16 kHz mono PCM16 input, 24 kHz mono PCM16 output), with transcription, turn-complete and interruption handling.
-- Gemini configuration stored in NVS and selected only when enabled/configured; upstream XiaoZhi protocol remains the fallback.
+- Gemini Live is selected directly as the device protocol; the current firmware does not fall back to the XiaoZhi cloud protocol.
 - Local Web Admin for status and Gemini settings, without PIN/login as requested.
 - OTA upload and update flow are deferred; the current Web Admin exposes device status and Gemini configuration only.
 - Manual-only GitHub Actions build workflow; no push/PR build triggers.
@@ -67,6 +67,6 @@ The preparation script fetches the pinned upstream commit, verifies the exact re
 - [Gemini Live wire protocol](docs/GEMINI_LIVE_WIRE_PROTOCOL.md)
 - [Hardware evidence and unresolved pins](docs/HARDWARE.md)
 - [Local Web Admin](docs/WEB_ADMIN.md)
-- [OTA upload](docs/OTA_WEB_UPLOAD.md)
+- [OTA upload design (deferred; not included in the current firmware)](docs/OTA_WEB_UPLOAD.md)
 
 The workflow is manual-only: Actions → Build ChatAI TPIOS firmware → Run workflow. Do not add automatic push/PR triggers.
