@@ -16,9 +16,11 @@ The issue is useful hardware evidence, but its comments contain conflicting repo
 | OLED SDA / SCL | GPIO 41 / GPIO 42 | Candidate from board-family source; verify revision |
 | Speaker I²S DOUT / BCLK / LRCK | GPIO 7 / GPIO 15 / GPIO 16 | Reported working in upstream issue #2206 |
 | Speaker amplifier enable | GPIO 17, HIGH | Reported required in upstream issue #2206 |
-| Microphone I²S pins | UNKNOWN | Not confirmed; issue #2206 reports GPIO 4/5/6 did not work |
-| BOOT / touch / volume buttons | UNKNOWN | Do not assume the bread-compact-wifi mapping |
-| Built-in LED | UNKNOWN | Do not assume GPIO 48 |
+| Microphone I²S pins | GPIO 4/5/6 candidate | PR #2194 proposes this mapping; issue #2206 has conflicting test results; not verified on the user's unit |
+| BOOT button | GPIO 0 candidate | PR #2194 board profile; verify exact PCB |
+| Touch button | GPIO 43 vs GPIO 47 | PR #2194 says GPIO 43; current overlay inherited GPIO 47. Unresolved |
+| Volume buttons | GPIO 40 / GPIO 39 candidates | PR #2194 board profile; verify exact PCB |
+| Built-in LED | GPIO 48 candidate | PR #2194 board profile; verify exact PCB |
 
 ## Important bring-up constraint
 
