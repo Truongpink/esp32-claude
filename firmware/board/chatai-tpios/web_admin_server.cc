@@ -191,6 +191,7 @@ esp_err_t ConfigPostHandler(httpd_req_t* req) {
     const cJSON* language_code = cJSON_GetObjectItemCaseSensitive(root, "language_code");
     const cJSON* wake_word = cJSON_GetObjectItemCaseSensitive(root, "wake_word");
     const cJSON* mic_gain = cJSON_GetObjectItemCaseSensitive(root, "mic_gain");
+    const bool has_wake_word = wake_word != nullptr;
 
     const bool valid =
         (!key || (cJSON_IsString(key) && std::string(key->valuestring).size() <= 256)) &&
@@ -251,7 +252,7 @@ esp_err_t ConfigPostHandler(httpd_req_t* req) {
 
     cJSON* response = cJSON_CreateObject();
     cJSON_AddBoolToObject(response, "wake_word_applied", wake_word_applied);
-    cJSON_AddStringToObject(response, "message", wake_word
+    cJSON_AddStringToObject(response, "message", has_wake_word
         ? (wake_word_applied
             ? "Đã lưu cấu hình; Wake Word đã được cập nhật. Gemini Live áp dụng cấu hình mới ở phiên kết nối tiếp theo."
             : "Đã lưu cấu hình. Wake Word sẽ được nạp khi khởi động lại; Gemini Live áp dụng cấu hình mới ở phiên kết nối tiếp theo.")
