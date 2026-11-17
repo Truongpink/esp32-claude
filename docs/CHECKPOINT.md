@@ -35,7 +35,7 @@ These are user-reported hardware results. Do not treat them as proof that every 
 - Application-only OTA upload to the inactive OTA partition, with image validation and boot-slot selection.
 - ESP-IDF rollback support, with the new image marked valid after application/protocol initialization completes without a startup error.
 - Manual-only GitHub Actions workflow now builds and publishes only the application OTA image; merged USB image generation and USB artifact upload have been removed.
-- Release version is read from `firmware/VERSION` (currently `0.1.2`) and injected into upstream `PROJECT_VER`, so the ESP application descriptor and OTA artifact use the same version.
+- Release version is read from `firmware/VERSION` (currently `0.1.3`) and injected into upstream `PROJECT_VER`, so the ESP application descriptor and OTA artifact use the same version.
 
 ### Not yet confirmed / next tests
 - The user previously reported a TTS-like interaction. The source now uses Gemini Live realtime listening mode and keeps the microphone path active during assistant playback; verify natural voice-to-voice turn-taking and interruption on hardware.
@@ -54,15 +54,15 @@ These are user-reported hardware results. Do not treat them as proof that every 
 - Keep the matching USB-FLASH image as a recovery option.
 - Do not claim OTA is working until an actual hardware update and recovery test succeeds.
 
-## Next OTA release preparation — v0.1.2
+## Next OTA release preparation — v0.1.3
 
-- Next release artifact name: `ChatAI-TPIOS-v0.1.2-OTA.bin`.
+- Next release artifact name: `ChatAI-TPIOS-v0.1.3-OTA.bin`.
 - `.github/workflows/build-firmware.yml` remains `workflow_dispatch` only and publishes exactly one OTA artifact.
 - The workflow no longer runs `idf.py merge-bin` and no longer creates/uploads a merged USB-FLASH image.
 - Essential preparation remains: pinned upstream checkout, ChatAI overlay, Wi-Fi portal asset patch, required CMake reconfigure passes, and ESP-IDF application build.
 - `firmware/VERSION` is the single release-version source. `scripts/apply_upstream_patches.py` validates it and applies it to upstream `PROJECT_VER`.
 - The semantic-version validation expression was checked after correction.
-- Source/workflow changes only: no GitHub Action, firmware build, OTA upload, or hardware test has been run for v0.1.2. The workflow still requires a manual run, followed by an actual OTA test on the board.
+- Source/workflow changes only: no GitHub Action, firmware build, OTA upload, or hardware test has been run for v0.1.3. The workflow still requires a manual run, followed by an actual OTA test on the board.
 
 ## Remaining development and verification
 
@@ -91,7 +91,16 @@ The repository HEAD and fixed source file were re-fetched from `main`. Do not cl
 - Traced the full realtime turn path through the pinned upstream application and the patcher: chat toggle → Gemini WebSocket setupComplete → Listening → enable PCM bridge + AFE → PCM-ready event → `ProcessPending()` → `realtimeInput.audio`; Gemini 24 kHz response PCM → direct speaker queue; legacy `tts` events only update Speaking/Listening UI and transcript. The selected mode is forced to `kListeningModeRealtime`, so voice processing is not stopped while the assistant speaks, and the PCM bridge remains enabled after turnComplete.
 - The source therefore implements a Gemini Live voice-to-voice transport, not a separate TTS request/response path. This remains source-level verification only: microphone uplink continuity, AEC/echo behavior, barge-in, and natural multi-turn behavior require an authorized build and actual board test.
 - The current API-key transport uses a query parameter in the WebSocket URL. Keep it out of logs; production hardening should move to short-lived credentials/token broker rather than embedding a long-lived key in a device.
-- Keep `firmware/VERSION` at `0.1.2` until the next build is explicitly authorized; the next build should use `0.1.3`.
+- The user has now authorized preparing the next build; `firmware/VERSION` is set to `0.1.3`.
+
+## Four confirmed requirements — source implementation ready for v0.1.3 build
+
+1. **TTS to Gemini Live voice chat:** the setup requests audio output, sends 16 kHz PCM microphone frames over `realtimeInput.audio`, receives 24 kHz PCM audio, and queues it directly to the speaker. The internal `tts` events are UI state/transcript notifications, not a separate TTS request.
+2. **Gemini Live voice selection:** Web Admin exposes the 30 documented prebuilt voices; the selected case-sensitive voice name is persisted in NVS and included in the next Live session setup.
+3. **OTA persistence and OLED progress:** configuration is stored in NVS, separate from the application OTA slots. The upload handler writes only to the inactive application slot and displays validation, progress, install, restart, and error states on OLED. No NVS erase occurs in the OTA path.
+4. **One wake per continuous conversation:** BOOT short-press and voice wake start a `kListeningModeRealtime` session. After each Gemini response, `EmitTtsStop()` returns the UI to Listening without disabling the PCM bridge; only explicit stop/close ends the stream/session. This is source-level tracing, not hardware proof.
+
+**Build gate:** the source changes for these four requirements are present. The next required check is a full ESP-IDF build for v0.1.3, followed by device testing of multi-turn audio, wake-once behavior, settings persistence, and OLED OTA progress. No build or hardware behavior is claimed successful yet.
 
 ## Gemini Live diagnostics — source-only
 
