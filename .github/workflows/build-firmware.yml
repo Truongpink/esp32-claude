@@ -26,7 +26,7 @@ jobs:
           esp_idf_version: v6.1
           target: esp32s3
           path: xiaozhi-src
-          command: idf.py build && idf.py merge-bin
+          command: idf.py reconfigure && python3 ../scripts/patch_wifi_portal.py && idf.py reconfigure && idf.py build && idf.py merge-bin
 
       - name: Rename USB image to an unambiguous ChatAI filename
         run: sudo mv xiaozhi-src/build/merged-binary.bin xiaozhi-src/build/ChatAI-TPIOS-v0.1.1-USB-FLASH.bin
