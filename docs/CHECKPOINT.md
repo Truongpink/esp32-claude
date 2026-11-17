@@ -42,7 +42,7 @@ These are user-reported hardware results. Do not treat them as proof that every 
 - Verify “Hey ChatAI” recognition, user-defined English wake phrases, BOOT activation, and wake-word interruption during an active session.
 - Verify the 30-voice selector and language setting against the selected Gemini Live model.
 - Verify microphone gain adjustment (0–20 dB) does not introduce unacceptable clipping or noise.
-- OTA has **not** yet been tested on hardware. The OTA file is reserved for testing future firmware versions after the current USB-installed firmware is known-good.
+- OTA application-only firmware installation and reboot have now been confirmed successful by the user on the actual ESP32-S3. Settings persistence and rollback remain separate tests.
 - Verify OTA settings persistence and rollback/recovery on the actual board. OTA installation and reboot are now user-confirmed successful.
 - Verify OLED, microphone capture quality, speaker output, buttons, and volume independently.
 
@@ -52,7 +52,7 @@ These are user-reported hardware results. Do not treat them as proof that every 
 - **OTA application-only `.bin`:** for updating a firmware already installed on the device through Web Admin; do not upload the merged USB image to the OTA endpoint.
 - Intended version flow: install the baseline with USB-FLASH, then test subsequent releases (for example v0.1.2, v0.1.3) using OTA.
 - Keep the matching USB-FLASH image as a recovery option.
-- Do not claim OTA is working until an actual hardware update and recovery test succeeds.
+- OTA installation/reboot is now hardware-confirmed. Do not claim rollback/recovery or every setting's persistence until those are separately tested.
 
 ## Next OTA release preparation — v0.1.3
 
