@@ -18,10 +18,12 @@
   - Gemini Live is selected directly as the device protocol. The current firmware does not fall back to the XiaoZhi cloud protocol when Gemini is disabled or unconfigured.
 - Added the board profile and OLED SSD1306 128x64 Kconfig selection.
 - Added the local Web Admin source:
-  - Device status and Gemini configuration backed by NVS.
-  - No PIN/login, as requested; intended for trusted local Wi-Fi only.
-  - OTA upload and update flow are deferred; the current Web Admin exposes device status and Gemini configuration only.
-- Added a manual-only GitHub Actions workflow. The last successful run uploaded the application-only `xiaozhi.bin`; the current workflow configuration runs `idf.py merge-bin`, renames its generated output to `ChatAI-TPIOS-v0.1.1-USB-FLASH.bin`, and uploads that clearly named USB image under the versioned `ChatAI-TPIOS-v0.1.1-USB-FLASH` artifact name. That updated workflow has not yet run.
+  - Device status, Gemini configuration, and speaker volume backed by NVS.
+  - Original dark/purple AI Voice Bot layout adapted for the actual supported device controls.
+  - Streamed application-only OTA upload to the inactive app partition, with runtime dual-slot checks and ESP-IDF image validation.
+  - No PIN/login; intended for trusted local Wi-Fi only.
+- The manual-only GitHub Actions workflow now publishes two separate artifacts: application-only `ChatAI-TPIOS-v0.1.1-OTA.bin` for Web Admin OTA and merged `ChatAI-TPIOS-v0.1.1-USB-FLASH.bin` for USB flashing. This updated workflow has not yet run.
+- The OTA patch marks a pending image valid after application/protocol initialization completes without a startup error, allowing the ESP-IDF bootloader rollback mechanism to restore the previous slot if the new image fails before validation.
 - Fixed the two compile blockers found in earlier runs: Gemini transcript indentation under `-Werror`, and OLED type/height Kconfig selection.
 
 ## What the previous successful build proves
@@ -36,8 +38,8 @@ This confirms that the earlier source revision and board overlay compiled in the
 2. Bring up the device and verify boot, OLED logo/status, Wi-Fi connection and local Web Admin.
 3. Verify the exact board revision and microphone pin mapping on the physical PCB. GPIO 4/5/6 is still provisional because upstream reports conflict.
 4. Test speaker output at the configured 24 kHz rate, microphone capture, two-way Gemini Live conversation, touch and volume controls.
-5. Test Web Admin Gemini settings and OTA only after the first installation and actual OTA partition layout are confirmed.
-6. Improve Gemini Live reconnect/session resumption and review transport shutdown/backpressure after basic hardware operation is proven.
+5. Run the updated manual workflow, verify both the application-only OTA image and merged USB image are produced, then test Web Admin OTA and rollback on the actual board.
+6. Verify the new Gemini WebSocket frame diagnostics on hardware, then improve reconnect/session resumption and review transport shutdown/backpressure.
 7. Before production use, replace long-lived device API-key provisioning with a safer short-lived token flow; current local HTTP/NVS setup is bring-up scope and is not production security.
 
 ## Working rules
