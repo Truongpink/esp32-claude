@@ -2,16 +2,16 @@
 
 ## Which file to upload
 
-Use the application-only image from the `ChatAI-TPIOS-v0.1.1-OTA` Actions artifact:
+Use the application-only image from the `ChatAI-TPIOS-v0.1.2-OTA` Actions artifact:
 
-`ChatAI-TPIOS-v0.1.1-OTA.bin`
+`ChatAI-TPIOS-v0.1.2-OTA.bin`
 
 Do not use the merged `USB-FLASH.bin` image for OTA. The merged image contains bootloader and partition-table data and is intended for USB flashing.
 
 ## Update procedure
 
-1. Build the firmware with the manual GitHub Actions workflow.
-2. Download and extract the `ChatAI-TPIOS-v0.1.1-OTA` artifact.
+1. Run the manual GitHub Actions workflow; it builds and publishes only the versioned OTA application image (no merged USB image).
+2. Download and extract the `ChatAI-TPIOS-v0.1.2-OTA` artifact.
 3. Connect the ESP32 to the same trusted Wi-Fi network as the phone.
 4. Open `http://<device-ip>/`.
 5. In **Cập nhật Firmware OTA**, choose the application-only `.bin` file and start the update.
