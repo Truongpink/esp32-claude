@@ -10,7 +10,7 @@ BOARD_SRC = ROOT / "firmware" / "board" / "chatai-tpios"
 BOARD_DST = UPSTREAM / "main" / "boards" / "chatai-tpios"
 
 VERSION = (ROOT / "firmware" / "VERSION").read_text(encoding="utf-8").strip()
-if not re.fullmatch(r"\\d+\\.\\d+\\.\\d+", VERSION):
+if not re.fullmatch(r"\d+\.\d+\.\d+", VERSION):
     raise SystemExit("firmware/VERSION must contain a semantic version such as 0.1.2")
 
 
