@@ -38,7 +38,7 @@ This is a successful CI compile, not yet a physical-board validation. The image 
 
 ## Next phase: physical bring-up
 
-1. Download `xiaozhi.bin` and flash over USB/serial with the matching partition table.
+1. Run the current manual workflow, download `ChatAI-TPIOS-v0.1.1-USB-FLASH`, and flash its `merged-binary.bin` over USB. The earlier successful run's `xiaozhi.bin` was app-only, not the complete USB image.
 2. Verify boot, OLED, Wi-Fi and local Web Admin on the actual board.
 3. Verify microphone wiring/pins; GPIO 4/5/6 remains provisional due conflicting upstream reports.
 4. Test speaker output at 24 kHz, microphone capture, two-way Gemini Live voice, buttons and volume.
