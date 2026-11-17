@@ -188,8 +188,18 @@ void GeminiLiveProtocol::HandleAudioPart(const cJSON* part) {
     }
 }
 void GeminiLiveProtocol::EmitTranscript(const char* type, const char* state, const char* text) {
-    if (!on_incoming_json_) return; cJSON* root = cJSON_CreateObject(); cJSON_AddStringToObject(root, "type", type);
-    if (state) cJSON_AddStringToObject(root, "state", state); if (text) cJSON_AddStringToObject(root, "text", text);
+    if (!on_incoming_json_) {
+        return;
+    }
+
+    cJSON* root = cJSON_CreateObject();
+    cJSON_AddStringToObject(root, "type", type);
+    if (state) {
+        cJSON_AddStringToObject(root, "state", state);
+    }
+    if (text) {
+        cJSON_AddStringToObject(root, "text", text);
+    }
     on_incoming_json_(root); cJSON_Delete(root);
 }
 void GeminiLiveProtocol::EmitTtsStop() { if (output_turn_started_) { EmitTranscript("tts", "stop", ""); output_turn_started_ = false; listening_ = false; audio_service_.EnablePcmBridge(false); } }
