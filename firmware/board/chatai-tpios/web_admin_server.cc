@@ -109,6 +109,7 @@ esp_err_t StatusHandler(httpd_req_t* req) {
 
     cJSON* root = cJSON_CreateObject();
     cJSON_AddStringToObject(root, "ip", wifi.GetIpAddress().c_str());
+    cJSON_AddStringToObject(root, "hostname", "chatai-tpios.local");
     cJSON_AddStringToObject(root, "ssid", wifi.GetSsid().c_str());
     cJSON_AddBoolToObject(root, "enabled", gemini.GetBool("enabled", false));
     cJSON_AddBoolToObject(root, "key_configured", !gemini.GetString("api_key").empty());
@@ -153,13 +154,29 @@ esp_err_t ConfigGetHandler(httpd_req_t* req) {
 }
 
 bool IsSameOrigin(httpd_req_t* req) {
-    const size_t length = httpd_req_get_hdr_value_len(req, "Origin");
-    if (length == 0) return true;
-    if (length >= 128) return false;
+    const size_t origin_length = httpd_req_get_hdr_value_len(req, "Origin");
+    if (origin_length == 0) return true;
+    const size_t host_length = httpd_req_get_hdr_value_len(req, "Host");
+    if (origin_length >= 128 || host_length == 0 || host_length >= 128) return false;
+
     char origin[128] = {};
-    if (httpd_req_get_hdr_value_str(req, "Origin", origin, sizeof(origin)) != ESP_OK) return false;
-    const std::string expected = "http://" + WifiManager::GetInstance().GetIpAddress();
-    return expected == origin;
+    char host[128] = {};
+    if (httpd_req_get_hdr_value_str(req, "Origin", origin, sizeof(origin)) != ESP_OK ||
+        httpd_req_get_hdr_value_str(req, "Host", host, sizeof(host)) != ESP_OK) {
+        return false;
+    }
+
+    constexpr char kHttpPrefix[] = "http://";
+    if (std::strncmp(origin, kHttpPrefix, sizeof(kHttpPrefix) - 1) != 0) return false;
+
+    std::string request_host(host);
+    if (request_host.size() > 3 && request_host.compare(request_host.size() - 3, 3, ":80") == 0) {
+        request_host.resize(request_host.size() - 3);
+    }
+    const bool allowed_host =
+        request_host == WifiManager::GetInstance().GetIpAddress() ||
+        request_host == "chatai-tpios.local";
+    return allowed_host && origin == std::string(kHttpPrefix) + request_host;
 }
 
 esp_err_t ConfigPostHandler(httpd_req_t* req) {
