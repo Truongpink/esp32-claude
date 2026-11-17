@@ -56,3 +56,18 @@ Gemini Live audio must bypass the Opus encoder and decoder:
 ## Not implemented yet
 
 This document is a source-verified design, not a claim that Gemini Live is already integrated. The next code change should add the raw PCM queue/playback seam first, then implement and test the dedicated Gemini protocol against that seam. Do not create a firmware build workflow or flash image until both paths are integrated and reviewed.
+
+
+## PCM bridge implementation status
+
+The upstream patcher now adds an optional, bounded PCM bridge to `AudioService`:
+
+- `EnablePcmBridge(true)` routes processed 16 kHz mono PCM frames from `AudioEngine::OnOutput` into a four-frame queue instead of the Opus encoder.
+- `PopPcmInput()` lets the Gemini transport drain captured frames without blocking the audio/AFE task.
+- `PushPcmPlayback()` queues decoded PCM directly for the existing speaker output task, bypassing Opus decoding.
+- `ClearPcmPlayback()` clears queued PCM for interruption handling.
+- The bridge defaults to disabled. When disabled, the original Opus encode/decode path remains selected.
+
+This is only the audio-service seam. It does not yet establish a Gemini WebSocket session, base64/JSON framing, 24 kHz output resampling, turn/VAD control, or reconnect/session-resumption behavior. The transport must validate the server's audio sample rate and convert to the codec's output rate before calling `PushPcmPlayback()`. A currently playing output frame may finish when `ClearPcmPlayback()` is called; interruption latency is therefore bounded by the current output frame.
+
+The patch is applied to the pinned upstream source at build preparation time by `scripts/apply_upstream_patches.py`. It has not been compiled or exercised on hardware yet.
