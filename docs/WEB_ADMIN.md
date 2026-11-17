@@ -11,3 +11,8 @@ The ChatAI TPIOS board starts a small HTTP server on port 80 after station Wi-Fi
 There is intentionally no PIN or login. Anyone with access to the same Wi-Fi network can change the Gemini configuration. The write endpoint rejects browser requests with a mismatched Origin and does not enable CORS, which reduces cross-origin browser abuse but is not authentication. Do not expose port 80 to the public Internet or an untrusted network.
 
 Firmware upload is not included in this first Web Admin step. The pinned upstream has a 16 MB partition table with OTA slots, but the project must confirm the exact build-selected partition table and flash configuration for this board before enabling a firmware write endpoint.
+
+
+The server uses plain HTTP on port 80. The API key therefore travels unencrypted over the local Wi-Fi connection when first saved or changed. Use only a trusted private Wi-Fi network; do not expose this port to the public Internet or an untrusted network. NVS storage is not a substitute for enabling ESP-IDF NVS encryption.
+
+The pinned upstream `sdkconfig.defaults` selects the 16 MB `partitions/v2/16m.csv` layout, which has two OTA app slots and an 8 MB assets partition. A pre-existing generated `sdkconfig` can override defaults, and the physical device's installed partition table is not verified. Confirm the actual build and device layout before enabling firmware upload.

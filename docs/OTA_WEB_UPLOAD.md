@@ -31,13 +31,9 @@ The first bring-up release should keep the original known-good firmware availabl
 
 ## Partition constraints
 
-The upstream XiaoZhi v2 16 MB partition table at the pinned source revision contains:
+The pinned upstream `sdkconfig.defaults` selects `partitions/v2/16m.csv` with a 16 MB flash setting. That table contains `ota_0` at offset 0x20000 with size 0x3F0000, `ota_1` with size 0x3F0000, and an `assets` partition at 0x800000 with size 8 MB.
 
-- `ota_0`: 0x20000, size 0x3F0000
-- `ota_1`: next OTA slot, size 0x3F0000
-- `assets`: 0x800000, size 8 MB
-
-This is a source reference, not permission to replace the board's current partition table. Before enabling OTA, inspect the actual build partition CSV and the currently installed device layout. The OTA app image must fit in one app slot. N16R8 is not by itself proof that a particular physical board is running this exact layout.
+This is the upstream default, not proof of the active generated `sdkconfig` or the layout already installed on the user's board. A previously generated `sdkconfig` may override defaults. Before enabling OTA, inspect the actual build partition CSV and the currently installed device layout. The OTA app image must fit in one app slot. N16R8 is not by itself proof that a particular physical board is running this exact layout.
 
 ## Minimal Web API
 
@@ -45,7 +41,7 @@ This is a source reference, not permission to replace the board's current partit
 - `GET /api/status`: report current firmware version, active partition and OTA capability; never return secrets.
 - The upload response reports accepted bytes and final validation result. The browser may show progress using upload events, but the device remains responsible for validating the image.
 
-Protect the local admin endpoints from accidental cross-origin requests. Do not expose OTA upload to an unauthenticated remote network; local AP/LAN access is the intended first-release scope.
+The current Web Admin has no PIN or login and uses plain HTTP. Anyone on the trusted LAN can change settings. If OTA is added under this no-login requirement, anyone on that LAN will also be able to replace firmware. Do not expose OTA upload to an untrusted network; local LAN access is the intended first-release scope.
 
 ## Not implemented yet
 
