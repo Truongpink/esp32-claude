@@ -73,6 +73,27 @@ GeminiLiveProtocol::Diagnostics GeminiLiveProtocol::GetDiagnostics() {
 }
 bool GeminiLiveProtocol::Start() { return true; }
 bool GeminiLiveProtocol::SendAudio(std::unique_ptr<AudioStreamPacket> packet) { (void)packet; return false; }
+bool GeminiLiveProtocol::SendLiveVoiceNotification(const std::string& text) {
+    if (text.empty() || !listening_ || output_turn_started_.load() || !IsAudioChannelOpened()) {
+        return false;
+    }
+
+    cJSON* root = cJSON_CreateObject();
+    cJSON* content = cJSON_AddObjectToObject(root, "clientContent");
+    cJSON* turns = cJSON_AddArrayToObject(content, "turns");
+    cJSON* turn = cJSON_CreateObject();
+    cJSON_AddStringToObject(turn, "role", "user");
+    cJSON* parts = cJSON_AddArrayToObject(turn, "parts");
+    cJSON* part = cJSON_CreateObject();
+    cJSON_AddStringToObject(part, "text", text.c_str());
+    cJSON_AddItemToArray(parts, part);
+    cJSON_AddItemToArray(turns, turn);
+    cJSON_AddBoolToObject(content, "turnComplete", true);
+
+    std::string message = PrintJson(root);
+    cJSON_Delete(root);
+    return !message.empty() && SendText(message);
+}
 bool GeminiLiveProtocol::IsAudioChannelOpened() const { return websocket_ && websocket_->IsConnected() && setup_complete_ && !error_occurred_; }
 bool GeminiLiveProtocol::SendText(const std::string& text) {
     if (!IsAudioChannelOpened()) return false;
