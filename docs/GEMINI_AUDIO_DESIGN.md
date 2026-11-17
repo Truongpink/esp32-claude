@@ -28,7 +28,7 @@ Gemini Live audio must bypass the Opus encoder and decoder:
 - Input packets should be short, bounded chunks (target 20–40 ms); do not accumulate long microphone buffers.
 - Outgoing audio is sent as Live API `realtimeInput.audio` JSON content (base64 inline data), not the XiaoZhi binary Opus packet framing.
 - Incoming `serverContent.modelTurn.parts[].inlineData` audio is base64-decoded and queued as PCM playback.
-- On server interruption, clear queued/in-flight playback promptly before accepting the next audio turn.
+- On server interruption or transport failure, disable microphone forwarding and clear queued PCM promptly; the speaker frame already inside the codec may finish.
 - Handle setup completion, server content, turn completion, go-away, session resumption and recoverable disconnects as explicit states.
 
 ## Minimal integration strategy
@@ -68,7 +68,7 @@ The upstream patcher now adds an optional, bounded PCM bridge to `AudioService`:
 - `ClearPcmPlayback()` clears queued PCM for interruption handling.
 - The bridge defaults to disabled. When disabled, the original Opus encode/decode path remains selected.
 
-The initial Gemini transport establishes a WebSocket setup session, splits 60 ms capture frames into three 20 ms uplink chunks, validates 24 kHz output MIME data, decodes PCM and queues it directly for `AudioOutputTask`. The target board codec is configured for 24 kHz, so no resampler is required for this board profile. PCM playback has a separate eight-task capacity while the original Opus decode path retains its two-task limit. `ClearPcmPlayback()` clears queued output and signals the existing playback-drained callback when appropriate; a currently playing frame may finish. Reconnect/session resumption remain outstanding. See [Gemini Live wire protocol](GEMINI_LIVE_WIRE_PROTOCOL.md) for the setup gate, JSON frames, PCM formats and control events.
+The initial Gemini transport establishes a WebSocket setup session, splits 60 ms capture frames into three 20 ms uplink chunks, validates 24 kHz output MIME data, decodes PCM and queues it directly for `AudioOutputTask`. Any fatal protocol/transport error now disables PCM capture, clears queued speaker PCM and exits the PCM playback mode before notifying the application. The target board codec is configured for 24 kHz, so no resampler is required for this board profile. PCM playback has a separate eight-task capacity while the original Opus decode path retains its two-task limit. `ClearPcmPlayback()` clears queued output and signals the existing playback-drained callback when appropriate; a currently playing frame may finish. Reconnect/session resumption remain outstanding. See [Gemini Live wire protocol](GEMINI_LIVE_WIRE_PROTOCOL.md) for the setup gate, JSON frames, PCM formats and control events.
 
 The patch is applied to the pinned upstream source at build preparation time by `scripts/apply_upstream_patches.py`. It has not been compiled or exercised on hardware yet.
 

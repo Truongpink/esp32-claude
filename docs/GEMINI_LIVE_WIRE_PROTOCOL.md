@@ -75,7 +75,7 @@ The current ChatAI TPIOS board profile configures codec output for 24 kHz. The t
 - `serverContent.turnComplete == true`: mark the logical turn complete; do not assume the hardware playback queue has already drained.
 - `goAway`: stop sending new audio and reconnect/resume according to the current API contract.
 - `sessionResumptionUpdate`: persist the opaque resumption handle only for the active device session and use it according to the API's expiry rules.
-- WebSocket close/error: stop mic forwarding, clear stale audio, apply bounded exponential reconnect backoff, then establish a new setup handshake.
+- WebSocket close/error: stop mic forwarding and clear stale speaker audio. Fatal errors currently return the application to idle; bounded exponential reconnect and session resumption are still pending.
 
 ## Memory and task rules
 

@@ -196,6 +196,10 @@ void GeminiLiveProtocol::EmitTtsStop() { if (output_turn_started_) { EmitTranscr
 void GeminiLiveProtocol::Fail(const std::string& message) {
     if (error_occurred_) return;
     error_occurred_ = true;
+    listening_ = false;
+    audio_service_.EnablePcmBridge(false);
+    audio_service_.EnablePcmPlaybackMode(false);
+    audio_service_.ClearPcmPlayback();
     if (!setup_complete_ && event_group_) xEventGroupSetBits(event_group_, kSetupFailed);
     if (on_network_error_) on_network_error_(message);
 }
