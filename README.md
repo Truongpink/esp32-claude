@@ -33,6 +33,6 @@ See [Gemini Live audio integration design](docs/GEMINI_AUDIO_DESIGN.md) for the 
 
 ## Important status
 
-The board overlay, initial Gemini Live PCM/WebSocket transport, and a basic unauthenticated local Web Admin are present. The Web Admin provides device status and Gemini configuration backed by NVS; firmware .bin upload is not implemented yet. The Gemini path and Web Admin have not been compile-tested or hardware-validated. Bounded reconnect/session resumption and secure short-lived token provisioning remain outstanding. Do not treat this as finished or production-ready firmware.
+The board overlay, initial Gemini Live PCM/WebSocket transport, and a basic unauthenticated local Web Admin are present. The Web Admin provides device status, Gemini configuration backed by NVS, and streamed .bin OTA to the inactive application slot. OTA selects the slot from the device's active partition table and validates the image before switching boot partitions. The Gemini path, Web Admin and OTA handler have not been compile-tested or hardware-validated. Bounded reconnect/session resumption and secure short-lived token provisioning remain outstanding. Do not treat this as finished or production-ready firmware.
 
 Build workflows will be added only after the required ChatAI features are integrated and statically checked. GitHub Actions are manual-only and are not run automatically by repository changes.

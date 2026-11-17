@@ -8,12 +8,21 @@
 #include <mutex>
 #include <string>
 #include <cstring>
+#include <algorithm>
+#include <atomic>
+#include <esp_app_desc.h>
+#include <esp_ota_ops.h>
+#include <esp_partition.h>
+#include <esp_system.h>
+#include <freertos/FreeRTOS.h>
+#include <freertos/task.h>
 
 namespace {
 constexpr char TAG[] = "WebAdmin";
 constexpr size_t kMaxBody = 4096;
 httpd_handle_t server = nullptr;
 std::mutex server_mutex;
+std::atomic<bool> ota_in_progress{false};
 
 const char kIndexHtml[] = R"HTML(
 <!doctype html><html lang="vi"><head><meta charset="utf-8">
@@ -40,7 +49,12 @@ button{border:0;border-radius:9px;padding:12px 18px;background:#4e8cff;color:#ff
 <label class="row"><input id="enabled" type="checkbox"> Bật Gemini Live</label>
 <button type="submit">Lưu cấu hình</button><p id="result"></p>
 </form></section>
-<p><small>Cấu hình Gemini có hiệu lực sau khi khởi động lại thiết bị. OTA firmware sẽ được bổ sung sau khi xác minh bảng phân vùng của đúng mạch.</small></p>
+<section><h2>Cập nhật firmware</h2>
+<label>Chọn firmware .bin</label><input id="firmware" type="file" accept=".bin,application/octet-stream">
+<button id="upload" type="button">Nạp firmware</button><p id="ota-result"></p>
+<small>Chỉ dùng file firmware ứng dụng dành cho ChatAI TPIOS. Không dùng file merged hoặc file bootloader.</small>
+</section>
+<p><small>Cấu hình Gemini có hiệu lực sau khi khởi động lại thiết bị. Không tắt nguồn khi đang cập nhật.</small></p>
 <script>
 const $=id=>document.getElementById(id);
 async function load(){
@@ -61,6 +75,21 @@ $('config').addEventListener('submit',async e=>{
   const data=await r.json();if(!r.ok)throw Error(data.error||'Không lưu được cấu hình');
   $('key').value='';$('result').textContent=data.message;await load();
  }catch(e){$('result').textContent=e.message}
+});
+$('upload').addEventListener('click',()=>{
+ const file=$('firmware').files[0];
+ if(!file){$('ota-result').textContent='Hãy chọn file .bin trước.';return}
+ if(!file.name.toLowerCase().endsWith('.bin')){$('ota-result').textContent='Chỉ chấp nhận file .bin.';return}
+ const button=$('upload');button.disabled=true;$('ota-result').textContent='Đang nạp 0%...';
+ const xhr=new XMLHttpRequest();xhr.open('POST','/api/ota');xhr.setRequestHeader('Content-Type','application/octet-stream');
+ xhr.upload.onprogress=e=>{if(e.lengthComputable)$('ota-result').textContent='Đang nạp '+Math.round(e.loaded/e.total*100)+'%...'};
+ xhr.onload=()=>{
+  let data={};try{data=JSON.parse(xhr.responseText)}catch{}
+  $('ota-result').textContent=data.message||data.error||(xhr.status===200?'Đã nạp firmware.':'Lỗi cập nhật firmware.');
+  if(xhr.status===200)button.disabled=true;else button.disabled=false;
+ };
+ xhr.onerror=()=>{button.disabled=false;$('ota-result').textContent='Mất kết nối khi nạp. Đừng ngắt nguồn; kiểm tra thiết bị trước khi thử lại.'};
+ xhr.send(file);
 });
 load();
 </script></body></html>
@@ -193,6 +222,100 @@ esp_err_t ConfigPostHandler(httpd_req_t* req) {
     SendJson(req, response);
     return ESP_OK;
 }
+void RestartAfterOta(void*) {
+    vTaskDelay(pdMS_TO_TICKS(2000));
+    esp_restart();
+}
+
+esp_err_t OtaPostHandler(httpd_req_t* req) {
+    if (!IsSameOrigin(req)) {
+        SendError(req, "403 Forbidden", "Cross-origin request rejected");
+        return ESP_OK;
+    }
+
+    bool expected = false;
+    if (!ota_in_progress.compare_exchange_strong(expected, true)) {
+        SendError(req, "409 Conflict", "A firmware update is already in progress");
+        return ESP_OK;
+    }
+
+    const esp_partition_t* target = esp_ota_get_next_update_partition(nullptr);
+    if (!target || target->type != ESP_PARTITION_TYPE_APP || req->content_len <= 0) {
+        ota_in_progress.store(false);
+        SendError(req, "400 Bad Request", "No available OTA application slot");
+        return ESP_OK;
+    }
+
+    const size_t total = static_cast<size_t>(req->content_len);
+    if (total > target->size) {
+        ota_in_progress.store(false);
+        SendError(req, "413 Payload Too Large", "Firmware image is larger than the inactive OTA slot");
+        return ESP_OK;
+    }
+
+    esp_ota_handle_t handle = 0;
+    esp_err_t result = esp_ota_begin(target, total, &handle);
+    if (result != ESP_OK) {
+        ota_in_progress.store(false);
+        ESP_LOGE(TAG, "esp_ota_begin failed: %s", esp_err_to_name(result));
+        SendError(req, "500 Internal Server Error", "Could not begin OTA write");
+        return ESP_OK;
+    }
+
+    char chunk[1024];
+    size_t received = 0;
+    while (received < total) {
+        const size_t wanted = std::min(sizeof(chunk), total - received);
+        const int count = httpd_req_recv(req, chunk, wanted);
+        if (count == HTTPD_SOCK_ERR_TIMEOUT) continue;
+        if (count <= 0) {
+            esp_ota_abort(handle);
+            ota_in_progress.store(false);
+            SendError(req, "400 Bad Request", "Firmware upload was interrupted");
+            return ESP_OK;
+        }
+
+        result = esp_ota_write(handle, chunk, static_cast<size_t>(count));
+        if (result != ESP_OK) {
+            esp_ota_abort(handle);
+            ota_in_progress.store(false);
+            ESP_LOGE(TAG, "esp_ota_write failed after %u bytes: %s",
+                     static_cast<unsigned>(received), esp_err_to_name(result));
+            SendError(req, "500 Internal Server Error", "Could not write firmware to flash");
+            return ESP_OK;
+        }
+        received += static_cast<size_t>(count);
+    }
+
+    result = esp_ota_end(handle);
+    if (result != ESP_OK) {
+        ota_in_progress.store(false);
+        ESP_LOGE(TAG, "OTA image validation failed: %s", esp_err_to_name(result));
+        SendError(req, "400 Bad Request", "Firmware image validation failed");
+        return ESP_OK;
+    }
+
+    result = esp_ota_set_boot_partition(target);
+    if (result != ESP_OK) {
+        ota_in_progress.store(false);
+        ESP_LOGE(TAG, "Could not select OTA partition: %s", esp_err_to_name(result));
+        SendError(req, "500 Internal Server Error", "Could not select the new firmware slot");
+        return ESP_OK;
+    }
+
+    cJSON* response = cJSON_CreateObject();
+    const BaseType_t restart_created =
+        xTaskCreate(RestartAfterOta, "ota_restart", 2048, nullptr, 5, nullptr);
+    cJSON_AddStringToObject(
+        response, "message",
+        restart_created == pdPASS
+            ? "Firmware hợp lệ. Thiết bị sẽ tự khởi động lại."
+            : "Firmware hợp lệ. Hãy khởi động lại thiết bị bằng nút nguồn.");
+    SendJson(req, response);
+    // Do not unlock: the boot partition now points to the validated image.
+    return ESP_OK;
+}
+
 } // namespace
 
 void WebAdminServer::Start() {
@@ -201,7 +324,7 @@ void WebAdminServer::Start() {
 
     httpd_config_t config = HTTPD_DEFAULT_CONFIG();
     config.server_port = 80;
-    config.max_uri_handlers = 4;
+    config.max_uri_handlers = 5;
     config.stack_size = 8192;
 
     if (httpd_start(&server, &config) != ESP_OK) {
@@ -215,6 +338,7 @@ void WebAdminServer::Start() {
         {.uri = "/api/status", .method = HTTP_GET, .handler = StatusHandler, .user_ctx = nullptr},
         {.uri = "/api/config", .method = HTTP_GET, .handler = ConfigGetHandler, .user_ctx = nullptr},
         {.uri = "/api/config", .method = HTTP_POST, .handler = ConfigPostHandler, .user_ctx = nullptr},
+        {.uri = "/api/ota", .method = HTTP_POST, .handler = OtaPostHandler, .user_ctx = nullptr},
     };
     bool ok = true;
     for (const auto& route : routes) {
@@ -228,6 +352,19 @@ void WebAdminServer::Start() {
         server = nullptr;
         ESP_LOGE(TAG, "Could not register local Web Admin routes");
         return;
+    }
+    // Reaching this point means board/audio initialization, Wi-Fi connection,
+    // and local HTTP route registration succeeded on the new image.
+    const esp_partition_t* running = esp_ota_get_running_partition();
+    esp_ota_img_states_t image_state;
+    if (esp_ota_get_state_partition(running, &image_state) == ESP_OK &&
+        image_state == ESP_OTA_IMG_PENDING_VERIFY) {
+        const esp_err_t validation = esp_ota_mark_app_valid_cancel_rollback();
+        if (validation == ESP_OK) {
+            ESP_LOGI(TAG, "OTA image passed local startup checks");
+        } else {
+            ESP_LOGE(TAG, "Could not mark OTA image valid: %s", esp_err_to_name(validation));
+        }
     }
     ESP_LOGI(TAG, "Local Web Admin started on port 80");
 }
