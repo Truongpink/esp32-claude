@@ -26,16 +26,22 @@ These are user-reported hardware results. Do not treat them as proof that every 
 ### Implemented in source; hardware verification still pending
 - ChatAI TPIOS board overlay for ESP32-S3.
 - Gemini Live WebSocket protocol integration and PCM audio paths (16 kHz mono PCM16 microphone input, 24 kHz mono PCM16 speaker output).
-- Web Admin configuration/status endpoints and NVS-backed Gemini settings and speaker volume.
+- Web Admin configuration/status endpoints and NVS-backed Gemini settings, speaker volume, assistant name, selected Live voice, response language, microphone gain, and custom wake phrase.
+- English MultiNet7 wake-word model enabled for ESP32-S3; default phrase is “Hey ChatAI”, with runtime phrase replacement and NVS persistence.
+- Both voice wake detection and the existing BOOT short-press activation are retained; BOOT long-press still enters Wi-Fi provisioning.
+- Gemini Live now defaults to realtime listening mode so the microphone path remains active during assistant playback for continuous turn-taking and barge-in; hardware behavior still needs verification.
+- Web Admin includes 30 Gemini Live prebuilt voice choices, language selection, microphone software gain, restart, and factory-reset controls.
+- OTA upload progress is also sent to the OLED status line while the image is written.
 - Application-only OTA upload to the inactive OTA partition, with image validation and boot-slot selection.
 - ESP-IDF rollback support, with the new image marked valid after application/protocol initialization completes without a startup error.
 - Manual-only GitHub Actions workflow now builds and publishes only the application OTA image; merged USB image generation and USB artifact upload have been removed.
 - Release version is read from `firmware/VERSION` (currently `0.1.2`) and injected into upstream `PROJECT_VER`, so the ESP application descriptor and OTA artifact use the same version.
 
 ### Not yet confirmed / next tests
-- The user reports that the device currently sounds like it is reading a TTS response rather than behaving like a natural Gemini Live voice conversation. Do not assume this proves a separate TTS service is being used. Trace the actual microphone uplink and Gemini Live response path before changing code.
-- Confirm true microphone-to-Gemini audio streaming and natural voice-to-voice behavior on hardware.
-- Current interaction appears to be push-to-talk (hold to speak, release to finish a turn); verify the actual control behavior and decide whether continuous conversation is required.
+- The user previously reported a TTS-like interaction. The source now uses Gemini Live realtime listening mode and keeps the microphone path active during assistant playback; verify natural voice-to-voice turn-taking and interruption on hardware.
+- Verify “Hey ChatAI” recognition, user-defined English wake phrases, BOOT activation, and wake-word interruption during an active session.
+- Verify the 30-voice selector and language setting against the selected Gemini Live model.
+- Verify microphone gain adjustment (0–20 dB) does not introduce unacceptable clipping or noise.
 - OTA has **not** yet been tested on hardware. The OTA file is reserved for testing future firmware versions after the current USB-installed firmware is known-good.
 - Verify OTA success, reboot into the new slot, persistence of Wi-Fi/Gemini settings, and rollback/recovery on the actual board.
 - Verify OLED, microphone capture quality, speaker output, buttons, and volume independently.
@@ -58,13 +64,13 @@ These are user-reported hardware results. Do not treat them as proof that every 
 - The semantic-version validation expression was checked after correction.
 - Source/workflow changes only: no GitHub Action, firmware build, OTA upload, or hardware test has been run for v0.1.2. The workflow still requires a manual run, followed by an actual OTA test on the board.
 
-## Next development requirements from user
+## Remaining development and verification
 
-1. Replace the current TTS-like interaction with genuine Gemini Live voice-to-voice audio conversation.
-2. Add Web Admin selection for Gemini Live prebuilt voices and persist the selected voice.
-3. Preserve saved Wi-Fi, Gemini API key, model, system prompt, voice, and volume settings across OTA. Show OTA update state/progress/result on the ESP32 OLED.
-4. After one initial wake/activation, keep the Gemini Live conversation open for continuous turn-taking without repeating the XiaoZhi wake word; support voice activity detection and interruption where feasible.
-5. For subsequent releases, use OTA rather than USB when the installed baseline and OTA compatibility are verified. Keep Actions fast and publish only one versioned OTA application binary.
+1. Verify the new continuous Gemini Live session and barge-in behavior on the actual board.
+2. Add a real Gemini connectivity test that does not start a user conversation.
+3. Verify Wi-Fi provisioning, restart, and factory reset from the local Web Admin.
+4. Verify OTA upload progress on OLED, settings persistence, boot-slot switch, and rollback on hardware.
+5. For subsequent releases, use OTA rather than USB once the installed baseline and OTA compatibility are verified. Keep Actions manual-only and publish one versioned OTA application binary.
 ## Recent compile fix
 
 The previous Actions compile failure was caused by calling `AudioCodec::SetOutputVolume()` while only the forward declaration was visible. The source was fixed by including `audio_codec.h` in `firmware/board/chatai-tpios/web_admin_server.cc`.
