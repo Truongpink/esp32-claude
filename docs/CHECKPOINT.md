@@ -188,3 +188,13 @@ The repository HEAD and fixed source file were re-fetched from `main`. Do not cl
 - Build and test the mDNS dependency and hostname resolution on the ESP32-S3. Confirm `http://chatai-tpios.local` opens from the user's iPhone on the same Wi-Fi; if the router blocks multicast/mDNS, retain the DHCP IP fallback.
 - Verify save/read-back for API key, model, assistant name, voice, language, system prompt, enabled state, wake phrase, microphone gain, and speaker volume; then reboot and verify persistence.
 - No GitHub Actions, firmware build, OTA upload, or hardware operation was triggered for these source changes.
+
+
+## Web Admin prompt and firmware artifact naming update (2026-11-18 ICT)
+
+- Increased the System Prompt limit from 1,024 to 3,072 UTF-8 bytes in both the Web Admin and server validation. The browser checks UTF-8 byte length before POST; the configuration request-body limit is 8,192 bytes.
+- The pinned upstream Settings implementation stores strings in the existing NVS partition. The prompt cap stays below the ESP-IDF NVS string-size ceiling; actual device testing must still verify a long prompt can be saved and read back alongside existing settings.
+- Added `firmware/BUILD_NUMBER` with initial value `2`; `firmware/VERSION` remains the semantic application version used by the firmware descriptor.
+- GitHub Actions now names the OTA BIN `chatai-esp32-2.bin` and the downloadable artifact ZIP `chatai-esp32-2.zip`. The ZIP is GitHub's artifact archive and contains the matching BIN. Future releases increment BUILD_NUMBER before the manual workflow run; each run creates a separate artifact and retention is 90 days.
+- The workflow remains `workflow_dispatch` only. No Action, build, flash, OTA, or hardware operation was triggered for this source update.
+- Hardware verification still required: save/read back a near-limit prompt, reboot persistence, and confirm downloaded artifact names/content.
