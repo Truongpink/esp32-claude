@@ -31,7 +31,7 @@ namespace {
 constexpr char TAG[] = "WebAdmin";
 constexpr size_t kMaxBody = 8192;
 constexpr size_t kOtaChunkSize = 1024;
-constexpr size_t kMaxSystemPromptBytes = 3072;
+constexpr size_t kMaxSystemPromptBytes = 3900;
 httpd_handle_t server = nullptr;
 std::mutex server_mutex;
 std::mutex ota_mutex;
