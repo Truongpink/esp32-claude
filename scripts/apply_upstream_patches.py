@@ -1,12 +1,18 @@
 #!/usr/bin/env python3
 """Apply the ChatAI TPIOS board overlay to the pinned XiaoZhi source tree."""
 from pathlib import Path
+import re
 import shutil
 
 ROOT = Path(__file__).resolve().parents[1]
 UPSTREAM = ROOT / "xiaozhi-src"
 BOARD_SRC = ROOT / "firmware" / "board" / "chatai-tpios"
 BOARD_DST = UPSTREAM / "main" / "boards" / "chatai-tpios"
+
+VERSION = (ROOT / "firmware" / "VERSION").read_text(encoding="utf-8").strip()
+if not re.fullmatch(r"\\d+\\.\\d+\\.\\d+", VERSION):
+    raise SystemExit("firmware/VERSION must contain a semantic version such as 0.1.2")
+
 
 def replace_once(path: Path, old: str, new: str) -> None:
     text = path.read_text(encoding="utf-8")
@@ -19,6 +25,13 @@ def replace_once(path: Path, old: str, new: str) -> None:
 
 if not (UPSTREAM / "CMakeLists.txt").is_file():
     raise SystemExit("Pinned upstream source not found at ./xiaozhi-src")
+
+# Keep the ESP application descriptor version aligned with firmware/VERSION.
+replace_once(
+    UPSTREAM / "CMakeLists.txt",
+    'set(PROJECT_VER "2.6.0")',
+    f'set(PROJECT_VER "{VERSION}")',
+)
 
 shutil.copytree(BOARD_SRC, BOARD_DST, dirs_exist_ok=True)
 PROTOCOL_SRC = ROOT / "firmware" / "protocols"
