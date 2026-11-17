@@ -15,12 +15,12 @@
   - 16 kHz mono PCM16 microphone uplink.
   - 24 kHz mono PCM16 speaker playback.
   - WebSocket setup handshake, audio streaming, transcription callbacks, turn completion and interruption handling.
-  - Gemini selection through NVS settings; existing XiaoZhi protocol remains the fallback when Gemini is not enabled/configured.
+  - Gemini Live is selected directly as the device protocol. The current firmware does not fall back to the XiaoZhi cloud protocol when Gemini is disabled or unconfigured.
 - Added the board profile and OLED SSD1306 128x64 Kconfig selection.
 - Added the local Web Admin source:
   - Device status and Gemini configuration backed by NVS.
   - No PIN/login, as requested; intended for trusted local Wi-Fi only.
-  - Streamed application `.bin` OTA endpoint targeting the inactive app partition and validating the image before selecting it.
+  - OTA upload and update flow are deferred; the current Web Admin exposes device status and Gemini configuration only.
 - Added a manual-only GitHub Actions workflow. It prepares upstream source, builds for ESP32-S3 and uploads only `xiaozhi.bin` as the workflow artifact payload.
 - Fixed the two compile blockers found in earlier runs: Gemini transcript indentation under `-Werror`, and OLED type/height Kconfig selection.
 
