@@ -21,6 +21,9 @@ if not (UPSTREAM / "CMakeLists.txt").is_file():
     raise SystemExit("Pinned upstream source not found at ./xiaozhi-src")
 
 shutil.copytree(BOARD_SRC, BOARD_DST, dirs_exist_ok=True)
+PROTOCOL_SRC = ROOT / "firmware" / "protocols"
+PROTOCOL_DST = UPSTREAM / "main" / "protocols"
+shutil.copytree(PROTOCOL_SRC, PROTOCOL_DST, dirs_exist_ok=True)
 
 kconfig = UPSTREAM / "main" / "Kconfig.projbuild"
 replace_once(
@@ -48,6 +51,50 @@ replace_once(
     'elseif(CONFIG_BOARD_TYPE_BREAD_COMPACT_WIFI)\n',
 )
 
+
+# Add the dedicated Gemini Live transport to the upstream component build.
+replace_once(
+    cmake,
+    '            "protocols/websocket_protocol.cc"\\n',
+    '            "protocols/websocket_protocol.cc"\\n'
+    '            "protocols/gemini_live_protocol.cc"\\n',
+)
+
+replace_once(
+    UPSTREAM / "main" / "application.cc",
+    '#include "websocket_protocol.h"\\n',
+    '#include "websocket_protocol.h"\\n'
+    '#include "gemini_live_protocol.h"\\n',
+)
+replace_once(
+    UPSTREAM / "main" / "application.cc",
+    '    if (ota_->HasMqttConfig()) {\\n'
+    '        protocol_ = std::make_unique<MqttProtocol>();\\n'
+    '    } else if (ota_->HasWebsocketConfig()) {\\n'
+    '        protocol_ = std::make_unique<WebsocketProtocol>();\\n'
+    '    } else {\\n'
+    '        ESP_LOGW(TAG, "No protocol specified in the OTA config, using MQTT");\\n'
+    '        protocol_ = std::make_unique<MqttProtocol>();\\n'
+    '    }\\n',
+    '    Settings gemini_settings("gemini", false);\\n'
+    '    const bool gemini_enabled = gemini_settings.GetBool("enabled", false);\\n'
+    '    const bool gemini_has_key = !gemini_settings.GetString("api_key").empty();\\n'
+    '    if (gemini_enabled && gemini_has_key) {\\n'
+    '        protocol_ = std::make_unique<GeminiLiveProtocol>(audio_service_);\\n'
+    '    } else {\\n'
+    '        if (gemini_enabled) {\\n'
+    '            ESP_LOGW(TAG, "Gemini Live enabled but API key is missing; using saved XiaoZhi protocol");\\n'
+    '        }\\n'
+    '        if (ota_->HasMqttConfig()) {\\n'
+    '            protocol_ = std::make_unique<MqttProtocol>();\\n'
+    '        } else if (ota_->HasWebsocketConfig()) {\\n'
+    '            protocol_ = std::make_unique<WebsocketProtocol>();\\n'
+    '        } else {\\n'
+    '            ESP_LOGW(TAG, "No protocol specified in the OTA config, using MQTT");\\n'
+    '            protocol_ = std::make_unique<MqttProtocol>();\\n'
+    '        }\\n'
+    '    }\\n',
+)
 
 # Add a bounded raw-PCM bridge for Gemini Live while preserving the default Opus path.
 def patch_pcm_audio_bridge() -> None:

@@ -1,0 +1,47 @@
+#ifndef CHATAI_GEMINI_LIVE_PROTOCOL_H
+#define CHATAI_GEMINI_LIVE_PROTOCOL_H
+#include "protocol.h"
+#include "audio_service.h"
+#include <web_socket.h>
+#include <freertos/FreeRTOS.h>
+#include <freertos/event_groups.h>
+#include <atomic>
+#include <memory>
+class GeminiLiveProtocol final : public Protocol {
+public:
+    explicit GeminiLiveProtocol(AudioService& audio_service);
+    ~GeminiLiveProtocol() override;
+    bool Start() override;
+    bool OpenAudioChannel() override;
+    void CloseAudioChannel(bool send_goodbye = true) override;
+    bool IsAudioChannelOpened() const override;
+    bool SendAudio(std::unique_ptr<AudioStreamPacket> packet) override;
+    void ProcessPending() override;
+    void SendStartListening(ListeningMode mode) override;
+    void SendStopListening() override;
+    void SendAbortSpeaking(AbortReason reason) override;
+    void SendWakeWordDetected(const std::string& wake_word) override;
+private:
+    static constexpr EventBits_t kSetupComplete = BIT0;
+    static constexpr EventBits_t kSetupFailed = BIT1;
+    static constexpr size_t kInputChunkSamples = 320;
+    static constexpr size_t kOutputChunkSamples = 1440;
+    AudioService& audio_service_;
+    std::shared_ptr<WebSocket> websocket_;
+    EventGroupHandle_t event_group_ = nullptr;
+    std::atomic<bool> setup_complete_{false}, listening_{false}, closing_{false};
+    std::atomic<bool> channel_open_notified_{false};
+    bool output_turn_started_ = false;
+    std::string api_key_, model_, system_instruction_, last_server_error_;
+    bool SendText(const std::string& text) override;
+    bool SendSetup();
+    bool SendAudioChunk(const int16_t* samples, size_t count);
+    bool SendAudioStreamEnd();
+    void HandleServerMessage(const cJSON* root);
+    void HandleServerContent(const cJSON* content);
+    void HandleAudioPart(const cJSON* part);
+    void EmitTranscript(const char* type, const char* state, const char* text);
+    void EmitTtsStop();
+    void Fail(const std::string& message);
+};
+#endif
