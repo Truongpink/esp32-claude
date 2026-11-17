@@ -117,6 +117,28 @@ replace_once(
 )
 
 
+# Keep the basic firmware independent from XiaoZhi cloud version/assets services.
+replace_once(
+    UPSTREAM / "main" / "application.cc",
+    '    // Create OTA object for activation process\n'
+    '    ota_ = std::make_unique<Ota>();\n'
+    '\n'
+    '    // Check for new assets version\n'
+    '    CheckAssetsVersion();\n'
+    '\n'
+    '    // Check for new firmware version\n'
+    '    CheckNewVersion();\n'
+    '\n'
+    '    // Initialize the protocol\n'
+    '    InitializeProtocol();\n',
+    '    // Keep the OTA object only for local version/status compatibility.\n'
+    '    // Cloud firmware and assets updates are deferred for the basic release.\n'
+    '    ota_ = std::make_unique<Ota>();\n'
+    '\n'
+    '    // Start Gemini Live without contacting XiaoZhi cloud services.\n'
+    '    InitializeProtocol();\n',
+)
+
 # Show the ChatAI TPIOS wordmark briefly before the ready status.
 replace_once(
     UPSTREAM / "main" / "application.cc",
