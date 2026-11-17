@@ -5,7 +5,7 @@
 **Last successful build source revision:** `39d50a15c64447eb33ba0733af0ee5b57ab512de`  
 **Build:** GitHub Actions run [#3](https://github.com/Truongpink/esp32-claude/actions/runs/44046363363) — **success**  
 **Build environment:** ESP-IDF v6.1, target `esp32s3`  
-**Artifact from that run:** `ChatAI-TPIOS-ESP32S3-firmware`, containing `xiaozhi.bin` only. The current workflow now creates `ChatAI-TPIOS-v0.1.1-USB-FLASH` with `ChatAI-TPIOS-v0.1.1-USB-FLASH.bin`; this newer workflow has not yet run.
+**Artifact from that run:** `ChatAI-TPIOS-ESP32S3-firmware`, containing `xiaozhi.bin` only. The current workflow renames the generated USB image to `ChatAI-TPIOS-v0.1.1-USB-FLASH.bin` and uploads it under `ChatAI-TPIOS-v0.1.1-USB-FLASH`; this newer workflow has not yet run.
 
 ## Implemented in source
 
@@ -21,7 +21,7 @@
   - Device status and Gemini configuration backed by NVS.
   - No PIN/login, as requested; intended for trusted local Wi-Fi only.
   - OTA upload and update flow are deferred; the current Web Admin exposes device status and Gemini configuration only.
-- Added a manual-only GitHub Actions workflow. The last successful run uploaded the application-only `xiaozhi.bin`; the current workflow configuration now runs `idf.py merge-bin` and uploads the complete `merged-binary.bin` USB image under the versioned `ChatAI-TPIOS-v0.1.1-USB-FLASH` artifact name. That updated workflow has not yet run.
+- Added a manual-only GitHub Actions workflow. The last successful run uploaded the application-only `xiaozhi.bin`; the current workflow configuration runs `idf.py merge-bin`, renames its generated output to `ChatAI-TPIOS-v0.1.1-USB-FLASH.bin`, and uploads that clearly named USB image under the versioned `ChatAI-TPIOS-v0.1.1-USB-FLASH` artifact name. That updated workflow has not yet run.
 - Fixed the two compile blockers found in earlier runs: Gemini transcript indentation under `-Werror`, and OLED type/height Kconfig selection.
 
 ## What the previous successful build proves
