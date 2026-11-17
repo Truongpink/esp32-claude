@@ -75,9 +75,19 @@ The patch is applied to the pinned upstream source at build preparation time by 
 
 ## Application event-loop integration findings
 
-The existing `Application` main loop still drains Opus packets on `MAIN_EVENT_SEND_AUDIO`. The patcher now also maps PCM-ready notifications to `MAIN_EVENT_PROTOCOL_PENDING`; the existing loop invokes `GeminiLiveProtocol::ProcessPending()` there. The receive callback parses bounded JSON/audio payloads and queues PCM with `PushPcmPlayback()`; speaker output remains in `AudioOutputTask`.
+The existing `Application` main loop still drains Opus packets on `MAIN_EVENT_SEND_AUDIO`. The patcher also maps raw-PCM-ready notifications to `MAIN_EVENT_PROTOCOL_PENDING`; the main loop invokes `GeminiLiveProtocol::ProcessPending()` there. The receive callback parses bounded JSON/audio payloads and queues PCM with `PushPcmPlayback()`; speaker output remains in `AudioOutputTask`.
 
-The upstream `WebSocket` implementation is supplied by `78/esp-ml307` and is already exposed through `Board::GetNetwork()->CreateWebSocket()`. Its send API accepts text frames and its default maximum outgoing payload is 65,535 bytes. The same component's debug connection log includes the URL path, so standard API-key query authentication must not be enabled until that log is redacted. Prefer the documented ephemeral-token endpoint with `Authorization: Token` when a token broker is available.
+**Turn-by-turn source trace (pinned upstream plus the ChatAI patcher):**
+
+1. The BOOT/chat toggle in Idle opens the Gemini WebSocket, waits for `setupComplete`, then enters `kDeviceStateListening`.
+2. `StartListeningAudio()` calls `GeminiLiveProtocol::SendStartListening()` (enables the PCM bridge) and then enables AFE voice processing.
+3. AFE `OnOutput` sends processed PCM frames to the bounded PCM queue. The callback raises `MAIN_EVENT_PROTOCOL_PENDING`; `ProcessPending()` sends 16 kHz PCM to `realtimeInput.audio`. Gemini's server VAD determines user-turn boundaries; the firmware does not synthesize a text request and call a separate TTS service.
+4. Gemini response audio arrives as 24 kHz PCM, is queued directly to the speaker, and is bracketed by the protocol's legacy `type: "tts"` UI events. In `Application::OnIncomingJson`, those events only change the Speaking/Listening display state and render transcript text; they do not invoke a TTS API.
+5. The selected listening mode is forced to `kListeningModeRealtime`. Consequently, the application does not disable AFE voice processing while Speaking. `EmitTtsStop()` returns the UI to Listening without disabling the PCM bridge; microphone forwarding remains active between assistant turns. Explicit stop/close and fatal transport errors still disable it.
+
+This establishes that the source is designed for Gemini Live voice-to-voice streaming and continuous multi-turn capture. It does **not** prove that the physical microphone is reaching the server continuously, that speaker echo is adequately cancelled, or that barge-in is reliable on the user's board; those require a firmware build and hardware test. The `tts` label is legacy UI event naming and is potentially confusing, but changing it would require a coordinated application/protocol event contract change and is not necessary for audio transport.
+
+The upstream `WebSocket` implementation is supplied by `78/esp-ml307` and is exposed through `Board::GetNetwork()->CreateWebSocket()`. Its send API accepts text frames and its default maximum outgoing payload is 65,535 bytes. The current transport code authenticates using an API-key query parameter; never log the full URL. Production should move to short-lived credentials from a trusted token broker.
 
 
 ## Gemini Live transport implementation status
