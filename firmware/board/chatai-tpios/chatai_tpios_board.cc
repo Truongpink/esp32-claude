@@ -128,13 +128,13 @@ private:
     }
 
     void InitializeButtons() {
-        boot_button_.OnClick([this]() {
-            auto& app = Application::GetInstance();
-            if (app.GetDeviceState() == kDeviceStateStarting) {
-                EnterWifiConfigMode();
-                return;
-            }
-            app.ToggleChatState();
+        // Hold BOOT for 2 seconds to reopen Wi-Fi setup after normal startup.
+        boot_button_.OnLongPress([this]() {
+            ESP_LOGI(TAG, "BOOT long-press: entering Wi-Fi configuration mode");
+            EnterWifiConfigMode();
+        });
+        boot_button_.OnClick([]() {
+            Application::GetInstance().ToggleChatState();
         });
         touch_button_.OnPressDown([this]() {
             Application::GetInstance().StartListening();
@@ -181,7 +181,7 @@ private:
 
 public:
     ChatAITPIOSBoard() :
-        boot_button_(BOOT_BUTTON_GPIO),
+        boot_button_(BOOT_BUTTON_GPIO, false, 2000),
         touch_button_(TOUCH_BUTTON_GPIO),
         volume_up_button_(VOLUME_UP_BUTTON_GPIO),
         volume_down_button_(VOLUME_DOWN_BUTTON_GPIO) {
