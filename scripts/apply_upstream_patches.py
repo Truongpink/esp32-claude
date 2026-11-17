@@ -25,6 +25,19 @@ PROTOCOL_SRC = ROOT / "firmware" / "protocols"
 PROTOCOL_DST = UPSTREAM / "main" / "protocols"
 shutil.copytree(PROTOCOL_SRC, PROTOCOL_DST, dirs_exist_ok=True)
 
+# Brand the first-boot provisioning network and keep OTA out of the basic release UI.
+wifi_board = UPSTREAM / "main" / "boards" / "common" / "wifi_board.cc"
+replace_once(
+    wifi_board,
+    'config.ssid_prefix = "Xiaozhi";',
+    'config.ssid_prefix = "ChatAI-TPIOS";',
+)
+replace_once(
+    wifi_board,
+    "config.show_ota_config = true;",
+    "config.show_ota_config = false;",
+)
+
 kconfig = UPSTREAM / "main" / "Kconfig.projbuild"
 replace_once(
     kconfig,
