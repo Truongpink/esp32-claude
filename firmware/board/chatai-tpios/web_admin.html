@@ -322,7 +322,13 @@ async function loadAdmin() {
     '\nAPI key: ' + (status.key_configured ? 'Đã lưu' : 'Chưa cấu hình') +
     '\nFirmware: ' + (status.version || 'unknown') +
     '\nPhân vùng đang chạy: ' + (status.partition || 'unknown');
+  $('botName').value = config.bot_name || 'ChatAI';
   $('model').value = config.model || 'gemini-3.8-live';
+  $('voiceName').value = config.voice_name || 'Puck';
+  $('languageCode').value = config.language_code || 'vi-VN';
+  $('wakeWord').value = config.wake_word || 'Hey ChatAI';
+  $('micGain').value = config.mic_gain === undefined ? 0 : config.mic_gain;
+  $('micGainValue').textContent = $('micGain').value + ' dB';
   $('systemPrompt').value = config.system_prompt || '';
   $('geminiEnabled').checked = !!config.enabled;
   $('volume').value = config.volume === undefined ? 70 : config.volume;
@@ -332,7 +338,7 @@ async function loadAdmin() {
     '\nSlot cập nhật: ' + (status.ota_target || 'không khả dụng') +
     '\nDung lượng slot: ' + (status.ota_max_bytes ? (status.ota_max_bytes / 1048576).toFixed(2) + ' MB' : '—');
   showSection('statusSection'); showSection('geminiSection'); showSection('audioSection');
-  showSection('featuresSection'); showSection('oledSection'); showSection('otaSection');
+  showSection('featuresSection'); showSection('oledSection'); showSection('otaSection'); showSection('deviceActionsSection');
   $('saveWrap').classList.remove('hidden');
   if (!status.ota_enabled || !status.ota_target || status.ota_target === 'unavailable' || !status.ota_max_bytes) {
     $('otaBtn').disabled = true;
@@ -341,11 +347,17 @@ async function loadAdmin() {
 }
 
 $('volume').addEventListener('input', () => { $('volumeValue').textContent = $('volume').value + '%'; });
+$('micGain').addEventListener('input', () => { $('micGainValue').textContent = $('micGain').value + ' dB'; });
 $('saveBtn').addEventListener('click', async () => {
   $('saveBtn').disabled = true;
   $('geminiResult').textContent = 'Đang lưu cấu hình...';
   const payload = {
+    bot_name:$('botName').value.trim(),
     model:$('model').value.trim(),
+    voice_name:$('voiceName').value,
+    language_code:$('languageCode').value,
+    wake_word:$('wakeWord').value.trim(),
+    mic_gain:Number($('micGain').value),
     system_prompt:$('systemPrompt').value.trim(),
     enabled:$('geminiEnabled').checked,
     volume:Number($('volume').value)
@@ -367,6 +379,27 @@ $('saveBtn').addEventListener('click', async () => {
     toast('Lưu cấu hình thất bại', true);
   } finally { $('saveBtn').disabled = false; }
 });
+
+async function postDeviceAction(path, confirmText) {
+  if (!confirm(confirmText)) return;
+  $('rebootBtn').disabled = true;
+  $('factoryResetBtn').disabled = true;
+  $('deviceActionResult').textContent = 'Đang gửi yêu cầu...';
+  try {
+    const response = await fetch(path, {method:'POST'});
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error || 'Không thực hiện được yêu cầu');
+    $('deviceActionResult').textContent = data.message || 'Đã gửi yêu cầu.';
+  } catch (error) {
+    $('deviceActionResult').textContent = error.message;
+    $('rebootBtn').disabled = false;
+    $('factoryResetBtn').disabled = false;
+  }
+}
+$('rebootBtn').addEventListener('click', () =>
+  postDeviceAction('/api/reboot', 'Khởi động lại ChatAI TPIOS?'));
+$('factoryResetBtn').addEventListener('click', () =>
+  postDeviceAction('/api/factory-reset', 'Khôi phục cài đặt gốc? Wi-Fi, API key và cấu hình đã lưu sẽ bị xóa.'));
 
 $('otaBtn').addEventListener('click', () => {
   const file = $('firmwareFile').files[0];
