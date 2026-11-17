@@ -1,28 +1,40 @@
 # Local Web Admin
 
-The device has two distinct local web entry points, depending on its Wi-Fi mode:
+The device has two local web entry points:
 
-- **Wi-Fi setup (AP mode):** hold the BOOT button for 2 seconds after startup. Connect the phone to `ChatAI-TPIOS-<suffix>` and open `http://192.168.4.1/`. The ChatAI page uses the existing provisioning endpoints to scan networks, test credentials, save them, and exit setup mode.
-- **Device administration (station mode):** after the ESP32 joins the home Wi-Fi, its setup AP is stopped. Open `http://<device-ip>/` from a phone or computer on the same LAN. The IP is shown by `GET /api/status` and can also be found in the router's connected-device list. The same embedded ChatAI page is served in both modes; Wi-Fi setup controls appear in AP mode and Gemini settings appear in station mode.
+- **Wi-Fi setup (AP mode):** hold BOOT for 2 seconds. Connect to \`ChatAI-TPIOS-<suffix>\` and open \`http://192.168.4.1/\`. The page uses the pinned provisioning server's existing \`/scan\`, \`/submit\`, and \`/exit\` handlers.
+- **Device administration (station mode):** after joining the home Wi-Fi, open \`http://<device-ip>/\` from a device on the same LAN. The current IP is shown by \`GET /api/status\` and in the router's client list.
 
-The two addresses are not interchangeable: `192.168.4.1` is the ESP32's AP address and is only available while setup AP mode is active. In station mode, use the LAN IP assigned by the router.
+The AP address and station address are different. \`192.168.4.1\` is available only while the setup AP is active. After Wi-Fi setup, use the router-assigned LAN IP.
 
-The ChatAI TPIOS board starts its local HTTP server on port 80 after station Wi-Fi connects and stops it when Wi-Fi disconnects or enters provisioning mode. In AP mode, the pinned `78/esp-wifi-connect` server remains the sole port-80 server; its embedded page is replaced during the build with the same ChatAI HTML asset. The upstream `/scan`, `/submit`, and `/exit` handlers are retained.
+## Supported controls
 
-- Open `http://<device-ip>/` from a browser on the same LAN.
-- `GET /api/status` reports the IP, SSID, Gemini enabled state, and whether an API key is configured. It never returns the key.
-- `GET /api/config` returns the model and system prompt, but not the API key.
-- `POST /api/config` stores the Gemini settings in NVS. A blank API-key field preserves the previously saved key.
-- Configuration is selected when the application initializes its protocol, so the page asks the user to restart the device after saving.
+- \`GET /api/status\`: Wi-Fi SSID/IP, Gemini enabled state, API-key configured flag, firmware version, running partition, inactive OTA target/size, and saved speaker volume. The API key itself is never returned.
+- \`GET /api/config\`: Gemini model, system prompt, enabled state, and speaker volume.
+- \`POST /api/config\`: saves Gemini model/prompt/enabled/API key and speaker volume in NVS. An omitted or blank API key preserves the saved key. Gemini changes take effect after reboot; speaker volume is applied immediately and restored at startup.
+- \`POST /api/ota\`: accepts one raw application-only firmware \`.bin\` body as \`application/octet-stream\`. The handler checks that the dual OTA slots and OTA data partition exist, limits the upload to the inactive slot, streams data to flash, validates the image with ESP-IDF OTA APIs, selects the new boot partition, then restarts.
 
-There is intentionally no PIN or login. Anyone with access to the same Wi-Fi network can change the Gemini configuration. The write endpoint rejects browser requests with a mismatched Origin and does not enable CORS, which reduces cross-origin browser abuse but is not authentication. Do not expose port 80 to the public Internet or an untrusted network.
+The firmware page follows the original dark/purple AI Voice Bot layout. Wi-Fi controls are shown in AP mode. Gemini, speaker volume, device status, and OTA controls are shown in station mode. Microphone gain, wake-word enablement, and OLED display modes are not exposed as active controls because the current board firmware does not yet implement configuration APIs for them.
 
-Firmware upload is not included in this first Web Admin step. The pinned upstream has a 16 MB partition table with OTA slots, but the project must confirm the exact build-selected partition table and flash configuration for this board before enabling a firmware write endpoint.
+## OTA image requirements
 
+Upload only the application image named \`ChatAI-TPIOS-v0.1.1-OTA.bin\` from the OTA artifact. Do **not** upload \`ChatAI-TPIOS-v0.1.1-USB-FLASH.bin\`: the USB image includes bootloader/partition data and is intended for first-time USB flashing, not the app OTA partition.
 
-The server uses plain HTTP on port 80. The API key therefore travels unencrypted over the local Wi-Fi connection when first saved or changed. Use only a trusted private Wi-Fi network; do not expose this port to the public Internet or an untrusted network. NVS storage is not a substitute for enabling ESP-IDF NVS encryption.
+The pinned 16 MB partition layout defines two 0x3F0000-byte app slots (\`ota_0\` and \`ota_1\`) plus the \`otadata\` partition. The handler also checks the actual partition table at runtime before accepting an upload. The image must fit the inactive slot. A successful upload selects the inactive slot and reboots.
 
-The pinned upstream `sdkconfig.defaults` selects the 16 MB `partitions/v2/16m.csv` layout, which has two OTA app slots and an 8 MB assets partition. A pre-existing generated `sdkconfig` can override defaults, and the physical device's installed partition table is not verified. Confirm the actual build and device layout before enabling firmware upload.
+ESP-IDF rollback is enabled. On the next boot, the patched activation task marks the new app valid only after the application has initialized its selected protocol without a startup error. If the device resets before validation, the bootloader can roll back to the previous slot. This startup check does not prove that a later Gemini cloud session will succeed.
 
+## Security and recovery
 
-The build first configures ESP-IDF so Component Manager downloads the pinned `78/esp-wifi-connect` dependency, applies `scripts/patch_wifi_portal.py` to its embedded HTML asset, reconfigures CMake to regenerate the embedded file, and only then compiles. The patch script requires exactly one component manifest matching version `3.3.3` and verifies the expected provisioning routes before changing the asset.
+There is no PIN/login. Anyone on the same trusted LAN can change configuration or upload firmware. The browser write endpoints reject mismatched Origin headers, but this is not authentication. The server uses plain HTTP, so the API key is not encrypted while being sent over Wi-Fi. Do not expose port 80 to the public Internet or an untrusted network.
+
+Keep the USB flash image from the same release as a recovery path. Do not remove power during OTA. If an upload fails validation, the running firmware remains selected. If the new firmware fails during startup validation, ESP-IDF rollback should restore the previous app slot.
+
+## Build flow
+
+The manual-only GitHub Actions workflow prepares the pinned XiaoZhi source, patches the AP portal asset, reconfigures, and builds. It publishes two separate artifacts:
+
+- \`ChatAI-TPIOS-v0.1.1-USB-FLASH\`: merged image for USB flashing.
+- \`ChatAI-TPIOS-v0.1.1-OTA\`: application-only image for Web Admin OTA.
+
+The workflow remains \`workflow_dispatch\` only. It is not triggered by push or pull requests.
