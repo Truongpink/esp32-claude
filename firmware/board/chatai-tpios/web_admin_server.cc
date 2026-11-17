@@ -326,6 +326,9 @@ esp_err_t OtaUploadHandler(httpd_req_t* req) {
         return ESP_OK;
     }
 
+    auto display = Board::GetInstance().GetDisplay();
+    display->SetStatus("OTA kiem tra");
+
     const auto* ota0 = esp_partition_find_first(ESP_PARTITION_TYPE_APP, ESP_PARTITION_SUBTYPE_APP_OTA_0, "ota_0");
     const auto* ota1 = esp_partition_find_first(ESP_PARTITION_TYPE_APP, ESP_PARTITION_SUBTYPE_APP_OTA_1, "ota_1");
     const auto* otadata = esp_partition_find_first(ESP_PARTITION_TYPE_DATA, ESP_PARTITION_SUBTYPE_DATA_OTA, "otadata");
@@ -336,10 +339,12 @@ esp_err_t OtaUploadHandler(httpd_req_t* req) {
         target == running || target->type != ESP_PARTITION_TYPE_APP ||
         (target->subtype != ESP_PARTITION_SUBTYPE_APP_OTA_0 &&
          target->subtype != ESP_PARTITION_SUBTYPE_APP_OTA_1)) {
+        display->SetStatus("OTA loi phan vung");
         SendError(req, "503 Service Unavailable", "A valid dual-slot OTA partition layout was not found");
         return ESP_OK;
     }
     if (static_cast<size_t>(req->content_len) > target->size) {
+        display->SetStatus("OTA file qua lon");
         SendError(req, "413 Content Too Large", "Firmware image exceeds the inactive OTA slot");
         return ESP_OK;
     }
@@ -347,13 +352,13 @@ esp_err_t OtaUploadHandler(httpd_req_t* req) {
     esp_ota_handle_t handle = 0;
     esp_err_t err = esp_ota_begin(target, req->content_len, &handle);
     if (err != ESP_OK) {
+        display->SetStatus("OTA loi bat dau");
         ESP_LOGE(TAG, "esp_ota_begin failed: %s", esp_err_to_name(err));
         SendError(req, "500 Internal Server Error", "Could not start writing the OTA image");
         return ESP_OK;
     }
 
-    auto display = Board::GetInstance().GetDisplay();
-    display->SetStatus("OTA 0%");
+    display->SetStatus("OTA dang tai 0%");
     uint8_t buffer[kOtaChunkSize];
     size_t remaining = static_cast<size_t>(req->content_len);
     size_t written = 0;
@@ -363,6 +368,7 @@ esp_err_t OtaUploadHandler(httpd_req_t* req) {
         const int received = httpd_req_recv(req, reinterpret_cast<char*>(buffer), wanted);
         if (received <= 0) {
             esp_ota_abort(handle);
+            display->SetStatus("OTA loi tai");
             ESP_LOGE(TAG, "OTA upload interrupted after %u bytes", static_cast<unsigned>(written));
             SendError(req, "400 Bad Request", "Firmware upload was interrupted");
             return ESP_OK;
@@ -370,6 +376,7 @@ esp_err_t OtaUploadHandler(httpd_req_t* req) {
         err = esp_ota_write(handle, buffer, static_cast<size_t>(received));
         if (err != ESP_OK) {
             esp_ota_abort(handle);
+            display->SetStatus("OTA loi ghi");
             ESP_LOGE(TAG, "esp_ota_write failed: %s", esp_err_to_name(err));
             SendError(req, "500 Internal Server Error", "Could not write firmware to the inactive slot");
             return ESP_OK;
@@ -385,21 +392,25 @@ esp_err_t OtaUploadHandler(httpd_req_t* req) {
         }
     }
 
+    display->SetStatus("OTA kiem tra file");
     err = esp_ota_end(handle);
     if (err != ESP_OK) {
+        display->SetStatus("OTA file khong hop le");
         ESP_LOGE(TAG, "OTA image validation failed: %s", esp_err_to_name(err));
         SendError(req, "400 Bad Request", "Firmware image is invalid or incompatible");
         return ESP_OK;
     }
+    display->SetStatus("OTA chuan bi cai");
     err = esp_ota_set_boot_partition(target);
     if (err != ESP_OK) {
+        display->SetStatus("OTA loi chon slot");
         ESP_LOGE(TAG, "esp_ota_set_boot_partition failed: %s", esp_err_to_name(err));
         SendError(req, "500 Internal Server Error", "Could not select the new firmware for boot");
         return ESP_OK;
     }
 
     ESP_LOGI(TAG, "OTA image accepted: %u bytes -> %s", static_cast<unsigned>(written), target->label);
-    display->SetStatus("OTA hoan tat");
+    display->SetStatus("OTA khoi dong");
     cJSON* response = cJSON_CreateObject();
     cJSON_AddStringToObject(response, "message", "Firmware đã được xác thực và cài đặt. Thiết bị đang khởi động lại.");
     SendJson(req, response);
