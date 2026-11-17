@@ -286,9 +286,9 @@ async function loadAdmin() {
   showSection('statusSection'); showSection('geminiSection'); showSection('audioSection');
   showSection('featuresSection'); showSection('oledSection'); showSection('otaSection');
   $('saveWrap').classList.remove('hidden');
-  if (!status.ota_target || status.ota_target === 'unavailable' || !status.ota_max_bytes) {
+  if (!status.ota_enabled || !status.ota_target || status.ota_target === 'unavailable' || !status.ota_max_bytes) {
     $('otaBtn').disabled = true;
-    $('otaResult').textContent = 'Thiết bị không báo phân vùng OTA hợp lệ.';
+    $('otaResult').textContent = 'OTA chưa được bật hoặc thiết bị không có phân vùng OTA hợp lệ.';
   }
 }
 
