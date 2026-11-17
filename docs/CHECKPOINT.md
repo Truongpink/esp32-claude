@@ -79,6 +79,13 @@ Fix commit: `5fd0106b48815a40fa93ed2077ec6a8f47c13cf9`.
 
 The repository HEAD and fixed source file were re-fetched from `main`. Do not claim a post-fix Actions build passed unless a newer run is inspected.
 
+## Latest source-only feature batch
+
+- Committed to `main` through `e096e9e` (wake phrase, continuous listening, Web Admin voice/language/mic gain, restart/factory reset, and OLED OTA progress).
+- The HTML JavaScript syntax, Web Admin element references, config JSON, API route count, and pinned-upstream patch anchors were checked.
+- No GitHub Actions, firmware build, OTA upload, or hardware operation was run. These changes are not yet compile-verified.
+- Keep `firmware/VERSION` at `0.1.2` until the next build is explicitly authorized; the next build should use `0.1.3`.
+
 ## Project implementation notes
 
 - Upstream XiaoZhi source is pinned to commit `4de00aed740595a8713b01f8332b9b2cf30685bc`.
