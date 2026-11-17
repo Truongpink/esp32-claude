@@ -4,7 +4,7 @@ Firmware project based on the upstream XiaoZhi ESP32 codebase, pinned to **v2.6.
 
 ## Current repository state
 
-This repository contains the ChatAI TPIOS hardware-board overlay, Gemini Live protocol, local Web Admin, OTA upload handler, and an idempotent source patcher. The pinned upstream firmware is fetched at preparation time; it is not copied wholesale into this repository.
+This repository contains the ChatAI TPIOS hardware-board overlay, Gemini Live protocol, PCM bridge integration, local Web Admin, streamed OTA upload handler, and an idempotent source patcher. The pinned upstream firmware is fetched at preparation time; it is not copied wholesale into this repository.
 
 - Target: ESP32-S3
 - Board profile: ChatAI TPIOS (separate board identity; does not overwrite the upstream Bread Compact profile)
@@ -13,6 +13,39 @@ This repository contains the ChatAI TPIOS hardware-board overlay, Gemini Live pr
 - Upstream source: https://github.com/78/xiaozhi-esp32
 - Pinned upstream tag: `v2.6.0`
 - Pinned upstream commit: `4de00aed740595a8713b01f8332b9b2cf30685bc`
+
+## Build status — successful
+
+The manual GitHub Actions workflow completed successfully on 2026-11-17:
+
+- Run: [Build ChatAI TPIOS firmware #3](https://github.com/Truongpink/esp32-claude/actions/runs/44046363363)
+- Branch / commit: `main` / `39d50a15c64447eb33ba0733af0ee5b57ab512de`
+- Toolchain: ESP-IDF v6.1, target `esp32s3`
+- All workflow steps passed, including upstream preparation, compilation and artifact upload.
+- Artifact: `ChatAI-TPIOS-ESP32S3-firmware`; its payload is the application image `xiaozhi.bin` only.
+
+This is a successful CI compile, not yet a physical-board validation. The image has not been confirmed flashed or tested on the user's device.
+
+## Implemented source features
+
+- Separate ChatAI TPIOS ESP32-S3 board overlay and OLED SSD1306 128×64 configuration.
+- Reproducible fetch of the pinned XiaoZhi source and idempotent overlay patching.
+- Initial Gemini Live WebSocket protocol and PCM bridge (16 kHz mono PCM16 input, 24 kHz mono PCM16 output), with transcription, turn-complete and interruption handling.
+- Gemini configuration stored in NVS and selected only when enabled/configured; upstream XiaoZhi protocol remains the fallback.
+- Local Web Admin for status and Gemini settings, without PIN/login as requested.
+- Local streamed application `.bin` OTA handler that writes to the inactive app slot and validates the image before changing the boot partition.
+- Manual-only GitHub Actions build workflow; no push/PR build triggers.
+
+## Next phase: physical bring-up
+
+1. Download `xiaozhi.bin` and flash over USB/serial with the matching partition table.
+2. Verify boot, OLED, Wi-Fi and local Web Admin on the actual board.
+3. Verify microphone wiring/pins; GPIO 4/5/6 remains provisional due conflicting upstream reports.
+4. Test speaker output at 24 kHz, microphone capture, two-way Gemini Live voice, buttons and volume.
+5. Test OTA only after confirming the installed partition table and first known-good boot.
+6. Then improve reconnect/session resumption and production credential provisioning.
+
+The exact hardware revision and microphone mapping are not yet confirmed. The local Web Admin uses plain HTTP on a trusted LAN and the current direct API-key/NVS path is bring-up scope, not production-grade security. Do not expose port 80 to the public Internet.
 
 ## Prepare and build locally
 
@@ -27,12 +60,13 @@ idf.py build
 
 The preparation script fetches the pinned upstream commit, verifies the exact revision, and applies the board/protocol overlay. It refuses to replace a non-Git directory or silently switch an existing checkout to another commit. It does not flash hardware or start any GitHub Actions workflow.
 
-## Architecture notes
+## Documentation
 
-See [Gemini Live audio integration design](docs/GEMINI_AUDIO_DESIGN.md) and [Gemini Live wire protocol](docs/GEMINI_LIVE_WIRE_PROTOCOL.md) for the protocol and PCM pipeline. See [hardware evidence and unresolved pins](docs/HARDWARE.md) before selecting GPIOs, [local Web Admin](docs/WEB_ADMIN.md) for settings, and [OTA upload](docs/OTA_WEB_UPLOAD.md) for the local `.bin` update path.
+- [Project checkpoint](docs/CHECKPOINT.md)
+- [Gemini Live audio integration design](docs/GEMINI_AUDIO_DESIGN.md)
+- [Gemini Live wire protocol](docs/GEMINI_LIVE_WIRE_PROTOCOL.md)
+- [Hardware evidence and unresolved pins](docs/HARDWARE.md)
+- [Local Web Admin](docs/WEB_ADMIN.md)
+- [OTA upload](docs/OTA_WEB_UPLOAD.md)
 
-## Important status
-
-The board overlay, initial Gemini Live PCM/WebSocket transport, and a basic unauthenticated local Web Admin are present. The Web Admin provides device status, Gemini configuration backed by NVS, and streamed .bin OTA to the inactive application slot. OTA selects the slot from the device's active partition table and validates the image before switching boot partitions. The Gemini path, Web Admin and OTA handler have not been compile-tested or hardware-validated. Bounded reconnect/session resumption and secure short-lived token provisioning remain outstanding. Do not treat this as finished or production-ready firmware.
-
-A manual-only GitHub Actions workflow is available at Actions → Build ChatAI TPIOS firmware → Run workflow. It prepares the pinned upstream source, builds for ESP32-S3 with ESP-IDF v6.1, and uploads only `xiaozhi.bin` as the application firmware artifact. It does not run on push or pull requests. The workflow has been added but has not yet been dispatched or build-validated.
+The workflow is manual-only: Actions → Build ChatAI TPIOS firmware → Run workflow. Do not add automatic push/PR triggers.
