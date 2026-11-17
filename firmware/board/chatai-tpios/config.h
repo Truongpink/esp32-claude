@@ -52,8 +52,9 @@
 #error "OLED display type is not selected"
 #endif
 
-#define DISPLAY_MIRROR_X false
-#define DISPLAY_MIRROR_Y false
+// Mirror both axes to rotate the OLED image by 180 degrees.
+#define DISPLAY_MIRROR_X true
+#define DISPLAY_MIRROR_Y true
 
 
 // A MCP Test: Control a lamp
