@@ -81,8 +81,9 @@ The repository HEAD and fixed source file were re-fetched from `main`. Do not cl
 
 ## Latest source-only feature batch
 
-- Committed to `main` through `14c2bc4` (wake phrase, continuous listening, Web Admin voice/language/mic gain, Wi-Fi reconfiguration, restart/factory reset, and OLED OTA progress).
+- Committed to `main` through `cf6f957` (wake phrase, Web Admin voice/language/mic gain, Wi-Fi reconfiguration, restart/factory reset, OLED OTA progress, and a fix that keeps the Gemini Live PCM microphone bridge active between assistant turns).
 - The HTML JavaScript syntax, Web Admin element references, config JSON, API route count, and pinned-upstream patch anchors were checked.
+- The Gemini Live turn-completion path was inspected: it previously disabled the PCM bridge immediately after each assistant reply, so the application returned to Listening with no microphone audio being forwarded. `EmitTtsStop()` now only closes the UI speech event and leaves realtime capture active; explicit `SendStopListening()` still stops the stream.
 - No GitHub Actions, firmware build, OTA upload, or hardware operation was run. These changes are not yet compile-verified.
 - Keep `firmware/VERSION` at `0.1.2` until the next build is explicitly authorized; the next build should use `0.1.3`.
 
