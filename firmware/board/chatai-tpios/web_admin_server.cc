@@ -29,8 +29,9 @@ extern const char index_html_start[] asm("_binary_wifi_configuration_html_start"
 
 namespace {
 constexpr char TAG[] = "WebAdmin";
-constexpr size_t kMaxBody = 4096;
+constexpr size_t kMaxBody = 8192;
 constexpr size_t kOtaChunkSize = 1024;
+constexpr size_t kMaxSystemPromptBytes = 3072;
 httpd_handle_t server = nullptr;
 std::mutex server_mutex;
 std::mutex ota_mutex;
@@ -223,7 +224,7 @@ esp_err_t ConfigPostHandler(httpd_req_t* req) {
         (!key || (cJSON_IsString(key) && std::string(key->valuestring).size() <= 256)) &&
         cJSON_IsString(model) && std::strlen(model->valuestring) > 0 &&
         std::strlen(model->valuestring) <= 96 &&
-        cJSON_IsString(prompt) && std::strlen(prompt->valuestring) <= 1024 &&
+        cJSON_IsString(prompt) && std::strlen(prompt->valuestring) <= kMaxSystemPromptBytes &&
         cJSON_IsBool(enabled) &&
         (!volume || (cJSON_IsNumber(volume) && volume->valueint >= 0 && volume->valueint <= 100)) &&
         (!bot_name || (cJSON_IsString(bot_name) && std::strlen(bot_name->valuestring) > 0 && std::strlen(bot_name->valuestring) <= 48)) &&
