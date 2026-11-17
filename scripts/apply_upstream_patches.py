@@ -110,23 +110,10 @@ replace_once(
     '        protocol_ = std::make_unique<MqttProtocol>();\n'
     '    }\n',
     '    Settings gemini_settings("gemini", false);\n'
-    '    const bool gemini_enabled = gemini_settings.GetBool("enabled", false);\n'
-    '    const bool gemini_has_key = !gemini_settings.GetString("api_key").empty();\n'
-    '    if (gemini_enabled && gemini_has_key) {\n'
-    '        protocol_ = std::make_unique<GeminiLiveProtocol>(audio_service_);\n'
-    '    } else {\n'
-    '        if (gemini_enabled) {\n'
-    '            ESP_LOGW(TAG, "Gemini Live enabled but API key is missing; using saved XiaoZhi protocol");\n'
-    '        }\n'
-    '        if (ota_->HasMqttConfig()) {\n'
-    '            protocol_ = std::make_unique<MqttProtocol>();\n'
-    '        } else if (ota_->HasWebsocketConfig()) {\n'
-    '            protocol_ = std::make_unique<WebsocketProtocol>();\n'
-    '        } else {\n'
-    '            ESP_LOGW(TAG, "No protocol specified in the OTA config, using MQTT");\n'
-    '            protocol_ = std::make_unique<MqttProtocol>();\n'
-    '        }\n'
-    '    }\n',
+    '    if (gemini_settings.GetString("api_key").empty()) {\n'
+    '        ESP_LOGW(TAG, "Gemini API key is not configured; use the local Web Admin after Wi-Fi setup");\n'
+    '    }\n'
+    '    protocol_ = std::make_unique<GeminiLiveProtocol>(audio_service_);\n',
 )
 
 
