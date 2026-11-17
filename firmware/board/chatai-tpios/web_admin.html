@@ -195,8 +195,8 @@
       </div>
       <div class="field">
         <label for="systemPrompt">System Prompt</label>
-        <textarea id="systemPrompt" maxlength="3072" placeholder="Mô tả cách ChatAI phản hồi..."></textarea>
-        <p class="hint">Tối đa 3.072 byte UTF-8. Tiếng Việt có dấu dùng nhiều byte hơn ký tự không dấu.</p>
+        <textarea id="systemPrompt" maxlength="3900" placeholder="Mô tả cách ChatAI phản hồi..."></textarea>
+        <p class="hint">Tối đa 3.900 byte UTF-8 để tương thích giới hạn lưu NVS.</p>
       </div>
       <div class="toggle-row">
         <div><div class="toggle-label">Bật Gemini Live</div><div class="toggle-sub">Dùng Gemini Live làm bộ máy hội thoại</div></div>
@@ -424,8 +424,8 @@ $('saveBtn').addEventListener('click', async () => {
   };
   if ($('apiKey').value.trim()) payload.api_key = $('apiKey').value.trim();
   const promptBytes = new TextEncoder().encode(payload.system_prompt).length;
-  if (promptBytes > 3072) {
-    $('geminiResult').textContent = 'System Prompt vượt giới hạn 3.072 byte UTF-8 (' + promptBytes + ' byte).';
+  if (promptBytes > 3900) {
+    $('geminiResult').textContent = 'System Prompt vượt giới hạn 3.900 byte UTF-8 (' + promptBytes + ' byte).';
     toast('System Prompt quá dài', true);
     $('saveBtn').disabled = false;
     return;
