@@ -1,6 +1,7 @@
 #include "web_admin_server.h"
 
 #include "board.h"
+#include "audio_codec.h"
 #include "settings.h"
 #include <esp_http_server.h>
 #include <esp_log.h>
