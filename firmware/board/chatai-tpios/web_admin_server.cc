@@ -40,7 +40,7 @@ button{border:0;border-radius:9px;padding:12px 18px;background:#4e8cff;color:#ff
 <label class="row"><input id="enabled" type="checkbox"> Bật Gemini Live</label>
 <button type="submit">Lưu cấu hình</button><p id="result"></p>
 </form></section>
-<p><small>Cấu hình Gemini có hiệu lực sau khi khởi động lại thiết bị. Không tắt nguồn khi đang cập nhật.</small></p>
+<p><small>Cấu hình Gemini có hiệu lực sau khi khởi động lại thiết bị.</small></p>
 <script>
 const $=id=>document.getElementById(id);
 async function load(){
