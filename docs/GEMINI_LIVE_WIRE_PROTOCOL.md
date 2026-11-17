@@ -10,9 +10,9 @@ This document records the Gemini Live wire contract and distinguishes implemente
   - Ephemeral token (preferred for a deployed device): use the `BidiGenerateContentConstrained` endpoint and send the short-lived token in `Authorization: Token <token>` (or `access_token` query parameter). A token broker must authenticate the local device/user and mint the token using the Gemini AuthToken API. Do not put the long-lived API key in firmware or Web Admin.
 - Send exactly one `setup` message after the WebSocket is established.
 - Do not send audio until the server returns `setupComplete`.
-- Keep the selected model name and endpoint in one configuration location; verify the currently supported model immediately before implementation rather than pinning an old example model.
+- Keep the selected model name and endpoint in one configuration location. As checked against Google's current Live API documentation on 2026-11-17, `gemini-3.8-live` is a supported Live model and is the firmware default. The model remains configurable through Web Admin/NVS.
 
-The exact endpoint and authentication handshake must be checked against the current Google API documentation and account configuration at implementation time.
+The firmware uses the `x-goog-api-key` handshake header. Google's current GenAI Go SDK also sends this header on its Live WebSocket handshake. The Google raw-WebSocket quickstart additionally documents `?key=`; the header avoids placing the long-lived key in the URL path, which this board's WebSocket transport may log.
 
 ## Setup message shape
 
@@ -89,10 +89,11 @@ The current ChatAI TPIOS board profile configures codec output for 24 kHz. The t
 
 - `AudioService` PCM seam is added by the pinned-upstream patcher.
 - Initial Gemini WebSocket transport, API-key handshake, setup gate, JSON/base64 PCM path, transcript forwarding, interruption handling, and protocol selection are implemented in source.
-- Bounded reconnect/session resumption, short-lived token provisioning, local Web Admin credential management, OTA upload handling, and hardware validation remain outstanding.
+- The local Web Admin now stores Gemini settings in NVS and provides streamed `.bin` OTA to the inactive app partition. OTA rollback validation is performed after the application activation task initializes the selected protocol.
+- Bounded reconnect/session resumption, short-lived token provisioning, static compile validation, and hardware validation remain outstanding.
 - No firmware build or hardware test has been run.
 
 
 ## Current firmware selection
 
-The firmware selects Gemini only when NVS namespace `gemini` contains `enabled=true` and a non-empty `api_key`. The model defaults to `gemini-3.8-live` and can be overridden with the `model` setting. The optional Vietnamese system instruction is read from NVS key `system_prompt` (NVS key names are limited to 15 characters). Board output is configured for 24 kHz, matching Gemini Live 24 kHz mono PCM. Existing XiaoZhi MQTT/WebSocket selection remains the fallback. No Web Admin form exists yet to write these NVS settings; provisioning is the next integration step.
+The firmware selects Gemini only when NVS namespace `gemini` contains `enabled=true` and a non-empty `api_key`. The model defaults to `gemini-3.8-live` and can be overridden with the `model` setting. The optional Vietnamese system instruction is read from NVS key `system_prompt` (NVS key names are limited to 15 characters). Board output is configured for 24 kHz, matching Gemini Live 24 kHz mono PCM. Existing XiaoZhi MQTT/WebSocket selection remains the fallback. The local Web Admin writes these NVS settings. Saving a changed model, prompt, key, or enabled flag requires a device restart before the protocol selection is reloaded.

@@ -55,7 +55,7 @@ Gemini Live audio must bypass the Opus encoder and decoder:
 
 ## Not implemented yet
 
-This document records both the source-verified design and the current implementation. The raw PCM queue/playback seam and initial Gemini protocol now exist in source. Remaining work includes credential provisioning, reconnect/session resumption, Web Admin/OTA, static validation, and hardware testing. Do not run a build workflow or flash image without explicit user approval.
+This document records both the source-verified design and the current implementation. The raw PCM queue/playback seam, initial Gemini protocol, local Web Admin/NVS credential form, and streamed `.bin` OTA handler now exist in source. Remaining work includes bounded reconnect/session resumption, short-lived token provisioning, static compile validation, and hardware testing. Do not run a build workflow or flash image without explicit user approval.
 
 
 ## PCM bridge implementation status
@@ -84,4 +84,4 @@ The upstream `WebSocket` implementation is supplied by `78/esp-ml307` and is alr
 
 A dedicated `GeminiLiveProtocol` source is now included by the upstream patcher. It reuses the existing board WebSocket transport, waits for `setupComplete`, streams 16 kHz AFE frames as three 20 ms PCM JSON chunks, decodes 24 kHz PCM output, and routes interruption/transcription/turn-complete events through existing application callbacks. This board declares 24 kHz speaker output, matching Gemini Live output, so no output resampler is required. Gemini is selected only when NVS namespace `gemini` has `enabled=true` and a non-empty `api_key`; optional `system_prompt` is limited to an NVS-compatible key name; otherwise the existing XiaoZhi protocol selection remains active.
 
-Direct-device API-key mode is for bring-up only: use a current Gemini authorization API key, store it in NVS, and send it in the `x-goog-api-key` handshake header. This avoids URL-path logs, but a sufficiently capable physical attacker can still extract the key. Production should use short-lived tokens from a trusted broker. The local Web Admin credential form and OTA handler are not implemented yet. This transport has not been compiled or exercised on hardware.
+Direct-device API-key mode is for bring-up only: use a current Gemini authorization API key, store it in NVS, and send it in the `x-goog-api-key` handshake header. This avoids URL-path logs, but a sufficiently capable physical attacker can still extract the key. Production should use short-lived tokens from a trusted broker. The local Web Admin credential form and OTA handler are implemented in source, but neither this transport nor the Web Admin/OTA path has been compiled or exercised on hardware.

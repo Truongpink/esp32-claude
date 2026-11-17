@@ -4,7 +4,7 @@ Firmware project based on the upstream XiaoZhi ESP32 codebase, pinned to **v2.6.
 
 ## Current repository state
 
-This repository contains the ChatAI TPIOS hardware-board overlay and an idempotent source patcher. The upstream firmware is fetched at build time; it is not copied wholesale into this repository.
+This repository contains the ChatAI TPIOS hardware-board overlay, Gemini Live protocol, local Web Admin, OTA upload handler, and an idempotent source patcher. The pinned upstream firmware is fetched at preparation time; it is not copied wholesale into this repository.
 
 - Target: ESP32-S3
 - Board profile: ChatAI TPIOS (separate board identity; does not overwrite the upstream Bread Compact profile)
@@ -29,7 +29,7 @@ The preparation script fetches the pinned upstream commit, verifies the exact re
 
 ## Architecture notes
 
-See [Gemini Live audio integration design](docs/GEMINI_AUDIO_DESIGN.md) for the source-verified audio pipeline and the required PCM integration seam. See [hardware evidence and unresolved pins](docs/HARDWARE.md) before selecting GPIOs, and [Web Admin firmware upload OTA design](docs/OTA_WEB_UPLOAD.md) for the local .bin update path.
+See [Gemini Live audio integration design](docs/GEMINI_AUDIO_DESIGN.md) and [Gemini Live wire protocol](docs/GEMINI_LIVE_WIRE_PROTOCOL.md) for the protocol and PCM pipeline. See [hardware evidence and unresolved pins](docs/HARDWARE.md) before selecting GPIOs, [local Web Admin](docs/WEB_ADMIN.md) for settings, and [OTA upload](docs/OTA_WEB_UPLOAD.md) for the local `.bin` update path.
 
 ## Important status
 
