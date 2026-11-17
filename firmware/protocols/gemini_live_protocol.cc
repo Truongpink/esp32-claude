@@ -74,7 +74,9 @@ GeminiLiveProtocol::Diagnostics GeminiLiveProtocol::GetDiagnostics() {
 bool GeminiLiveProtocol::Start() { return true; }
 bool GeminiLiveProtocol::SendAudio(std::unique_ptr<AudioStreamPacket> packet) { (void)packet; return false; }
 bool GeminiLiveProtocol::SendLiveVoiceNotification(const std::string& text) {
-    if (text.empty() || !listening_ || output_turn_started_.load() || !IsAudioChannelOpened()) {
+    // A one-shot notification may be sent while the device is idle. Do not
+    // require microphone streaming; the existing Live session returns audio.
+    if (text.empty() || output_turn_started_.load() || !IsAudioChannelOpened()) {
         return false;
     }
 
