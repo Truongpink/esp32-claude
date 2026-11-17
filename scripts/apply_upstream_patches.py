@@ -10,8 +10,8 @@ BOARD_SRC = ROOT / "firmware" / "board" / "chatai-tpios"
 BOARD_DST = UPSTREAM / "main" / "boards" / "chatai-tpios"
 
 VERSION = (ROOT / "firmware" / "VERSION").read_text(encoding="utf-8").strip()
-if not re.fullmatch(r"\d+\.\d+\.\d+", VERSION):
-    raise SystemExit("firmware/VERSION must contain a semantic version such as 0.1.2")
+if not re.fullmatch(r"[1-9][0-9]*", VERSION):
+    raise SystemExit("firmware/VERSION must contain a positive integer release number such as 2")
 
 
 def replace_once(path: Path, old: str, new: str) -> None:
@@ -30,7 +30,7 @@ if not (UPSTREAM / "CMakeLists.txt").is_file():
 manifest = UPSTREAM / "main" / "idf_component.yml"
 replace_once(manifest, "dependencies:\n", "dependencies:\n  espressif/mdns: ~1.8.2\n")
 
-# Keep the ESP application descriptor version aligned with firmware/VERSION.
+# Keep the ESP application descriptor version aligned with firmware/VERSION (integer release number).
 replace_once(
     UPSTREAM / "CMakeLists.txt",
     'set(PROJECT_VER "2.6.0")',
