@@ -22,6 +22,8 @@ The issue is useful hardware evidence, but its comments contain conflicting repo
 | Volume buttons | GPIO 40 / GPIO 39 candidates | PR #2194 board profile; verify exact PCB |
 | Built-in LED | GPIO 48 candidate | PR #2194 board profile; verify exact PCB |
 
+The board-specific upstream PR #2194 configures the speaker output at 16 kHz. This overlay uses 24 kHz so Gemini Live's native 24 kHz PCM can be sent directly to the I²S output without a resampler. The I²S peripheral is configurable, but this 24 kHz speaker path has not yet been verified on the physical board; if playback is distorted or silent, measure/verify the codec path and add resampling rather than silently changing Gemini's PCM rate.
+
 ## Important bring-up constraint
 
 The existing `chatai-tpios` overlay was initially copied from upstream `bread-compact-wifi`. Upstream PR [#2194](https://github.com/78/xiaozhi-esp32/pull/2194) proposes GPIO 4/5/6 for the microphone and GPIO 43 for touch, while issue [#2206](https://github.com/78/xiaozhi-esp32/issues/2206) records a board sample where GPIO 4/5/6 did not produce microphone data and later reports where that mapping did work. The overlay now follows the board-specific PR #2194 for GPIO 43 and active-low touch polarity. The microphone mapping remains provisional because issue #2206 reports conflicting results. Treat all candidate pins as unverified until tested on the user's PCB.
