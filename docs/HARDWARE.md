@@ -4,7 +4,7 @@
 
 The product link supplied for this project identifies a Mini ESP32-S3-N16R8 voice-chat board. A matching board identifier appears in upstream XiaoZhi issue [#2206](https://github.com/78/xiaozhi-esp32/issues/2206): **SparkleIoT XH-S3E-AI_V1.0 (ESP32-S3-N16R8)**.
 
-The issue is useful hardware evidence, but the product listing alone does not prove that every seller/revision uses the exact same PCB. Confirm the silkscreen/revision before treating this mapping as final.
+The issue is useful hardware evidence, but its comments contain conflicting reports: the issue author says GPIO 4/5/6 failed on their sample, while a later commenter says the bread-compact-wifi mapping worked on their unit. This points to possible board/revision differences; neither report proves the microphone pins on the user's exact PCB. Confirm the silkscreen/revision before treating this mapping as final.
 
 ## Pin evidence
 
