@@ -5,7 +5,9 @@ This document records the current Gemini Live wire contract for the firmware tra
 ## Connection and setup
 
 - Use a TLS WebSocket (WSS) connection to the Gemini Live API endpoint for the selected supported model.
-- Authentication options for raw WebSocket clients:\n  - Standard API key: append `?key=<API_KEY>` to the `BidiGenerateContent` endpoint. This is the simplest bring-up path, but the key must never be logged; the upstream WebSocket wrapper currently logs its URL/path at debug level, so the Gemini integration must redact query strings or patch that log before using this option.\n  - Ephemeral token (preferred for a deployed device): use the `BidiGenerateContentConstrained` endpoint and send the short-lived token in `Authorization: Token <token>` (or `access_token` query parameter). A token broker must authenticate the local device/user and mint the token using the Gemini AuthToken API. Do not put the long-lived API key in firmware or Web Admin.
+- Authentication options for raw WebSocket clients:
+  - Standard API key: append `?key=<API_KEY>` to the `BidiGenerateContent` endpoint. This is the simplest bring-up path, but the key must never be logged; the upstream WebSocket wrapper currently logs its URL/path at debug level, so the Gemini integration must redact query strings or patch that log before using this option.
+  - Ephemeral token (preferred for a deployed device): use the `BidiGenerateContentConstrained` endpoint and send the short-lived token in `Authorization: Token <token>` (or `access_token` query parameter). A token broker must authenticate the local device/user and mint the token using the Gemini AuthToken API. Do not put the long-lived API key in firmware or Web Admin.
 - Send exactly one `setup` message after the WebSocket is established.
 - Do not send audio until the server returns `setupComplete`.
 - Keep the selected model name and endpoint in one configuration location; verify the currently supported model immediately before implementation rather than pinning an old example model.
