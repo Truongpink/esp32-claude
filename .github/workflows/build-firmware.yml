@@ -39,13 +39,13 @@ jobs:
           path: xiaozhi-src
           command: idf.py reconfigure && python3 ../scripts/patch_wifi_portal.py && idf.py reconfigure && idf.py build
 
-      - name: Name application image with firmware version
-        run: mv xiaozhi-src/build/xiaozhi.bin "xiaozhi-src/build/ChatAI-TPIOS-v${{ steps.version.outputs.value }}-OTA.bin"
+      - name: Copy application image with firmware version
+        run: sudo install -m 0644 xiaozhi-src/build/xiaozhi.bin "ChatAI-TPIOS-v${{ steps.version.outputs.value }}-OTA.bin"
 
       - name: Upload OTA application image
         uses: actions/upload-artifact@v4
         with:
           name: ChatAI-TPIOS-v${{ steps.version.outputs.value }}-OTA
-          path: xiaozhi-src/build/ChatAI-TPIOS-v${{ steps.version.outputs.value }}-OTA.bin
+          path: ChatAI-TPIOS-v${{ steps.version.outputs.value }}-OTA.bin
           if-no-files-found: error
           retention-days: 14
