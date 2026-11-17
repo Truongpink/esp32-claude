@@ -1,5 +1,4 @@
 from pathlib import Path
-import re
 
 def replace_once(path: Path, old: str, new: str) -> None:
     text = path.read_text(encoding="utf-8")
@@ -119,7 +118,7 @@ def apply(root: Path, upstream: Path) -> None:
     replace_once(
         codec_cc,
         "#include <cstring>\n",
-        "#include <cstring>\n#include <cmath>\n#include <algorithm>\n#include <limits>\n",
+        "#include <cstring>\n#include <cmath>\n#include <algorithm>\n",
     )
     replace_once(
         codec_cc,
