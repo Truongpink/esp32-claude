@@ -2,6 +2,7 @@
 
 #include "board.h"
 #include "audio_codec.h"
+#include "application.h"
 #include "settings.h"
 #include <esp_http_server.h>
 #include <esp_log.h>
@@ -9,6 +10,7 @@
 #include <esp_ota_ops.h>
 #include <esp_partition.h>
 #include <esp_system.h>
+#include <nvs_flash.h>
 #include <wifi_manager.h>
 #include <cJSON.h>
 #include <freertos/FreeRTOS.h>
@@ -17,6 +19,7 @@
 #include <string>
 #include <cstring>
 #include <algorithm>
+#include <cctype>
 
 extern const char index_html_start[] asm("_binary_wifi_configuration_html_start");
 
@@ -42,6 +45,48 @@ void SendError(httpd_req_t* req, const char* status, const char* message) {
     cJSON* root = cJSON_CreateObject();
     cJSON_AddStringToObject(root, "error", message);
     SendJson(req, root, status);
+}
+
+bool IsValidWakeWord(const char* value) {
+    if (value == nullptr) return false;
+    const std::string phrase(value);
+    if (phrase.size() < 3 || phrase.size() > 32 || phrase.front() == ' ' || phrase.back() == ' ') return false;
+    bool previous_space = false;
+    for (unsigned char c : phrase) {
+        if (c == ' ') {
+            if (previous_space) return false;
+            previous_space = true;
+        } else if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')) {
+            previous_space = false;
+        } else {
+            return false;
+        }
+    }
+    return true;
+}
+
+bool IsAllowedVoice(const char* value) {
+    static const char* voices[] = {
+        "Zephyr", "Kore", "Orus", "Autonoe", "Umbriel", "Erinome", "Laomedeia",
+        "Schedar", "Achird", "Sadachbia", "Puck", "Fenrir", "Aoede", "Enceladus",
+        "Algieba", "Algenib", "Achernar", "Gacrux", "Zubenelgenubi", "Sadaltager",
+        "Charon", "Leda", "Callirrhoe", "Iapetus", "Despina", "Rasalgethi",
+        "Alnilam", "Pulcherrima", "Vindemiatrix", "Sulafat"
+    };
+    if (value == nullptr) return false;
+    for (const char* voice : voices) if (std::strcmp(value, voice) == 0) return true;
+    return false;
+}
+
+bool IsAllowedLanguage(const char* value) {
+    static const char* languages[] = {
+        "ar-EG", "bn-BD", "nl-NL", "en-IN", "en-US", "fr-FR", "de-DE", "hi-IN",
+        "id-ID", "it-IT", "ja-JP", "ko-KR", "mr-IN", "pl-PL", "pt-BR", "ro-RO",
+        "ru-RU", "es-US", "ta-IN", "te-IN", "th-TH", "tr-TR", "uk-UA", "vi-VN"
+    };
+    if (value == nullptr) return false;
+    for (const char* language : languages) if (std::strcmp(value, language) == 0) return true;
+    return false;
 }
 
 esp_err_t IndexHandler(httpd_req_t* req) {
@@ -87,6 +132,11 @@ esp_err_t ConfigGetHandler(httpd_req_t* req) {
         "You are ChatAI TPIOS, a helpful Vietnamese voice assistant. Speak naturally in Vietnamese unless the user asks for another language. Keep replies concise and conversational."
     ).c_str());
     cJSON_AddBoolToObject(root, "enabled", gemini.GetBool("enabled", false));
+    cJSON_AddStringToObject(root, "bot_name", gemini.GetString("bot_name", "ChatAI").c_str());
+    cJSON_AddStringToObject(root, "voice_name", gemini.GetString("voice_name", "Puck").c_str());
+    cJSON_AddStringToObject(root, "language_code", gemini.GetString("language_code", "vi-VN").c_str());
+    cJSON_AddStringToObject(root, "wake_word", audio.GetString("wake_word", "Hey ChatAI").c_str());
+    cJSON_AddNumberToObject(root, "mic_gain", audio.GetInt("mic_gain", 0));
     cJSON_AddNumberToObject(root, "volume", audio.GetInt("volume", 70));
     SendJson(req, root);
     return ESP_OK;
@@ -135,6 +185,11 @@ esp_err_t ConfigPostHandler(httpd_req_t* req) {
     const cJSON* prompt = cJSON_GetObjectItemCaseSensitive(root, "system_prompt");
     const cJSON* enabled = cJSON_GetObjectItemCaseSensitive(root, "enabled");
     const cJSON* volume = cJSON_GetObjectItemCaseSensitive(root, "volume");
+    const cJSON* bot_name = cJSON_GetObjectItemCaseSensitive(root, "bot_name");
+    const cJSON* voice_name = cJSON_GetObjectItemCaseSensitive(root, "voice_name");
+    const cJSON* language_code = cJSON_GetObjectItemCaseSensitive(root, "language_code");
+    const cJSON* wake_word = cJSON_GetObjectItemCaseSensitive(root, "wake_word");
+    const cJSON* mic_gain = cJSON_GetObjectItemCaseSensitive(root, "mic_gain");
 
     const bool valid =
         (!key || (cJSON_IsString(key) && std::string(key->valuestring).size() <= 256)) &&
@@ -142,10 +197,15 @@ esp_err_t ConfigPostHandler(httpd_req_t* req) {
         std::strlen(model->valuestring) <= 96 &&
         cJSON_IsString(prompt) && std::strlen(prompt->valuestring) <= 1024 &&
         cJSON_IsBool(enabled) &&
-        (!volume || (cJSON_IsNumber(volume) && volume->valueint >= 0 && volume->valueint <= 100));
+        (!volume || (cJSON_IsNumber(volume) && volume->valueint >= 0 && volume->valueint <= 100)) &&
+        (!bot_name || (cJSON_IsString(bot_name) && std::strlen(bot_name->valuestring) > 0 && std::strlen(bot_name->valuestring) <= 48)) &&
+        (!voice_name || (cJSON_IsString(voice_name) && IsAllowedVoice(voice_name->valuestring))) &&
+        (!language_code || (cJSON_IsString(language_code) && IsAllowedLanguage(language_code->valuestring))) &&
+        (!wake_word || (cJSON_IsString(wake_word) && IsValidWakeWord(wake_word->valuestring))) &&
+        (!mic_gain || (cJSON_IsNumber(mic_gain) && mic_gain->valueint >= 0 && mic_gain->valueint <= 20));
     if (!valid) {
         cJSON_Delete(root);
-        SendError(req, "400 Bad Request", "Invalid model, prompt, key, volume or enabled value");
+        SendError(req, "400 Bad Request", "Invalid model, prompt, key, voice, language, wake phrase, mic gain, volume or enabled value");
         return ESP_OK;
     }
 
@@ -166,6 +226,18 @@ esp_err_t ConfigPostHandler(httpd_req_t* req) {
         settings.SetString("model", model->valuestring);
         settings.SetString("system_prompt", prompt->valuestring);
         settings.SetBool("enabled", cJSON_IsTrue(enabled));
+        if (bot_name) settings.SetString("bot_name", bot_name->valuestring);
+        if (voice_name) settings.SetString("voice_name", voice_name->valuestring);
+        if (language_code) settings.SetString("language_code", language_code->valuestring);
+    }
+    bool wake_word_applied = false;
+    if (wake_word || mic_gain) {
+        Settings settings("chatai", true);
+        if (wake_word) settings.SetString("wake_word", wake_word->valuestring);
+        if (mic_gain) Board::GetInstance().GetAudioCodec()->SetInputGain(static_cast<float>(mic_gain->valueint));
+    }
+    if (wake_word) {
+        wake_word_applied = Application::GetInstance().GetAudioService().SetWakeWordPhrase(wake_word->valuestring);
     }
     if (volume) {
         Settings settings("chatai", true);
@@ -175,8 +247,44 @@ esp_err_t ConfigPostHandler(httpd_req_t* req) {
     cJSON_Delete(root);
 
     cJSON* response = cJSON_CreateObject();
-    cJSON_AddStringToObject(response, "message", "Đã lưu cấu hình. Khởi động lại để áp dụng Gemini; âm lượng đã được cập nhật.");
+    cJSON_AddBoolToObject(response, "wake_word_applied", wake_word_applied);
+    cJSON_AddStringToObject(response, "message", wake_word
+        ? (wake_word_applied
+            ? "Đã lưu cấu hình; Wake Word đã được cập nhật. Gemini Live áp dụng cấu hình mới ở phiên kết nối tiếp theo."
+            : "Đã lưu cấu hình. Wake Word sẽ được nạp khi khởi động lại; Gemini Live áp dụng cấu hình mới ở phiên kết nối tiếp theo.")
+        : "Đã lưu cấu hình. Gemini Live áp dụng cấu hình mới ở phiên kết nối tiếp theo.");
     SendJson(req, response);
+    return ESP_OK;
+}
+
+esp_err_t RebootHandler(httpd_req_t* req) {
+    if (!IsSameOrigin(req)) {
+        SendError(req, "403 Forbidden", "Cross-origin request rejected");
+        return ESP_OK;
+    }
+    cJSON* response = cJSON_CreateObject();
+    cJSON_AddStringToObject(response, "message", "Thiết bị đang khởi động lại.");
+    SendJson(req, response);
+    vTaskDelay(pdMS_TO_TICKS(500));
+    esp_restart();
+    return ESP_OK;
+}
+
+esp_err_t FactoryResetHandler(httpd_req_t* req) {
+    if (!IsSameOrigin(req)) {
+        SendError(req, "403 Forbidden", "Cross-origin request rejected");
+        return ESP_OK;
+    }
+    const esp_err_t err = nvs_flash_erase();
+    if (err != ESP_OK) {
+        SendError(req, "500 Internal Server Error", "Không thể xóa cấu hình NVS.");
+        return ESP_OK;
+    }
+    cJSON* response = cJSON_CreateObject();
+    cJSON_AddStringToObject(response, "message", "Đã xóa cấu hình lưu trên thiết bị. Thiết bị đang khởi động lại vào chế độ cấu hình Wi-Fi.");
+    SendJson(req, response);
+    vTaskDelay(pdMS_TO_TICKS(700));
+    esp_restart();
     return ESP_OK;
 }
 
@@ -226,9 +334,12 @@ esp_err_t OtaUploadHandler(httpd_req_t* req) {
         return ESP_OK;
     }
 
+    auto display = Board::GetInstance().GetDisplay();
+    display->SetStatus("OTA 0%");
     uint8_t buffer[kOtaChunkSize];
     size_t remaining = static_cast<size_t>(req->content_len);
     size_t written = 0;
+    int last_display_progress = -10;
     while (remaining > 0) {
         const size_t wanted = std::min(remaining, sizeof(buffer));
         const int received = httpd_req_recv(req, reinterpret_cast<char*>(buffer), wanted);
@@ -247,6 +358,13 @@ esp_err_t OtaUploadHandler(httpd_req_t* req) {
         }
         remaining -= static_cast<size_t>(received);
         written += static_cast<size_t>(received);
+        const int progress = static_cast<int>(written * 100 / static_cast<size_t>(req->content_len));
+        if (progress >= last_display_progress + 10) {
+            char status[20];
+            std::snprintf(status, sizeof(status), "OTA %d%%", progress);
+            display->SetStatus(status);
+            last_display_progress = progress;
+        }
     }
 
     err = esp_ota_end(handle);
@@ -263,6 +381,7 @@ esp_err_t OtaUploadHandler(httpd_req_t* req) {
     }
 
     ESP_LOGI(TAG, "OTA image accepted: %u bytes -> %s", static_cast<unsigned>(written), target->label);
+    display->SetStatus("OTA hoan tat");
     cJSON* response = cJSON_CreateObject();
     cJSON_AddStringToObject(response, "message", "Firmware đã được xác thực và cài đặt. Thiết bị đang khởi động lại.");
     SendJson(req, response);
@@ -280,7 +399,7 @@ void WebAdminServer::Start() {
 
     httpd_config_t config = HTTPD_DEFAULT_CONFIG();
     config.server_port = 80;
-    config.max_uri_handlers = 5;
+    config.max_uri_handlers = 7;
     config.stack_size = 8192;
 
     if (httpd_start(&server, &config) != ESP_OK) {
@@ -295,6 +414,8 @@ void WebAdminServer::Start() {
         {.uri = "/api/config", .method = HTTP_GET, .handler = ConfigGetHandler, .user_ctx = nullptr},
         {.uri = "/api/config", .method = HTTP_POST, .handler = ConfigPostHandler, .user_ctx = nullptr},
         {.uri = "/api/ota", .method = HTTP_POST, .handler = OtaUploadHandler, .user_ctx = nullptr},
+        {.uri = "/api/reboot", .method = HTTP_POST, .handler = RebootHandler, .user_ctx = nullptr},
+        {.uri = "/api/factory-reset", .method = HTTP_POST, .handler = FactoryResetHandler, .user_ctx = nullptr},
     };
     bool ok = true;
     for (const auto& route : routes) {
