@@ -226,6 +226,10 @@
 
     <section class="section hidden" id="deviceActionsSection">
       <div class="section-title">🛠️ Quản lý thiết bị</div>
+      <div class="field">
+        <button class="secondary-btn" id="wifiConfigBtn" type="button">Đổi mạng Wi-Fi</button>
+        <p class="hint">Chuyển về điểm truy cập cấu hình ChatAI-TPIOS (192.168.4.1) để chọn Wi-Fi khác.</p>
+      </div>
       <div class="field"><button class="secondary-btn" id="rebootBtn" type="button">Khởi động lại thiết bị</button></div>
       <div class="field">
         <button class="secondary-btn" id="factoryResetBtn" type="button">Khôi phục cài đặt gốc</button>
@@ -382,6 +386,7 @@ $('saveBtn').addEventListener('click', async () => {
 
 async function postDeviceAction(path, confirmText) {
   if (!confirm(confirmText)) return;
+  $('wifiConfigBtn').disabled = true;
   $('rebootBtn').disabled = true;
   $('factoryResetBtn').disabled = true;
   $('deviceActionResult').textContent = 'Đang gửi yêu cầu...';
@@ -392,10 +397,13 @@ async function postDeviceAction(path, confirmText) {
     $('deviceActionResult').textContent = data.message || 'Đã gửi yêu cầu.';
   } catch (error) {
     $('deviceActionResult').textContent = error.message;
+    $('wifiConfigBtn').disabled = false;
     $('rebootBtn').disabled = false;
     $('factoryResetBtn').disabled = false;
   }
 }
+$('wifiConfigBtn').addEventListener('click', () =>
+  postDeviceAction('/api/wifi-config', 'Chuyển thiết bị sang chế độ cấu hình Wi-Fi? Kết nối sẽ tạm ngắt.'));
 $('rebootBtn').addEventListener('click', () =>
   postDeviceAction('/api/reboot', 'Khởi động lại ChatAI TPIOS?'));
 $('factoryResetBtn').addEventListener('click', () =>
