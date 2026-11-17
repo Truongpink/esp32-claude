@@ -93,7 +93,6 @@ bool GeminiLiveProtocol::OpenAudioChannel() {
     auto socket = network->CreateWebSocket(1);
     if (!socket) { Fail("Failed to create Gemini Live WebSocket"); return false; }
     websocket_ = std::shared_ptr<WebSocket>(std::move(socket));
-    websocket_->SetHeader("x-goog-api-key", api_key_.c_str());
     websocket_->OnData([this](const char* data, size_t size, bool binary) {
         if (binary || !size || size > kMaxMessage) { Fail("Invalid Gemini Live WebSocket message"); return; }
         cJSON* root = cJSON_ParseWithLength(data, size);
@@ -106,7 +105,10 @@ bool GeminiLiveProtocol::OpenAudioChannel() {
         setup_complete_ = false; listening_ = false; audio_service_.EnablePcmBridge(false); audio_service_.EnablePcmPlaybackMode(false); audio_service_.ClearPcmPlayback();
         if (!closing_ && channel_open_notified_.exchange(false) && on_audio_channel_closed_) on_audio_channel_closed_();
     });
-    if (auto connected = websocket_->Connect(kUrl); !connected) { Fail("Could not connect to Gemini Live"); CloseAudioChannel(false); return false; }
+    // The Gemini Live WebSocket endpoint authenticates with the API key in the query string.
+    // Keep the key out of logs; do not log this URL.
+    const std::string url = std::string(kUrl) + "?key=" + api_key_;
+    if (auto connected = websocket_->Connect(url.c_str()); !connected) { Fail("Could not connect to Gemini Live"); CloseAudioChannel(false); return false; }
     if (!SendSetup()) { Fail("Could not send Gemini Live setup"); CloseAudioChannel(false); return false; }
     EventBits_t bits = xEventGroupWaitBits(event_group_, kSetupComplete | kSetupFailed, pdTRUE, pdFALSE, pdMS_TO_TICKS(15000));
     if (!(bits & kSetupComplete)) { Fail(last_server_error_.empty() ? "Gemini Live setup timed out" : last_server_error_); CloseAudioChannel(false); return false; }
