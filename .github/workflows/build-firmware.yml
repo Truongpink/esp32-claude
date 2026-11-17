@@ -1,4 +1,4 @@
-name: Build ChatAI TPIOS firmware
+name: Build ChatAI TPIOS OTA firmware
 
 on:
   workflow_dispatch:
@@ -8,7 +8,7 @@ permissions:
 
 jobs:
   build:
-    name: ESP32-S3 firmware
+    name: ESP32-S3 OTA firmware
     runs-on: ubuntu-latest
     timeout-minutes: 90
     steps:
@@ -17,35 +17,35 @@ jobs:
         with:
           ref: main
 
+      - name: Read firmware version
+        id: version
+        run: |
+          VERSION="$(tr -d '[:space:]' < firmware/VERSION)"
+          if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Invalid firmware/VERSION: $VERSION"
+            exit 1
+          fi
+          echo "value=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Building ChatAI TPIOS v$VERSION OTA"
+
       - name: Prepare pinned XiaoZhi source and ChatAI overlay
         run: python3 scripts/prepare_upstream.py
 
-      - name: Build application and complete USB flash image with ESP-IDF 6.1
+      - name: Build application-only OTA image with ESP-IDF 6.1
         uses: espressif/esp-idf-ci-action@v1
         with:
           esp_idf_version: v6.1
           target: esp32s3
           path: xiaozhi-src
-          command: idf.py reconfigure && python3 ../scripts/patch_wifi_portal.py && idf.py reconfigure && idf.py build && idf.py merge-bin
+          command: idf.py reconfigure && python3 ../scripts/patch_wifi_portal.py && idf.py reconfigure && idf.py build
 
-      - name: Publish application-only image for Web Admin OTA
-        run: sudo mv xiaozhi-src/build/xiaozhi.bin xiaozhi-src/build/ChatAI-TPIOS-v0.1.1-OTA.bin
+      - name: Name application image with firmware version
+        run: mv xiaozhi-src/build/xiaozhi.bin "xiaozhi-src/build/ChatAI-TPIOS-v${{ steps.version.outputs.value }}-OTA.bin"
 
       - name: Upload OTA application image
         uses: actions/upload-artifact@v4
         with:
-          name: ChatAI-TPIOS-v0.1.1-OTA
-          path: xiaozhi-src/build/ChatAI-TPIOS-v0.1.1-OTA.bin
-          if-no-files-found: error
-          retention-days: 14
-
-      - name: Rename USB image to an unambiguous ChatAI filename
-        run: sudo mv xiaozhi-src/build/merged-binary.bin xiaozhi-src/build/ChatAI-TPIOS-v0.1.1-USB-FLASH.bin
-
-      - name: Upload complete USB flash image
-        uses: actions/upload-artifact@v4
-        with:
-          name: ChatAI-TPIOS-v0.1.1-USB-FLASH
-          path: xiaozhi-src/build/ChatAI-TPIOS-v0.1.1-USB-FLASH.bin
+          name: ChatAI-TPIOS-v${{ steps.version.outputs.value }}-OTA
+          path: xiaozhi-src/build/ChatAI-TPIOS-v${{ steps.version.outputs.value }}-OTA.bin
           if-no-files-found: error
           retention-days: 14
