@@ -195,7 +195,8 @@
       </div>
       <div class="field">
         <label for="systemPrompt">System Prompt</label>
-        <textarea id="systemPrompt" maxlength="1024" placeholder="Mô tả cách ChatAI phản hồi..."></textarea>
+        <textarea id="systemPrompt" maxlength="3072" placeholder="Mô tả cách ChatAI phản hồi..."></textarea>
+        <p class="hint">Tối đa 3.072 byte UTF-8. Tiếng Việt có dấu dùng nhiều byte hơn ký tự không dấu.</p>
       </div>
       <div class="toggle-row">
         <div><div class="toggle-label">Bật Gemini Live</div><div class="toggle-sub">Dùng Gemini Live làm bộ máy hội thoại</div></div>
@@ -245,7 +246,7 @@
       <div class="field">
         <label for="firmwareFile">Chọn firmware OTA (.bin)</label>
         <input id="firmwareFile" type="file" accept=".bin,application/octet-stream">
-        <p class="hint">Chọn file ChatAI-TPIOS-*-OTA.bin (application-only). Không chọn file USB-FLASH vì file đó chứa bootloader và partition table.</p>
+        <p class="hint">Chọn file chatai-esp32-N.bin (application-only). Không chọn file USB-FLASH vì file đó chứa bootloader và partition table.</p>
       </div>
       <div class="field">
         <button class="save-btn" id="otaBtn" type="button">Cài đặt firmware</button>
@@ -422,6 +423,13 @@ $('saveBtn').addEventListener('click', async () => {
     volume:Number($('volume').value)
   };
   if ($('apiKey').value.trim()) payload.api_key = $('apiKey').value.trim();
+  const promptBytes = new TextEncoder().encode(payload.system_prompt).length;
+  if (promptBytes > 3072) {
+    $('geminiResult').textContent = 'System Prompt vượt giới hạn 3.072 byte UTF-8 (' + promptBytes + ' byte).';
+    toast('System Prompt quá dài', true);
+    $('saveBtn').disabled = false;
+    return;
+  }
   try {
     const response = await fetch('/api/config', {
       method:'POST', headers:{'Content-Type':'application/json'},
