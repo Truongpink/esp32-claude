@@ -116,7 +116,7 @@ bool GeminiLiveProtocol::OpenAudioChannel() {
             char prefix[25] = {};
             const size_t preview = std::min<size_t>(size, 8);
             for (size_t i = 0; i < preview; ++i) {
-                snprintf(prefix + i * 3, sizeof(prefix) - i * 3, "%02X ", static_cast<uint8_t>(data[i]));
+                std::snprintf(prefix + i * 3, sizeof(prefix) - i * 3, "%02X ", static_cast<uint8_t>(data[i]));
             }
             ESP_LOGE(TAG, "Gemini Live frame is not a JSON object: type=%s size=%u prefix=%s",
                      binary ? "binary" : "text", static_cast<unsigned>(size), prefix);
