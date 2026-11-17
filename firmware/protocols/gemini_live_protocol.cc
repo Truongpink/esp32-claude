@@ -247,7 +247,15 @@ void GeminiLiveProtocol::EmitTranscript(const char* type, const char* state, con
     }
     on_incoming_json_(root); cJSON_Delete(root);
 }
-void GeminiLiveProtocol::EmitTtsStop() { if (output_turn_started_) { EmitTranscript("tts", "stop", ""); output_turn_started_ = false; listening_ = false; audio_service_.EnablePcmBridge(false); } }
+void GeminiLiveProtocol::EmitTtsStop() {
+    if (output_turn_started_) {
+        EmitTranscript("tts", "stop", "");
+        output_turn_started_ = false;
+    }
+    // Keep realtime microphone capture active between Gemini turns.
+    // The application returns from Speaking to Listening after this event;
+    // disabling the PCM bridge here would leave that next turn without audio.
+}
 void GeminiLiveProtocol::Fail(const std::string& message) {
     if (error_occurred_) return;
     error_occurred_ = true;
