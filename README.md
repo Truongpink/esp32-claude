@@ -22,7 +22,7 @@ The manual GitHub Actions workflow completed successfully on 2026-11-17:
 - Branch / commit: `main` / `39d50a15c64447eb33ba0733af0ee5b57ab512de`
 - Toolchain: ESP-IDF v6.1, target `esp32s3`
 - All workflow steps passed, including upstream preparation, compilation and artifact upload.
-- The current workflow has since been changed to produce `ChatAI-TPIOS-v0.1.1-USB-FLASH` from `merged-binary.bin`; that newer workflow configuration has not yet been run.
+- The current workflow has since been changed to produce `ChatAI-TPIOS-v0.1.1-USB-FLASH` from the ESP-IDF merged USB image; that newer workflow configuration has not yet been run.
 
 This is a successful CI compile, not yet a physical-board validation. The image has not been confirmed flashed or tested on the user's device.
 
@@ -38,7 +38,7 @@ This is a successful CI compile, not yet a physical-board validation. The image 
 
 ## Next phase: physical bring-up
 
-1. Run the current manual workflow, download `ChatAI-TPIOS-v0.1.1-USB-FLASH`, and flash its `merged-binary.bin` over USB. The earlier successful run's `xiaozhi.bin` was app-only, not the complete USB image.
+1. Run the current manual workflow, download `ChatAI-TPIOS-v0.1.1-USB-FLASH`, and flash `ChatAI-TPIOS-v0.1.1-USB-FLASH.bin` over USB. The earlier successful run's `xiaozhi.bin` was app-only, not the complete USB image.
 2. Verify boot, OLED, Wi-Fi and local Web Admin on the actual board.
 3. Verify microphone wiring/pins; GPIO 4/5/6 remains provisional due conflicting upstream reports.
 4. Test speaker output at 24 kHz, microphone capture, two-way Gemini Live voice, buttons and volume.
