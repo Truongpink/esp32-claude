@@ -1,0 +1,37 @@
+name: Build ChatAI TPIOS firmware
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: ESP32-S3 firmware
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - name: Prepare pinned XiaoZhi source and ChatAI overlay
+        run: python3 scripts/prepare_upstream.py
+
+      - name: Build with ESP-IDF 6.1
+        uses: espressif/esp-idf-ci-action@v1
+        with:
+          esp_idf_version: v6.1
+          target: esp32s3
+          path: xiaozhi-src
+          command: idf.py build
+
+      - name: Upload application firmware only
+        uses: actions/upload-artifact@v4
+        with:
+          name: ChatAI-TPIOS-ESP32S3-firmware
+          path: xiaozhi-src/build/xiaozhi.bin
+          if-no-files-found: error
+          retention-days: 14
