@@ -3,7 +3,7 @@
 **Checkpoint date:** 2026-11-17 (ICT)  
 **Repository:** `Truongpink/esp32-claude`  
 **Working branch:** `main` only  
-**Repository HEAD inspected:** `5fd0106b48815a40fa93ed2077ec6a8f47c13cf9` — `Include AudioCodec definition in Web Admin server`
+**Repository HEAD before this checkpoint update:** `7b1f803973f7a459017c0a4bf98d5d7b9b7ef585` — `Fix semantic version validation for OTA release`
 
 ## Hardware bring-up — user-reported working
 
@@ -29,7 +29,8 @@ These are user-reported hardware results. Do not treat them as proof that every 
 - Web Admin configuration/status endpoints and NVS-backed Gemini settings and speaker volume.
 - Application-only OTA upload to the inactive OTA partition, with image validation and boot-slot selection.
 - ESP-IDF rollback support, with the new image marked valid after application/protocol initialization completes without a startup error.
-- Manual-only GitHub Actions workflow intended to publish separate OTA and merged USB-FLASH artifacts.
+- Manual-only GitHub Actions workflow now builds and publishes only the application OTA image; merged USB image generation and USB artifact upload have been removed.
+- Release version is read from `firmware/VERSION` (currently `0.1.2`) and injected into upstream `PROJECT_VER`, so the ESP application descriptor and OTA artifact use the same version.
 
 ### Not yet confirmed / next tests
 - The user reports that the device currently sounds like it is reading a TTS response rather than behaving like a natural Gemini Live voice conversation. Do not assume this proves a separate TTS service is being used. Trace the actual microphone uplink and Gemini Live response path before changing code.
@@ -47,6 +48,23 @@ These are user-reported hardware results. Do not treat them as proof that every 
 - Keep the matching USB-FLASH image as a recovery option.
 - Do not claim OTA is working until an actual hardware update and recovery test succeeds.
 
+## Next OTA release preparation — v0.1.2
+
+- Next release artifact name: `ChatAI-TPIOS-v0.1.2-OTA.bin`.
+- `.github/workflows/build-firmware.yml` remains `workflow_dispatch` only and publishes exactly one OTA artifact.
+- The workflow no longer runs `idf.py merge-bin` and no longer creates/uploads a merged USB-FLASH image.
+- Essential preparation remains: pinned upstream checkout, ChatAI overlay, Wi-Fi portal asset patch, required CMake reconfigure passes, and ESP-IDF application build.
+- `firmware/VERSION` is the single release-version source. `scripts/apply_upstream_patches.py` validates it and applies it to upstream `PROJECT_VER`.
+- The semantic-version validation expression was checked after correction.
+- Source/workflow changes only: no GitHub Action, firmware build, OTA upload, or hardware test has been run for v0.1.2. The workflow still requires a manual run, followed by an actual OTA test on the board.
+
+## Next development requirements from user
+
+1. Replace the current TTS-like interaction with genuine Gemini Live voice-to-voice audio conversation.
+2. Add Web Admin selection for Gemini Live prebuilt voices and persist the selected voice.
+3. Preserve saved Wi-Fi, Gemini API key, model, system prompt, voice, and volume settings across OTA. Show OTA update state/progress/result on the ESP32 OLED.
+4. After one initial wake/activation, keep the Gemini Live conversation open for continuous turn-taking without repeating the XiaoZhi wake word; support voice activity detection and interruption where feasible.
+5. For subsequent releases, use OTA rather than USB when the installed baseline and OTA compatibility are verified. Keep Actions fast and publish only one versioned OTA application binary.
 ## Recent compile fix
 
 The previous Actions compile failure was caused by calling `AudioCodec::SetOutputVolume()` while only the forward declaration was visible. The source was fixed by including `audio_codec.h` in `firmware/board/chatai-tpios/web_admin_server.cc`.
