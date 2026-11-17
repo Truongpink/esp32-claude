@@ -14,7 +14,7 @@ This repository contains the ChatAI TPIOS hardware-board overlay and an idempote
 - Pinned upstream tag: `v2.6.0`
 - Pinned upstream commit: `4de00aed740595a8713b01f8332b9b2cf30685bc`
 
-## Important status
+## Architecture notes\n\nSee [Gemini Live audio integration design](docs/GEMINI_AUDIO_DESIGN.md) for the source-verified audio pipeline and the required PCM integration seam.\n\n## Important status
 
 The board overlay is the hardware bring-up foundation only. Gemini Live transport/audio-session integration and the ChatAI TPIOS Web Admin are **not yet implemented**. Do not treat a baseline XiaoZhi-derived build as the finished ChatAI TPIOS firmware and do not flash it as the final product.
 
