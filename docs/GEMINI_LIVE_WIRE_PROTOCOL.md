@@ -95,4 +95,4 @@ The current ChatAI TPIOS board profile configures codec output for 24 kHz. The t
 
 ## Current firmware selection
 
-The firmware selects Gemini only when NVS namespace `gemini` contains `enabled=true` and a non-empty `api_key`. The model defaults to `gemini-3.8-live` and can be overridden with the `model` setting. Board output is configured for 24 kHz, matching Gemini Live 24 kHz mono PCM. Existing XiaoZhi MQTT/WebSocket selection remains the fallback.
+The firmware selects Gemini only when NVS namespace `gemini` contains `enabled=true` and a non-empty `api_key`. The model defaults to `gemini-3.8-live` and can be overridden with the `model` setting. Board output is configured for 24 kHz, matching Gemini Live 24 kHz mono PCM. Existing XiaoZhi MQTT/WebSocket selection remains the fallback. No Web Admin form exists yet to write these NVS settings; provisioning is the next integration step.
