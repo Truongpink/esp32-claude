@@ -151,11 +151,15 @@ private:
                 volume = 100;
             }
             codec->SetOutputVolume(volume);
+            Settings settings("chatai", true);
+            settings.SetInt("volume", volume);
             GetDisplay()->ShowNotification(Lang::Strings::VOLUME + std::to_string(volume));
         });
 
         volume_up_button_.OnLongPress([this]() {
             GetAudioCodec()->SetOutputVolume(100);
+            Settings settings("chatai", true);
+            settings.SetInt("volume", 100);
             GetDisplay()->ShowNotification(Lang::Strings::MAX_VOLUME);
         });
 
@@ -166,11 +170,15 @@ private:
                 volume = 0;
             }
             codec->SetOutputVolume(volume);
+            Settings settings("chatai", true);
+            settings.SetInt("volume", volume);
             GetDisplay()->ShowNotification(Lang::Strings::VOLUME + std::to_string(volume));
         });
 
         volume_down_button_.OnLongPress([this]() {
             GetAudioCodec()->SetOutputVolume(0);
+            Settings settings("chatai", true);
+            settings.SetInt("volume", 0);
             GetDisplay()->ShowNotification(Lang::Strings::MUTED);
         });
     }
