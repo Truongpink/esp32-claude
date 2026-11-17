@@ -68,11 +68,14 @@ bool GeminiLiveProtocol::SendSetup() {
     cJSON* gen = cJSON_AddObjectToObject(setup, "generationConfig");
     cJSON* modes = cJSON_AddArrayToObject(gen, "responseModalities"); cJSON_AddItemToArray(modes, cJSON_CreateString("AUDIO"));
     cJSON* speech = cJSON_AddObjectToObject(gen, "speechConfig");
+    cJSON_AddStringToObject(speech, "languageCode", language_code_.c_str());
     cJSON* voice = cJSON_AddObjectToObject(speech, "voiceConfig");
-    cJSON* prebuilt = cJSON_AddObjectToObject(voice, "prebuiltVoiceConfig"); cJSON_AddStringToObject(prebuilt, "voiceName", "Puck");
+    cJSON* prebuilt = cJSON_AddObjectToObject(voice, "prebuiltVoiceConfig");
+    cJSON_AddStringToObject(prebuilt, "voiceName", voice_name_.c_str());
     cJSON* instruction = cJSON_AddObjectToObject(setup, "systemInstruction");
     cJSON* parts = cJSON_AddArrayToObject(instruction, "parts"); cJSON* part = cJSON_CreateObject();
-    cJSON_AddStringToObject(part, "text", system_instruction_.c_str()); cJSON_AddItemToArray(parts, part);
+    const std::string instruction_text = "You are " + bot_name_ + ". " + system_instruction_;
+    cJSON_AddStringToObject(part, "text", instruction_text.c_str()); cJSON_AddItemToArray(parts, part);
     cJSON_AddObjectToObject(setup, "inputAudioTranscription"); cJSON_AddObjectToObject(setup, "outputAudioTranscription");
     std::string msg = PrintJson(root); cJSON_Delete(root); return !msg.empty() && websocket_->Send(msg);
 }
@@ -84,7 +87,10 @@ bool GeminiLiveProtocol::OpenAudioChannel() {
         return false;
     }
     api_key_ = cfg.GetString("api_key"); model_ = cfg.GetString("model", "gemini-3.8-live");
-    system_instruction_ = cfg.GetString("system_prompt", "You are ChatAI TPIOS, a helpful Vietnamese voice assistant. Speak naturally in Vietnamese unless the user asks for another language. Keep replies concise and conversational.");
+    system_instruction_ = cfg.GetString("system_prompt", "A helpful Vietnamese voice assistant. Speak naturally in Vietnamese unless the user asks for another language. Keep replies concise and conversational.");
+    bot_name_ = cfg.GetString("bot_name", "ChatAI");
+    voice_name_ = cfg.GetString("voice_name", "Puck");
+    language_code_ = cfg.GetString("language_code", "vi-VN");
     if (api_key_.empty()) { Fail("Gemini API key is not configured in local device settings"); return false; }
     if (model_.rfind("models/", 0) != 0) model_ = "models/" + model_;
     error_occurred_ = false; closing_ = false; listening_ = false; output_turn_started_ = false; setup_complete_ = false; last_server_error_.clear();
