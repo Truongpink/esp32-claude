@@ -5,7 +5,7 @@
 **Last successful build source revision:** `39d50a15c64447eb33ba0733af0ee5b57ab512de`  
 **Build:** GitHub Actions run [#3](https://github.com/Truongpink/esp32-claude/actions/runs/44046363363) — **success**  
 **Build environment:** ESP-IDF v6.1, target `esp32s3`  
-**Artifact from that run:** `ChatAI-TPIOS-ESP32S3-firmware`, containing `xiaozhi.bin` only. The current workflow renames the generated USB image to `ChatAI-TPIOS-v0.1.1-USB-FLASH.bin` and uploads it under `ChatAI-TPIOS-v0.1.1-USB-FLASH`; this newer workflow has not yet run.
+**Artifact from that run:** `ChatAI-TPIOS-ESP32S3-firmware`, containing `xiaozhi.bin` only. The current workflow is intended to publish separate `ChatAI-TPIOS-v0.1.1-OTA` and `ChatAI-TPIOS-v0.1.1-USB-FLASH` artifacts; this updated workflow has not yet run.
 
 ## Implemented in source
 
