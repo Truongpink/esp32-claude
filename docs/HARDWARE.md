@@ -13,18 +13,18 @@ The issue is useful hardware evidence, but its comments contain conflicting repo
 | ESP target | ESP32-S3 | Product/issue identification |
 | Flash / PSRAM | 16 MB / 8 MB | N16R8 product/issue identification |
 | OLED | SSD1306 128×64, I²C 0x3C | Product and board-family documentation; verify physical revision |
-| OLED SDA / SCL | GPIO 41 / GPIO 42 | Candidate from board-family source; verify revision |
+| OLED SDA / SCL | GPIO 41 / GPIO 42 | XH-S3E-AI PR #2194 board profile; verify revision |
 | Speaker I²S DOUT / BCLK / LRCK | GPIO 7 / GPIO 15 / GPIO 16 | Reported working in upstream issue #2206 |
 | Speaker amplifier enable | GPIO 17, HIGH | Reported required in upstream issue #2206 |
 | Microphone I²S pins | GPIO 4/5/6 candidate | PR #2194 proposes this mapping; issue #2206 has conflicting test results; not verified on the user's unit |
 | BOOT button | GPIO 0 candidate | PR #2194 board profile; verify exact PCB |
-| Touch button | GPIO 43 vs GPIO 47 | PR #2194 says GPIO 43; current overlay inherited GPIO 47. Unresolved |
+| Touch button | GPIO 43, active-low | Selected from exact XH-S3E-AI board profile in PR #2194; not physically verified on the user's PCB |
 | Volume buttons | GPIO 40 / GPIO 39 candidates | PR #2194 board profile; verify exact PCB |
 | Built-in LED | GPIO 48 candidate | PR #2194 board profile; verify exact PCB |
 
 ## Important bring-up constraint
 
-The existing `chatai-tpios` overlay was initially copied from upstream `bread-compact-wifi`. Upstream PR [#2194](https://github.com/78/xiaozhi-esp32/pull/2194) proposes GPIO 4/5/6 for the microphone and GPIO 43 for touch, while issue [#2206](https://github.com/78/xiaozhi-esp32/issues/2206) records a board sample where GPIO 4/5/6 did not produce microphone data and later reports where that mapping did work. The overlay currently uses GPIO 47 for touch, so that pin is also unresolved. Treat all of these as candidates, not verified wiring.
+The existing `chatai-tpios` overlay was initially copied from upstream `bread-compact-wifi`. Upstream PR [#2194](https://github.com/78/xiaozhi-esp32/pull/2194) proposes GPIO 4/5/6 for the microphone and GPIO 43 for touch, while issue [#2206](https://github.com/78/xiaozhi-esp32/issues/2206) records a board sample where GPIO 4/5/6 did not produce microphone data and later reports where that mapping did work. The overlay now follows the board-specific PR #2194 for GPIO 43 and active-low touch polarity. The microphone mapping remains provisional because issue #2206 reports conflicting results. Treat all candidate pins as unverified until tested on the user's PCB.
 
 Do not call the microphone path working until the actual microphone wiring is established from a schematic or verified hardware test. The confirmed speaker pins alone are not enough to declare two-way voice operation functional.
 

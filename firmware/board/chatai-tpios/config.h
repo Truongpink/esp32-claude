@@ -4,7 +4,7 @@
 #include <driver/gpio.h>
 
 #define AUDIO_INPUT_SAMPLE_RATE  16000
-#define AUDIO_OUTPUT_SAMPLE_RATE 24000
+#define AUDIO_OUTPUT_SAMPLE_RATE 24000 // Gemini Live native PCM output; upstream XH-S3E profile defaults to 16 kHz.
 
 // 如果使用 Duplex I2S 模式，请注释下面一行
 #define AUDIO_I2S_METHOD_SIMPLEX
@@ -33,7 +33,7 @@
 
 #define BUILTIN_LED_GPIO        GPIO_NUM_48
 #define BOOT_BUTTON_GPIO        GPIO_NUM_0
-#define TOUCH_BUTTON_GPIO       GPIO_NUM_47
+#define TOUCH_BUTTON_GPIO       GPIO_NUM_43 // XH-S3E-AI V1.0 upstream board profile (PR #2194).
 #define VOLUME_UP_BUTTON_GPIO   GPIO_NUM_40
 #define VOLUME_DOWN_BUTTON_GPIO GPIO_NUM_39
 
@@ -52,8 +52,8 @@
 #error "OLED display type is not selected"
 #endif
 
-#define DISPLAY_MIRROR_X true
-#define DISPLAY_MIRROR_Y true
+#define DISPLAY_MIRROR_X false
+#define DISPLAY_MIRROR_Y false
 
 
 // A MCP Test: Control a lamp
