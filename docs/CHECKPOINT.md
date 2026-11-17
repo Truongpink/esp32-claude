@@ -81,7 +81,7 @@ The repository HEAD and fixed source file were re-fetched from `main`. Do not cl
 
 ## Latest source-only feature batch
 
-- Committed to `main` through `e096e9e` (wake phrase, continuous listening, Web Admin voice/language/mic gain, restart/factory reset, and OLED OTA progress).
+- Committed to `main` through `14c2bc4` (wake phrase, continuous listening, Web Admin voice/language/mic gain, Wi-Fi reconfiguration, restart/factory reset, and OLED OTA progress).
 - The HTML JavaScript syntax, Web Admin element references, config JSON, API route count, and pinned-upstream patch anchors were checked.
 - No GitHub Actions, firmware build, OTA upload, or hardware operation was run. These changes are not yet compile-verified.
 - Keep `firmware/VERSION` at `0.1.2` until the next build is explicitly authorized; the next build should use `0.1.3`.
