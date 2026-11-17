@@ -4,6 +4,7 @@
 #include <esp_log.h>
 #include <algorithm>
 #include <cstring>
+#include <cstdio>
 #define TAG "GeminiLive"
 namespace {
 constexpr char kUrl[] = "wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent";
