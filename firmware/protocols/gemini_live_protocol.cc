@@ -87,7 +87,133 @@ bool GeminiLiveProtocol::SendLiveVoiceNotification(const std::string& text) {
     cJSON_Delete(root);
     return !message.empty() && SendText(message);
 }
+bool GeminiLiveProtocol::IsAudioChannelOpened() const { return websocket_ && websocket_->IsConnected() && setup_complete_ && !error_occurred_; }
+bool GeminiLiveProtocol::SendText(const std::string& text) {
+    if (!IsAudioChannelOpened()) return false;
+    if (!websocket_->Send(text)) { Fail("Gemini Live send failed"); return false; }
+    return true;
+}
+bool GeminiLiveProtocol::SendSetup() {
+    cJSON* root = cJSON_CreateObject(); cJSON* setup = cJSON_AddObjectToObject(root, "setup");
+    cJSON_AddStringToObject(setup, "model", model_.c_str());
+    cJSON* gen = cJSON_AddObjectToObject(setup, "generationConfig");
+    cJSON* modes = cJSON_AddArrayToObject(gen, "responseModalities"); cJSON_AddItemToArray(modes, cJSON_CreateString("AUDIO"));
+    cJSON* speech = cJSON_AddObjectToObject(gen, "speechConfig");
+    cJSON_AddStringToObject(speech, "languageCode", language_code_.c_str());
+    cJSON* voice = cJSON_AddObjectToObject(speech, "voiceConfig");
+    cJSON* prebuilt = cJSON_AddObjectToObject(voice, "prebuiltVoiceConfig");
+    cJSON_AddStringToObject(prebuilt, "voiceName", voice_name_.c_str());
+    cJSON* instruction = cJSON_AddObjectToObject(setup, "systemInstruction");
+    cJSON* parts = cJSON_AddArrayToObject(instruction, "parts"); cJSON* part = cJSON_CreateObject();
+    const std::string instruction_text = "You are " + bot_name_ + ". " + system_instruction_;
+    cJSON_AddStringToObject(part, "text", instruction_text.c_str()); cJSON_AddItemToArray(parts, part);
+    cJSON_AddObjectToObject(setup, "inputAudioTranscription"); cJSON_AddObjectToObject(setup, "outputAudioTranscription");
+    std::string msg = PrintJson(root); cJSON_Delete(root); return !msg.empty() && websocket_->Send(msg);
+}
+bool GeminiLiveProtocol::OpenAudioChannel() {
+    g_microphone_chunks_sent = 0;
+    g_response_audio_chunks_received = 0;
+    g_session_connected = false;
+    g_microphone_streaming = false;
+    { std::lock_guard<std::mutex> lock(g_diagnostics_mutex); g_last_error.clear(); }
+    error_occurred_ = false;
+    Settings cfg("gemini", false);
+    if (!cfg.GetBool("enabled", false)) {
+        Fail("Gemini Live is disabled; enable it in the local Web Admin");
+        return false;
+    }
+    api_key_ = cfg.GetString("api_key"); model_ = cfg.GetString("model", "gemini-3.8-live");
+    system_instruction_ = cfg.GetString("system_prompt", "A helpful Vietnamese voice assistant. Speak naturally in Vietnamese unless the user asks for another language. Keep replies concise and conversational.");
+    bot_name_ = cfg.GetString("bot_name", "ChatAI");
+    voice_name_ = cfg.GetString("voice_name", "Puck");
+    language_code_ = cfg.GetString("language_code", "vi-VN");
+    if (api_key_.empty()) { Fail("Gemini API key is not configured in local device settings"); return false; }
+    if (model_.rfind("models/", 0) != 0) model_ = "models/" + model_;
+    error_occurred_ = false; closing_ = false; listening_ = false; output_turn_started_ = false; setup_complete_ = false; last_server_error_.clear();
+    xEventGroupClearBits(event_group_, kSetupComplete | kSetupFailed);
+    auto* network = Board::GetInstance().GetNetwork();
+    if (!network) { Fail("Gemini Live network interface is unavailable"); return false; }
+    auto socket = network->CreateWebSocket(1);
+    if (!socket) { Fail("Failed to create Gemini Live WebSocket"); return false; }
+    websocket_ = std::shared_ptr<WebSocket>(std::move(socket));
+    websocket_->OnData([this](const char* data, size_t size, bool binary) {
+        if (data == nullptr || size == 0) {
+            ESP_LOGE(TAG, "Gemini Live received an empty WebSocket frame (binary=%d)", binary);
+            Fail("Gemini Live sent an empty WebSocket frame");
+            return;
+        }
+        if (size > kMaxMessage) {
+            ESP_LOGE(TAG, "Gemini Live frame exceeds limit: %u bytes (binary=%d)",
+                     static_cast<unsigned>(size), binary);
+            Fail("Gemini Live WebSocket frame is too large");
+            return;
+        }
 
+        // Gemini Live server messages are JSON envelopes. Parse the payload even
+        // when the transport marks it binary, so a wrapper opcode mismatch is
+        // distinguishable from genuinely non-JSON binary data.
+        cJSON* root = cJSON_ParseWithLength(data, size);
+        if (!cJSON_IsObject(root)) {
+            if (root) cJSON_Delete(root);
+            char prefix[25] = {};
+            const size_t preview = std::min<size_t>(size, 8);
+            for (size_t i = 0; i < preview; ++i) {
+                std::snprintf(prefix + i * 3, sizeof(prefix) - i * 3, "%02X ", static_cast<uint8_t>(data[i]));
+            }
+            ESP_LOGE(TAG, "Gemini Live frame is not a JSON object: type=%s size=%u prefix=%s",
+                     binary ? "binary" : "text", static_cast<unsigned>(size), prefix);
+            Fail(binary ? "Gemini Live sent an unsupported binary WebSocket frame"
+                        : "Gemini Live sent invalid JSON in a text frame");
+            return;
+        }
+        if (binary) {
+            ESP_LOGW(TAG, "Gemini Live JSON payload arrived with binary WebSocket opcode (%u bytes)",
+                     static_cast<unsigned>(size));
+        }
+        HandleServerMessage(root);
+        cJSON_Delete(root);
+        last_incoming_time_ = std::chrono::steady_clock::now();
+    });
+    websocket_->OnError([this](const NetworkError&) { if (!closing_) { if (!setup_complete_) xEventGroupSetBits(event_group_, kSetupFailed); Fail("Gemini Live WebSocket transport error"); } });
+    websocket_->OnDisconnected([this]() {
+        if (!setup_complete_) xEventGroupSetBits(event_group_, kSetupFailed);
+        setup_complete_ = false; listening_ = false; g_session_connected = false; g_microphone_streaming = false; audio_service_.EnablePcmBridge(false); audio_service_.EnablePcmPlaybackMode(false); audio_service_.ClearPcmPlayback();
+        if (!closing_ && channel_open_notified_.exchange(false) && on_audio_channel_closed_) on_audio_channel_closed_();
+    });
+    // The Gemini Live WebSocket endpoint authenticates with the API key in the query string.
+    // Keep the key out of logs; do not log this URL.
+    const std::string url = std::string(kUrl) + "?key=" + api_key_;
+    if (auto connected = websocket_->Connect(url.c_str()); !connected) { Fail("Could not connect to Gemini Live"); CloseAudioChannel(false); return false; }
+    if (!SendSetup()) { Fail("Could not send Gemini Live setup"); CloseAudioChannel(false); return false; }
+    EventBits_t bits = xEventGroupWaitBits(event_group_, kSetupComplete | kSetupFailed, pdTRUE, pdFALSE, pdMS_TO_TICKS(15000));
+    if (!(bits & kSetupComplete)) { Fail(last_server_error_.empty() ? "Gemini Live setup timed out" : last_server_error_); CloseAudioChannel(false); return false; }
+    setup_complete_ = true; g_session_connected = true; audio_service_.EnablePcmPlaybackMode(true); last_incoming_time_ = std::chrono::steady_clock::now();
+    channel_open_notified_ = true; if (on_connected_) on_connected_(); if (on_audio_channel_opened_) on_audio_channel_opened_();
+    ESP_LOGI(TAG, "Gemini Live session ready; model=%s", model_.c_str()); return true;
+}
+void GeminiLiveProtocol::CloseAudioChannel(bool send_goodbye) {
+    (void)send_goodbye; closing_ = true; listening_ = false; setup_complete_ = false; g_session_connected = false; g_microphone_streaming = false;
+    audio_service_.EnablePcmBridge(false); audio_service_.EnablePcmPlaybackMode(false); audio_service_.ClearPcmPlayback();
+    if (channel_open_notified_.exchange(false) && on_audio_channel_closed_) on_audio_channel_closed_();
+    if (websocket_) { websocket_->Close(); websocket_.reset(); } api_key_.clear();
+}
+void GeminiLiveProtocol::SendStartListening(ListeningMode mode) { (void)mode; if (IsAudioChannelOpened()) { audio_service_.EnablePcmBridge(true); listening_ = true; g_microphone_streaming = true; } }
+void GeminiLiveProtocol::SendStopListening() {
+    if (!IsAudioChannelOpened()) { listening_ = false; return; }
+    ProcessPending(); listening_ = false; g_microphone_streaming = false; audio_service_.EnablePcmBridge(false); SendAudioStreamEnd();
+}
+void GeminiLiveProtocol::SendAbortSpeaking(AbortReason reason) { (void)reason; audio_service_.ClearPcmPlayback(); }
+void GeminiLiveProtocol::SendWakeWordDetected(const std::string& word) { (void)word; }
+bool GeminiLiveProtocol::SendAudioChunk(const int16_t* samples, size_t count) {
+    if (!samples || !count || !IsAudioChannelOpened()) return false;
+    std::string b64 = Encode64(reinterpret_cast<const uint8_t*>(samples), count * sizeof(int16_t)); if (b64.empty()) return false;
+    cJSON* root = cJSON_CreateObject(); cJSON* realtime = cJSON_AddObjectToObject(root, "realtimeInput");
+    cJSON* audio = cJSON_AddObjectToObject(realtime, "audio"); cJSON_AddStringToObject(audio, "mimeType", "audio/pcm;rate=16000");
+    cJSON_AddStringToObject(audio, "data", b64.c_str()); std::string msg = PrintJson(root); cJSON_Delete(root);
+    if (msg.empty() || !websocket_->Send(msg)) return false;
+    ++g_microphone_chunks_sent;
+    return true;
+}
 bool GeminiLiveProtocol::SendAudioStreamEnd() {
     cJSON* root = cJSON_CreateObject(); cJSON* realtime = cJSON_AddObjectToObject(root, "realtimeInput"); cJSON_AddBoolToObject(realtime, "audioStreamEnd", true);
     std::string msg = PrintJson(root); cJSON_Delete(root); return !msg.empty() && SendText(msg);
