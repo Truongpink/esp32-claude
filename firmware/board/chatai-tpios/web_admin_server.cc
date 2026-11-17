@@ -287,7 +287,7 @@ esp_err_t ConfigPostHandler(httpd_req_t* req) {
     bool persisted = true;
     {
         Settings saved("gemini", false);
-        const char* missing = "\x1f";
+        const std::string missing(kMaxSystemPromptBytes + 1, '\x1f');
         persisted =
             saved.GetString("model", missing) == model->valuestring &&
             saved.GetString("system_prompt", missing) == prompt->valuestring &&
@@ -301,7 +301,7 @@ esp_err_t ConfigPostHandler(httpd_req_t* req) {
     }
     {
         Settings saved("chatai", false);
-        if (wake_word) persisted = persisted && saved.GetString("wake_word", "\x1f") == wake_word->valuestring;
+        if (wake_word) persisted = persisted && saved.GetString("wake_word", missing) == wake_word->valuestring;
         if (mic_gain) persisted = persisted && saved.GetInt("mic_gain", -1) == mic_gain->valueint;
         if (volume) persisted = persisted && saved.GetInt("volume", -1) == volume->valueint;
     }
