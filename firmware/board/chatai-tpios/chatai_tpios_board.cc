@@ -4,6 +4,7 @@
 #include "display/oled_display.h"
 #include "system_reset.h"
 #include "application.h"
+#include "settings.h"
 #include "button.h"
 #include "config.h"
 #include "mcp_server.h"
@@ -220,6 +221,12 @@ public:
         static NoAudioCodecDuplex audio_codec(AUDIO_INPUT_SAMPLE_RATE, AUDIO_OUTPUT_SAMPLE_RATE,
             AUDIO_I2S_GPIO_BCLK, AUDIO_I2S_GPIO_WS, AUDIO_I2S_GPIO_DOUT, AUDIO_I2S_GPIO_DIN);
 #endif
+        static const bool volume_loaded = []() {
+            Settings settings("chatai", false);
+            audio_codec.SetOutputVolume(settings.GetInt("volume", 70));
+            return true;
+        }();
+        (void)volume_loaded;
         return &audio_codec;
     }
 
