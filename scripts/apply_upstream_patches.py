@@ -114,7 +114,7 @@ def patch_pcm_audio_bridge() -> None:
         "    std::unique_ptr<AudioStreamPacket> PopPacketFromSendQueue();\n"
         "    // Optional raw PCM bridge for non-Opus transports (Gemini Live).\n"
         "    // Disabled by default; the existing XiaoZhi Opus path remains unchanged.\n"
-        "    void EnablePcmBridge(bool enable);\n"
+        "    void EnablePcmBridge(bool enable);\n    void EnablePcmPlaybackMode(bool enable);\n"
         "    bool PopPcmInput(std::vector<int16_t>& pcm);\n"
         "    bool PushPcmPlayback(std::vector<int16_t>&& pcm);\n"
         "    void ClearPcmPlayback();\n",
@@ -126,7 +126,8 @@ def patch_pcm_audio_bridge() -> None:
         "    // PCM playback queue holds eight 60 ms chunks; Opus remains limited to its original two tasks.\n"
         "    // Four 60 ms mono PCM frames bound memory while tolerating short network stalls.\n"
         "    FixedQueue<std::vector<int16_t>, 4> pcm_input_queue_;\n"
-        "    std::atomic<bool> pcm_bridge_enabled_{false};\n",
+        "    std::atomic<bool> pcm_bridge_enabled_{false};\n"
+        "    std::atomic<bool> pcm_playback_mode_{false};\n",
     )
     replace_once(
         source,
@@ -152,7 +153,10 @@ def patch_pcm_audio_bridge() -> None:
     replace_once(
         source,
         "void AudioService::EncodeWakeWord() {",
-        "void AudioService::EnablePcmBridge(bool enable) {\n"
+        "void AudioService::EnablePcmPlaybackMode(bool enable) {\n"
+        "    pcm_playback_mode_.store(enable);\n"
+        "}\n"
+        "\nvoid AudioService::EnablePcmBridge(bool enable) {\n"
         "    pcm_bridge_enabled_.store(enable);\n"
         "    if (!enable) {\n"
         "        std::lock_guard<std::mutex> lock(audio_queue_mutex_);\n"
@@ -203,9 +207,25 @@ def patch_pcm_audio_bridge() -> None:
         "        audio_encode_queue_.clear();\n"
         "        audio_decode_queue_.clear();",
         "        pcm_bridge_enabled_.store(false);\n"
+        "        pcm_playback_mode_.store(false);\n"
         "        audio_encode_queue_.clear();\n"
         "        pcm_input_queue_.clear();\n"
         "        audio_decode_queue_.clear();",
+    )
+
+    # Keep raw PCM speaker data when the application resets the Opus decoder on TTS start.
+    replace_once(
+        source,
+        "        timestamp_queue_.clear();\n"
+        "        audio_decode_queue_.clear();\n"
+        "        audio_playback_queue_.clear();\n"
+        "        audio_testing_queue_.clear();\n",
+        "        timestamp_queue_.clear();\n"
+        "        audio_decode_queue_.clear();\n"
+        "        if (!pcm_playback_mode_.load()) {\n"
+        "            audio_playback_queue_.clear();\n"
+        "        }\n"
+        "        audio_testing_queue_.clear();\n",
     )
 
 patch_pcm_audio_bridge()

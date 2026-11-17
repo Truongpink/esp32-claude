@@ -1,27 +1,11 @@
 #include "gemini_live_protocol.h"
 #include "board.h"
-#include "application.h"
 #include "settings.h"
 #include <esp_log.h>
 #include <algorithm>
 #include <cstring>
 #define TAG "GeminiLive"
 namespace {
-void QueuePcmForActiveSpeaking(AudioService* audio, std::vector<int16_t>&& frame) {
-    auto& app = Application::GetInstance();
-    if (app.GetDeviceState() == kDeviceStateSpeaking) {
-        audio->PushPcmPlayback(std::move(frame));
-        return;
-    }
-    app.Schedule([audio, frame = std::move(frame)]() mutable {
-        Application::GetInstance().Schedule([audio, frame = std::move(frame)]() mutable {
-            if (Application::GetInstance().GetDeviceState() == kDeviceStateSpeaking) {
-                audio->PushPcmPlayback(std::move(frame));
-            }
-        });
-    });
-}
-
 constexpr char kUrl[] = "wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent";
 constexpr size_t kMaxMessage = 64 * 1024;
 const char kB64[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
@@ -114,20 +98,20 @@ bool GeminiLiveProtocol::OpenAudioChannel() {
     websocket_->OnError([this](const NetworkError&) { if (!closing_) { if (!setup_complete_) xEventGroupSetBits(event_group_, kSetupFailed); Fail("Gemini Live WebSocket transport error"); } });
     websocket_->OnDisconnected([this]() {
         if (!setup_complete_) xEventGroupSetBits(event_group_, kSetupFailed);
-        setup_complete_ = false; listening_ = false; audio_service_.EnablePcmBridge(false); audio_service_.ClearPcmPlayback();
+        setup_complete_ = false; listening_ = false; audio_service_.EnablePcmBridge(false); audio_service_.EnablePcmPlaybackMode(false); audio_service_.ClearPcmPlayback();
         if (!closing_ && channel_open_notified_.exchange(false) && on_audio_channel_closed_) on_audio_channel_closed_();
     });
     if (auto connected = websocket_->Connect(kUrl); !connected) { Fail("Could not connect to Gemini Live"); CloseAudioChannel(false); return false; }
     if (!SendSetup()) { Fail("Could not send Gemini Live setup"); CloseAudioChannel(false); return false; }
     EventBits_t bits = xEventGroupWaitBits(event_group_, kSetupComplete | kSetupFailed, pdTRUE, pdFALSE, pdMS_TO_TICKS(15000));
     if (!(bits & kSetupComplete)) { Fail(last_server_error_.empty() ? "Gemini Live setup timed out" : last_server_error_); CloseAudioChannel(false); return false; }
-    setup_complete_ = true; last_incoming_time_ = std::chrono::steady_clock::now();
+    setup_complete_ = true; audio_service_.EnablePcmPlaybackMode(true); last_incoming_time_ = std::chrono::steady_clock::now();
     channel_open_notified_ = true; if (on_connected_) on_connected_(); if (on_audio_channel_opened_) on_audio_channel_opened_();
     ESP_LOGI(TAG, "Gemini Live session ready; model=%s", model_.c_str()); return true;
 }
 void GeminiLiveProtocol::CloseAudioChannel(bool send_goodbye) {
     (void)send_goodbye; closing_ = true; listening_ = false; setup_complete_ = false;
-    audio_service_.EnablePcmBridge(false); audio_service_.ClearPcmPlayback();
+    audio_service_.EnablePcmBridge(false); audio_service_.EnablePcmPlaybackMode(false); audio_service_.ClearPcmPlayback();
     if (channel_open_notified_.exchange(false) && on_audio_channel_closed_) on_audio_channel_closed_();
     if (websocket_) { websocket_->Close(); websocket_.reset(); } api_key_.clear();
 }
@@ -195,7 +179,7 @@ void GeminiLiveProtocol::HandleAudioPart(const cJSON* part) {
     std::vector<int16_t> samples(decoded.size() / 2); std::memcpy(samples.data(), decoded.data(), decoded.size());
     for (size_t i = 0; i < samples.size(); i += kOutputChunkSamples) {
         size_t n = std::min(kOutputChunkSamples, samples.size() - i);
-        QueuePcmForActiveSpeaking(&audio_service_, std::vector<int16_t>(samples.begin() + i, samples.begin() + i + n));
+        audio_service_.PushPcmPlayback(std::vector<int16_t>(samples.begin() + i, samples.begin() + i + n));
     }
 }
 void GeminiLiveProtocol::EmitTranscript(const char* type, const char* state, const char* text) {
