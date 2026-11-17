@@ -55,45 +55,45 @@ replace_once(
 # Add the dedicated Gemini Live transport to the upstream component build.
 replace_once(
     cmake,
-    '            "protocols/websocket_protocol.cc"\\n',
-    '            "protocols/websocket_protocol.cc"\\n'
-    '            "protocols/gemini_live_protocol.cc"\\n',
+    '            "protocols/websocket_protocol.cc"\n',
+    '            "protocols/websocket_protocol.cc"\n'
+    '            "protocols/gemini_live_protocol.cc"\n',
 )
 
 replace_once(
     UPSTREAM / "main" / "application.cc",
-    '#include "websocket_protocol.h"\\n',
-    '#include "websocket_protocol.h"\\n'
-    '#include "gemini_live_protocol.h"\\n',
+    '#include "websocket_protocol.h"\n',
+    '#include "websocket_protocol.h"\n'
+    '#include "gemini_live_protocol.h"\n',
 )
 replace_once(
     UPSTREAM / "main" / "application.cc",
-    '    if (ota_->HasMqttConfig()) {\\n'
-    '        protocol_ = std::make_unique<MqttProtocol>();\\n'
-    '    } else if (ota_->HasWebsocketConfig()) {\\n'
-    '        protocol_ = std::make_unique<WebsocketProtocol>();\\n'
-    '    } else {\\n'
-    '        ESP_LOGW(TAG, "No protocol specified in the OTA config, using MQTT");\\n'
-    '        protocol_ = std::make_unique<MqttProtocol>();\\n'
-    '    }\\n',
-    '    Settings gemini_settings("gemini", false);\\n'
-    '    const bool gemini_enabled = gemini_settings.GetBool("enabled", false);\\n'
-    '    const bool gemini_has_key = !gemini_settings.GetString("api_key").empty();\\n'
-    '    if (gemini_enabled && gemini_has_key) {\\n'
-    '        protocol_ = std::make_unique<GeminiLiveProtocol>(audio_service_);\\n'
-    '    } else {\\n'
-    '        if (gemini_enabled) {\\n'
-    '            ESP_LOGW(TAG, "Gemini Live enabled but API key is missing; using saved XiaoZhi protocol");\\n'
-    '        }\\n'
-    '        if (ota_->HasMqttConfig()) {\\n'
-    '            protocol_ = std::make_unique<MqttProtocol>();\\n'
-    '        } else if (ota_->HasWebsocketConfig()) {\\n'
-    '            protocol_ = std::make_unique<WebsocketProtocol>();\\n'
-    '        } else {\\n'
-    '            ESP_LOGW(TAG, "No protocol specified in the OTA config, using MQTT");\\n'
-    '            protocol_ = std::make_unique<MqttProtocol>();\\n'
-    '        }\\n'
-    '    }\\n',
+    '    if (ota_->HasMqttConfig()) {\n'
+    '        protocol_ = std::make_unique<MqttProtocol>();\n'
+    '    } else if (ota_->HasWebsocketConfig()) {\n'
+    '        protocol_ = std::make_unique<WebsocketProtocol>();\n'
+    '    } else {\n'
+    '        ESP_LOGW(TAG, "No protocol specified in the OTA config, using MQTT");\n'
+    '        protocol_ = std::make_unique<MqttProtocol>();\n'
+    '    }\n',
+    '    Settings gemini_settings("gemini", false);\n'
+    '    const bool gemini_enabled = gemini_settings.GetBool("enabled", false);\n'
+    '    const bool gemini_has_key = !gemini_settings.GetString("api_key").empty();\n'
+    '    if (gemini_enabled && gemini_has_key) {\n'
+    '        protocol_ = std::make_unique<GeminiLiveProtocol>(audio_service_);\n'
+    '    } else {\n'
+    '        if (gemini_enabled) {\n'
+    '            ESP_LOGW(TAG, "Gemini Live enabled but API key is missing; using saved XiaoZhi protocol");\n'
+    '        }\n'
+    '        if (ota_->HasMqttConfig()) {\n'
+    '            protocol_ = std::make_unique<MqttProtocol>();\n'
+    '        } else if (ota_->HasWebsocketConfig()) {\n'
+    '            protocol_ = std::make_unique<WebsocketProtocol>();\n'
+    '        } else {\n'
+    '            ESP_LOGW(TAG, "No protocol specified in the OTA config, using MQTT");\n'
+    '            protocol_ = std::make_unique<MqttProtocol>();\n'
+    '        }\n'
+    '    }\n',
 )
 
 # Add a bounded raw-PCM bridge for Gemini Live while preserving the default Opus path.
@@ -122,7 +122,8 @@ def patch_pcm_audio_bridge() -> None:
     replace_once(
         header,
         "    FixedQueue<AudioTask, MAX_PLAYBACK_TASKS_IN_QUEUE> audio_playback_queue_;\n",
-        "    FixedQueue<AudioTask, MAX_PLAYBACK_TASKS_IN_QUEUE> audio_playback_queue_;\n"
+        "    FixedQueue<AudioTask, 8> audio_playback_queue_;\n"
+        "    // PCM playback queue holds eight 60 ms chunks; Opus remains limited to its original two tasks.\n"
         "    // Four 60 ms mono PCM frames bound memory while tolerating short network stalls.\n"
         "    FixedQueue<std::vector<int16_t>, 4> pcm_input_queue_;\n"
         "    std::atomic<bool> pcm_bridge_enabled_{false};\n",
@@ -194,6 +195,7 @@ def patch_pcm_audio_bridge() -> None:
         source,
         "        audio_encode_queue_.clear();\n"
         "        audio_decode_queue_.clear();",
+        "        pcm_bridge_enabled_.store(false);\n"
         "        audio_encode_queue_.clear();\n"
         "        pcm_input_queue_.clear();\n"
         "        audio_decode_queue_.clear();",

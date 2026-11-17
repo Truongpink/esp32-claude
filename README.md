@@ -20,6 +20,6 @@ See [Gemini Live audio integration design](docs/GEMINI_AUDIO_DESIGN.md) for the 
 
 ## Important status
 
-The board overlay is the hardware bring-up foundation only. Gemini Live transport/audio-session integration and the ChatAI TPIOS Web Admin are **not yet implemented**. Do not treat a baseline XiaoZhi-derived build as the finished ChatAI TPIOS firmware and do not flash it as the final product.
+The board overlay and an initial Gemini Live PCM/WebSocket transport are present. The Gemini path is not yet hardware-validated; bounded reconnect/session resumption, secure short-lived token provisioning, ChatAI TPIOS Web Admin, and the OTA upload handler remain outstanding. Do not treat a baseline XiaoZhi-derived build as the finished ChatAI TPIOS firmware and do not flash it as the final product.
 
 Build workflows will be added only after the required ChatAI features are integrated and statically checked. GitHub Actions are manual-only and are not run automatically by repository changes.

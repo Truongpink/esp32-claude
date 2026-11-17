@@ -88,7 +88,8 @@ If the actual codec output rate differs from 24 kHz, resample before queueing. T
 ## Current implementation status
 
 - `AudioService` PCM seam is added by the pinned-upstream patcher.
-- The Gemini WebSocket transport, authentication, setup handshake, JSON/base64 parser, resampling guard, reconnect/session-resumption, and application state integration are **not implemented yet**.
+- Initial Gemini WebSocket transport, API-key handshake, setup gate, JSON/base64 PCM path, transcript forwarding, interruption handling, and protocol selection are implemented in source.
+- Bounded reconnect/session resumption, short-lived token provisioning, local Web Admin credential management, OTA upload handling, and hardware validation remain outstanding.
 - No firmware build or hardware test has been run.
 
 

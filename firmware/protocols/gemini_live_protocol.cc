@@ -1,7 +1,6 @@
 #include "gemini_live_protocol.h"
 #include "board.h"
 #include "settings.h"
-#include <mbedtls/base64.h>
 #include <esp_log.h>
 #include <algorithm>
 #include <cstring>
@@ -9,16 +8,43 @@
 namespace {
 constexpr char kUrl[] = "wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent";
 constexpr size_t kMaxMessage = 64 * 1024;
-std::string Encode64(const uint8_t* p, size_t n) {
-    std::string out(4 * ((n + 2) / 3) + 1, '\0'); size_t written = 0;
-    if (mbedtls_base64_encode(reinterpret_cast<unsigned char*>(out.data()), out.size(), &written, p, n) != 0) return {};
-    out.resize(written); return out;
+const char kB64[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+std::string Encode64(const uint8_t* data, size_t size) {
+    std::string out;
+    out.reserve(4 * ((size + 2) / 3));
+    for (size_t i = 0; i < size; i += 3) {
+        const uint32_t a = data[i], b = i + 1 < size ? data[i + 1] : 0, c = i + 2 < size ? data[i + 2] : 0;
+        const uint32_t v = (a << 16) | (b << 8) | c;
+        out.push_back(kB64[(v >> 18) & 63]); out.push_back(kB64[(v >> 12) & 63]);
+        out.push_back(i + 1 < size ? kB64[(v >> 6) & 63] : '=');
+        out.push_back(i + 2 < size ? kB64[v & 63] : '=');
+    }
+    return out;
 }
-bool Decode64(const char* p, size_t n, std::vector<uint8_t>& out) {
-    if (!p || !n || n > kMaxMessage) return false;
-    out.resize((n * 3) / 4 + 3); size_t written = 0;
-    if (mbedtls_base64_decode(out.data(), out.size(), &written, reinterpret_cast<const unsigned char*>(p), n) != 0) { out.clear(); return false; }
-    out.resize(written); return true;
+bool Decode64(const char* data, size_t size, std::vector<uint8_t>& out) {
+    if (!data || !size || size > kMaxMessage || size % 4 != 0) return false;
+    auto value = [](char c) -> int {
+        if (c >= 'A' && c <= 'Z') return c - 'A';
+        if (c >= 'a' && c <= 'z') return c - 'a' + 26;
+        if (c >= '0' && c <= '9') return c - '0' + 52;
+        if (c == '+') return 62;
+        if (c == '/') return 63;
+        return -1;
+    };
+    out.clear(); out.reserve((size / 4) * 3);
+    for (size_t i = 0; i < size; i += 4) {
+        const bool pad2 = data[i + 2] == '=', pad3 = data[i + 3] == '=';
+        if ((pad2 && !pad3) || ((pad2 || pad3) && i + 4 != size)) return false;
+        const int a = value(data[i]), b = value(data[i + 1]);
+        const int c = pad2 ? 0 : value(data[i + 2]), d = pad3 ? 0 : value(data[i + 3]);
+        if (a < 0 || b < 0 || c < 0 || d < 0) return false;
+        const uint32_t v = (static_cast<uint32_t>(a) << 18) | (static_cast<uint32_t>(b) << 12) |
+                           (static_cast<uint32_t>(c) << 6) | static_cast<uint32_t>(d);
+        out.push_back(static_cast<uint8_t>(v >> 16));
+        if (!pad2) out.push_back(static_cast<uint8_t>(v >> 8));
+        if (!pad3) out.push_back(static_cast<uint8_t>(v));
+    }
+    return true;
 }
 std::string PrintJson(cJSON* root) {
     char* p = cJSON_PrintUnformatted(root); if (!p) return {};
