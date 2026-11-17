@@ -1,51 +1,74 @@
 # ChatAI TPIOS — project checkpoint
 
-**Checkpoint date:** 2026-11-17  
-**Branch:** `main`  
-**Last successful build source revision:** `39d50a15c64447eb33ba0733af0ee5b57ab512de`  
-**Build:** GitHub Actions run [#3](https://github.com/Truongpink/esp32-claude/actions/runs/44046363363) — **success**  
-**Build environment:** ESP-IDF v6.1, target `esp32s3`  
-**Artifact from that run:** `ChatAI-TPIOS-ESP32S3-firmware`, containing `xiaozhi.bin` only. The current workflow is intended to publish separate `ChatAI-TPIOS-v0.1.1-OTA` and `ChatAI-TPIOS-v0.1.1-USB-FLASH` artifacts; this updated workflow has not yet run.
+**Checkpoint date:** 2026-11-17 (ICT)  
+**Repository:** `Truongpink/esp32-claude`  
+**Working branch:** `main` only  
+**Repository HEAD inspected:** `5fd0106b48815a40fa93ed2077ec6a8f47c13cf9` — `Include AudioCodec definition in Web Admin server`
 
-## Implemented in source
+## Hardware bring-up — user-reported working
 
-- Added a separate ChatAI TPIOS ESP32-S3 board overlay without replacing upstream board profiles.
-- Added a reproducible preparation script that fetches the pinned XiaoZhi v2.6.0 source revision (`4de00aed740595a8713b01f8332b9b2cf30685bc`) and applies the ChatAI overlay.
-- Added the Gemini Live protocol implementation and the PCM bridge integration:
-  - 16 kHz mono PCM16 microphone uplink.
-  - 24 kHz mono PCM16 speaker playback.
-  - WebSocket setup handshake, audio streaming, transcription callbacks, turn completion and interruption handling.
-  - Gemini Live is selected directly as the device protocol. The current firmware does not fall back to the XiaoZhi cloud protocol when Gemini is disabled or unconfigured.
-- Added the board profile and OLED SSD1306 128x64 Kconfig selection.
-- Added the local Web Admin source:
-  - Device status, Gemini configuration, and speaker volume backed by NVS.
-  - Original dark/purple AI Voice Bot layout adapted for the actual supported device controls.
-  - Streamed application-only OTA upload to the inactive app partition, with runtime dual-slot checks and ESP-IDF image validation.
-  - No PIN/login; intended for trusted local Wi-Fi only.
-- The manual-only GitHub Actions workflow now publishes two separate artifacts: application-only `ChatAI-TPIOS-v0.1.1-OTA.bin` for Web Admin OTA and merged `ChatAI-TPIOS-v0.1.1-USB-FLASH.bin` for USB flashing. This updated workflow has not yet run.
-- The OTA patch marks a pending image valid after application/protocol initialization completes without a startup error, allowing the ESP-IDF bootloader rollback mechanism to restore the previous slot if the new image fails before validation.
-- Fixed the two compile blockers found in earlier runs: Gemini transcript indentation under `-Werror`, and OLED type/height Kconfig selection.
+The user has installed the firmware on the ESP32-S3 successfully and confirmed:
 
-## What the previous successful build proves
+- Firmware installation completed and the device starts sufficiently to continue configuration.
+- Wi-Fi connection is working.
+- Local Web Admin is reachable from the LAN at the device's current address; the user confirmed `http://192.168.1.110` during the setup session. This address is DHCP-assigned and may change.
+- The user can open the Web Admin page.
 
-Workflow run #3 completed all steps successfully at its recorded source revision: checkout of `main`, upstream preparation/patch application, ESP-IDF v6.1 compilation, and artifact upload. The artifact is present and has not expired.
+These are user-reported hardware results. Do not treat them as proof that every hardware feature or every API endpoint is fully validated.
 
-This confirms that the earlier source revision and board overlay compiled in the configured CI environment. Later edits on `main`, including the Gemini WebSocket authentication correction, have not yet been rebuilt. It does **not** prove that the image has been flashed or that the physical board's microphone, speaker, OLED, buttons, Gemini network session, Web Admin or OTA flow work on the actual device.
+## Current feature status
 
-## Remaining work — next phase
+### Confirmed by user on hardware
+- [x] Firmware can be installed.
+- [x] Device connects to Wi-Fi.
+- [x] Web Admin can be opened over the LAN.
 
-1. Run the current manual workflow and download `ChatAI-TPIOS-v0.1.1-USB-FLASH`; flash `ChatAI-TPIOS-v0.1.1-USB-FLASH.bin` over USB while preserving the board's known-good layout.
-2. Bring up the device and verify boot, OLED logo/status, Wi-Fi connection and local Web Admin.
-3. Verify the exact board revision and microphone pin mapping on the physical PCB. GPIO 4/5/6 is still provisional because upstream reports conflict.
-4. Test speaker output at the configured 24 kHz rate, microphone capture, two-way Gemini Live conversation, touch and volume controls.
-5. Run the updated manual workflow, verify both the application-only OTA image and merged USB image are produced, then test Web Admin OTA and rollback on the actual board.
-6. Verify the new Gemini WebSocket frame diagnostics on hardware, then improve reconnect/session resumption and review transport shutdown/backpressure.
-7. Before production use, replace long-lived device API-key provisioning with a safer short-lived token flow; current local HTTP/NVS setup is bring-up scope and is not production security.
+### Implemented in source; hardware verification still pending
+- ChatAI TPIOS board overlay for ESP32-S3.
+- Gemini Live WebSocket protocol integration and PCM audio paths (16 kHz mono PCM16 microphone input, 24 kHz mono PCM16 speaker output).
+- Web Admin configuration/status endpoints and NVS-backed Gemini settings and speaker volume.
+- Application-only OTA upload to the inactive OTA partition, with image validation and boot-slot selection.
+- ESP-IDF rollback support, with the new image marked valid after application/protocol initialization completes without a startup error.
+- Manual-only GitHub Actions workflow intended to publish separate OTA and merged USB-FLASH artifacts.
 
-## Working rules
+### Not yet confirmed / next tests
+- The user reports that the device currently sounds like it is reading a TTS response rather than behaving like a natural Gemini Live voice conversation. Do not assume this proves a separate TTS service is being used. Trace the actual microphone uplink and Gemini Live response path before changing code.
+- Confirm true microphone-to-Gemini audio streaming and natural voice-to-voice behavior on hardware.
+- Current interaction appears to be push-to-talk (hold to speak, release to finish a turn); verify the actual control behavior and decide whether continuous conversation is required.
+- OTA has **not** yet been tested on hardware. The OTA file is reserved for testing future firmware versions after the current USB-installed firmware is known-good.
+- Verify OTA success, reboot into the new slot, persistence of Wi-Fi/Gemini settings, and rollback/recovery on the actual board.
+- Verify OLED, microphone capture quality, speaker output, buttons, and volume independently.
 
-- Work on `main` only; do not create or switch branches.
-- Inspect current repository state and exact source before every edit.
-- Keep changes minimal and preserve upstream XiaoZhi functionality.
-- GitHub Actions is manual-only. Do not dispatch builds or flash hardware without the user's explicit instruction.
-- Do not call the firmware hardware-validated until the physical bring-up tests above have been completed.
+## USB-FLASH vs OTA
+
+- **USB-FLASH merged image:** for initial installation or recovery/re-flashing over USB.
+- **OTA application-only `.bin`:** for updating a firmware already installed on the device through Web Admin; do not upload the merged USB image to the OTA endpoint.
+- Intended version flow: install the baseline with USB-FLASH, then test subsequent releases (for example v0.1.2, v0.1.3) using OTA.
+- Keep the matching USB-FLASH image as a recovery option.
+- Do not claim OTA is working until an actual hardware update and recovery test succeeds.
+
+## Recent compile fix
+
+The previous Actions compile failure was caused by calling `AudioCodec::SetOutputVolume()` while only the forward declaration was visible. The source was fixed by including `audio_codec.h` in `firmware/board/chatai-tpios/web_admin_server.cc`.
+
+Fix commit: `5fd0106b48815a40fa93ed2077ec6a8f47c13cf9`.
+
+The repository HEAD and fixed source file were re-fetched from `main`. Do not claim a post-fix Actions build passed unless a newer run is inspected.
+
+## Project implementation notes
+
+- Upstream XiaoZhi source is pinned to commit `4de00aed740595a8713b01f8332b9b2cf30685bc`.
+- Web Admin setup AP uses `192.168.4.1` while AP provisioning is active. After joining the home Wi-Fi, use the device's router-assigned LAN IP instead.
+- OTA endpoint accepts an application-only binary as raw `application/octet-stream`, streams it to the inactive OTA slot, validates it, selects it, and restarts.
+- The rollback validity check is based on application/protocol initialization; it does not guarantee that a later Gemini cloud session will connect successfully.
+- The current Web Admin uses plain HTTP and has no PIN/login. Keep it on a trusted local network; do not expose it to the public Internet.
+
+## Rules for continuing work
+
+- Work on `main` only; never create or switch branches.
+- Before every edit, inspect current branch HEAD, repository state, and the exact relevant source files.
+- Make minimal targeted changes; preserve working Wi-Fi, Web Admin, configuration, and audio functionality.
+- Do not modify unrelated features.
+- GitHub Actions is manual-only (`workflow_dispatch`). Never add push/PR triggers.
+- Never run Actions, builds, flashing, or hardware operations without the user's explicit permission.
+- Report hardware behavior as verified only when the user or an actual test confirms it.
