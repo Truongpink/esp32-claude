@@ -40,6 +40,20 @@ replace_once(
     '    config BOARD_TYPE_BREAD_COMPACT_WIFI\n',
 )
 
+# Make the upstream OLED type choice available to this board and select its
+# verified 128x64 SSD1306 panel by default.
+replace_once(
+    kconfig,
+    '    depends on BOARD_TYPE_BREAD_COMPACT_WIFI || BOARD_TYPE_BREAD_COMPACT_ML307 || BOARD_TYPE_BREAD_COMPACT_NT26 || BOARD_TYPE_BREAD_COMPACT_ESP32 || BOARD_TYPE_HU_087 || (BOARD_TYPE_WK_ESP32S3_DEV && WK_ESP32S3_DEV_DISPLAY_OLED)\\n',
+    '    depends on BOARD_TYPE_CHAT_AI_TPIOS || BOARD_TYPE_BREAD_COMPACT_WIFI || BOARD_TYPE_BREAD_COMPACT_ML307 || BOARD_TYPE_BREAD_COMPACT_NT26 || BOARD_TYPE_BREAD_COMPACT_ESP32 || BOARD_TYPE_HU_087 || (BOARD_TYPE_WK_ESP32S3_DEV && WK_ESP32S3_DEV_DISPLAY_OLED)\\n',
+)
+replace_once(
+    kconfig,
+    '    default OLED_SSD1306_128X32\\n',
+    '    default OLED_SSD1306_128X64 if BOARD_TYPE_CHAT_AI_TPIOS\\n'
+    '    default OLED_SSD1306_128X32\\n',
+)
+
 cmake = UPSTREAM / "main" / "CMakeLists.txt"
 replace_once(
     cmake,
