@@ -150,7 +150,7 @@ The repository HEAD and fixed source file were re-fetched from `main`. Do not cl
    - User observed the device changing from `192.168.1.110` to `192.168.1.115` after OTA.
    - This is consistent with DHCP assigning a different lease after Wi-Fi reconnect/reboot; it is not evidence that OTA erased settings.
    - User wants a stable local address that does not require checking the router for a new IP.
-   - Preferred solution to investigate: advertise a stable mDNS hostname (for example `http://chatai-tpios.local`) after station Wi-Fi connects, and keep the DHCP IP visible as a fallback/diagnostic. Verify ESP-IDF mDNS component availability and the board's network event lifecycle before editing.
+   - Source implementation now advertises the stable mDNS hostname `http://chatai-tpios.local` after station Wi-Fi connects, while retaining the DHCP IP as a fallback/diagnostic. Build and iPhone/router verification are still pending.
    - A fixed DHCP reservation/static IP is a separate alternative; do not silently hard-code `192.168.1.110`, because that address may be occupied or differ on another router.
    - Ensure same-origin validation accepts the chosen local hostname safely, without opening the write APIs to arbitrary cross-origin requests.
 
@@ -159,7 +159,7 @@ The repository HEAD and fixed source file were re-fetched from `main`. Do not cl
 - `ConfigPostHandler()` persists Gemini fields, wake phrase, and speaker volume; microphone gain currently calls `SetInputGain()` but is not saved to NVS.
 - `ConfigGetHandler()` reads microphone gain from NVS, so the UI can appear to revert that setting after reload.
 - `firmware/board/chatai-tpios/web_admin.html`: Save posts JSON to `/api/config`, displays the server's `error` on non-2xx responses, then reloads the form after a successful response. Capture the actual HTTP error from the device before attributing the reported failure to a specific validation rule.
-- No firmware source changes for these two issues have been made yet.
+- Source fixes for save feedback, same-origin hostname handling, and mDNS are now committed; they have not yet been built or tested on hardware. See the follow-up section below.
 
 ### Build duration
 - User reports manual GitHub Actions firmware builds take approximately 6–7 minutes.
