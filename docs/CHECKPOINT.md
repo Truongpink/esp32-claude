@@ -5,7 +5,7 @@
 **Last successful build source revision:** `39d50a15c64447eb33ba0733af0ee5b57ab512de`  
 **Build:** GitHub Actions run [#3](https://github.com/Truongpink/esp32-claude/actions/runs/44046363363) — **success**  
 **Build environment:** ESP-IDF v6.1, target `esp32s3`  
-**Artifact from that run:** `ChatAI-TPIOS-ESP32S3-firmware`, containing `xiaozhi.bin` only. The current workflow now creates `ChatAI-TPIOS-v0.1.1-USB-FLASH` with `merged-binary.bin`; this newer workflow has not yet run.
+**Artifact from that run:** `ChatAI-TPIOS-ESP32S3-firmware`, containing `xiaozhi.bin` only. The current workflow now creates `ChatAI-TPIOS-v0.1.1-USB-FLASH` with `ChatAI-TPIOS-v0.1.1-USB-FLASH.bin`; this newer workflow has not yet run.
 
 ## Implemented in source
 
@@ -32,7 +32,7 @@ This confirms that the earlier source revision and board overlay compiled in the
 
 ## Remaining work — next phase
 
-1. Run the current manual workflow and download `ChatAI-TPIOS-v0.1.1-USB-FLASH`; flash its `merged-binary.bin` over USB while preserving the board's known-good layout.
+1. Run the current manual workflow and download `ChatAI-TPIOS-v0.1.1-USB-FLASH`; flash `ChatAI-TPIOS-v0.1.1-USB-FLASH.bin` over USB while preserving the board's known-good layout.
 2. Bring up the device and verify boot, OLED logo/status, Wi-Fi connection and local Web Admin.
 3. Verify the exact board revision and microphone pin mapping on the physical PCB. GPIO 4/5/6 is still provisional because upstream reports conflict.
 4. Test speaker output at the configured 24 kHz rate, microphone capture, two-way Gemini Live conversation, touch and volume controls.
