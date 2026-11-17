@@ -93,6 +93,14 @@ The repository HEAD and fixed source file were re-fetched from `main`. Do not cl
 - The current API-key transport uses a query parameter in the WebSocket URL. Keep it out of logs; production hardening should move to short-lived credentials/token broker rather than embedding a long-lived key in a device.
 - Keep `firmware/VERSION` at `0.1.2` until the next build is explicitly authorized; the next build should use `0.1.3`.
 
+## Gemini Live diagnostics — source-only
+
+- Added a bounded diagnostic snapshot for the current Gemini Live session: successful microphone PCM chunks sent, response PCM audio chunks received, session-connected state, microphone-streaming state, and the most recent error message.
+- Exposed these fields through the existing local `/api/status` endpoint and added a small Web Admin panel with a manual refresh action.
+- Error text is capped and the configured API key is redacted before it is stored for display. Audio payloads, transcripts, and the WebSocket URL are not logged or exposed by this panel.
+- Counters reset when a new Gemini Live session starts; they count successfully sent microphone chunks and decoded response audio chunks, not individual PCM samples or confirmed audible playback.
+- This is source-only. No compile, GitHub Actions run, firmware build, OTA, or hardware test was performed. Verify compilation and then use the panel during a real conversation to confirm both counters increase.
+
 ## Project implementation notes
 
 - Upstream XiaoZhi source is pinned to commit `4de00aed740595a8713b01f8332b9b2cf30685bc`.
