@@ -198,3 +198,13 @@ The repository HEAD and fixed source file were re-fetched from `main`. Do not cl
 - GitHub Actions now names the OTA BIN `chatai-esp32-2.bin` and the downloadable artifact ZIP `chatai-esp32-2.zip`. The ZIP is GitHub's artifact archive and contains the matching BIN. Future releases increment `firmware/VERSION` before the manual workflow run; each run creates a separate artifact and retention is 90 days.
 - The workflow remains `workflow_dispatch` only. No Action, build, flash, OTA, or hardware operation was triggered for this source update.
 - Hardware verification still required: save/read back a near-limit prompt, reboot persistence, and confirm downloaded artifact names/content.
+
+## Gemini Live voice notifications and verified configuration save (2026-11-18 ICT)
+
+- The existing firmware does not call a separate Gemini TTS endpoint. Gemini Live already returns 24 kHz audio directly to the speaker; the internal tts event labels are used by the application for Speaking/Listening state and output transcription. Those events must remain so the existing voice UI and turn lifecycle continue to work.
+- Web Admin configuration save now displays Đang lưu cấu hình... on OLED, writes the existing NVS namespaces, then reads back every supplied setting before returning success. The API key remains hidden and blank-key submissions continue to preserve the previously saved key.
+- A successful save displays Lưu cấu hình thành công; a validation/read-back failure displays Lưu cấu hình thất bại. The save endpoint does not claim success unless the read-back values match.
+- Success/failure speech is queued through the existing Application main task and the active Gemini Live voice only when the device is Listening, the user is not currently detected speaking, and the Live audio channel is open. It uses the Live session's realtime text input, not a separate TTS request, and does not start a new session. If those conditions are not met, OLED feedback remains the fallback.
+- realtimeInput.text is designed for non-interrupting live input and is not appended to conversation history. The selected Gemini Live voice remains the configured voice.
+- Source-level only: the exact spoken wording/timing, OLED rendering, and NVS read-back still require a firmware build and ESP32-S3 test. The upstream Settings class uses ESP_ERROR_CHECK for NVS write/commit errors, so a low-level NVS error may trigger ESP-IDF error handling rather than a recoverable HTTP response.
+- No GitHub Actions, firmware build, OTA upload, flashing, or hardware operation was run. The workflow remains manual-only.
