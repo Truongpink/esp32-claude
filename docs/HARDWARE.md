@@ -22,7 +22,7 @@ The issue is useful hardware evidence, but its comments contain conflicting repo
 
 ## Important bring-up constraint
 
-The existing `chatai-tpios` overlay was initially copied from upstream `bread-compact-wifi`. Its GPIO 4/5/6 microphone assignment, GPIO 47 touch button and GPIO 40/39 volume buttons are **not confirmed for XH-S3E-AI_V1.0**. In particular, upstream issue #2206 reports that GPIO 4/5/6 did not produce microphone data on the reported board.
+The existing `chatai-tpios` overlay was initially copied from upstream `bread-compact-wifi`. Upstream PR [#2194](https://github.com/78/xiaozhi-esp32/pull/2194) proposes GPIO 4/5/6 for the microphone and GPIO 43 for touch, while issue [#2206](https://github.com/78/xiaozhi-esp32/issues/2206) records a board sample where GPIO 4/5/6 did not produce microphone data and later reports where that mapping did work. The overlay currently uses GPIO 47 for touch, so that pin is also unresolved. Treat all of these as candidates, not verified wiring.
 
 Do not call the microphone path working until the actual microphone wiring is established from a schematic or verified hardware test. The confirmed speaker pins alone are not enough to declare two-way voice operation functional.
 
