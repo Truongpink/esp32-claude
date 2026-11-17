@@ -7,8 +7,18 @@
 #include <freertos/event_groups.h>
 #include <atomic>
 #include <memory>
+#include <cstdint>
+#include <string>
 class GeminiLiveProtocol final : public Protocol {
 public:
+    struct Diagnostics {
+        uint32_t microphone_chunks_sent = 0;
+        uint32_t response_audio_chunks_received = 0;
+        bool session_connected = false;
+        bool microphone_streaming = false;
+        std::string last_error;
+    };
+    static Diagnostics GetDiagnostics();
     explicit GeminiLiveProtocol(AudioService& audio_service);
     ~GeminiLiveProtocol() override;
     bool Start() override;
