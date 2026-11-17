@@ -28,7 +28,7 @@ if not (UPSTREAM / "CMakeLists.txt").is_file():
 
 # mDNS is an external ESP-IDF component since IDF 5.0; pin a compatible release.
 manifest = UPSTREAM / "main" / "idf_component.yml"
-replace_once(manifest, "dependencies:\\n", "dependencies:\\n  espressif/mdns: ~1.8.2\\n")
+replace_once(manifest, "dependencies:\n", "dependencies:\n  espressif/mdns: ~1.8.2\n")
 
 # Keep the ESP application descriptor version aligned with firmware/VERSION.
 replace_once(
