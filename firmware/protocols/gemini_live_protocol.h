@@ -26,6 +26,7 @@ public:
     void CloseAudioChannel(bool send_goodbye = true) override;
     bool IsAudioChannelOpened() const override;
     bool SendAudio(std::unique_ptr<AudioStreamPacket> packet) override;
+    bool SendLiveVoiceNotification(const std::string& text) override;
     void ProcessPending() override;
     void SendStartListening(ListeningMode mode) override;
     void SendStopListening() override;
@@ -41,7 +42,7 @@ private:
     EventGroupHandle_t event_group_ = nullptr;
     std::atomic<bool> setup_complete_{false}, listening_{false}, closing_{false};
     std::atomic<bool> channel_open_notified_{false};
-    bool output_turn_started_ = false;
+    std::atomic<bool> output_turn_started_{false};
     std::string api_key_, model_, bot_name_, voice_name_, language_code_, system_instruction_, last_server_error_;
     bool SendText(const std::string& text) override;
     bool SendSetup();
