@@ -105,7 +105,7 @@ bool GeminiLiveProtocol::OpenAudioChannel() {
     if (!SendSetup()) { Fail("Could not send Gemini Live setup"); CloseAudioChannel(false); return false; }
     EventBits_t bits = xEventGroupWaitBits(event_group_, kSetupComplete | kSetupFailed, pdTRUE, pdFALSE, pdMS_TO_TICKS(15000));
     if (!(bits & kSetupComplete)) { Fail(last_server_error_.empty() ? "Gemini Live setup timed out" : last_server_error_); CloseAudioChannel(false); return false; }
-    setup_complete_ = true; audio_service_.EnablePcmBridge(true); last_incoming_time_ = std::chrono::steady_clock::now();
+    setup_complete_ = true; last_incoming_time_ = std::chrono::steady_clock::now();
     channel_open_notified_ = true; if (on_connected_) on_connected_(); if (on_audio_channel_opened_) on_audio_channel_opened_();
     ESP_LOGI(TAG, "Gemini Live session ready; model=%s", model_.c_str()); return true;
 }
@@ -115,10 +115,10 @@ void GeminiLiveProtocol::CloseAudioChannel(bool send_goodbye) {
     if (channel_open_notified_.exchange(false) && on_audio_channel_closed_) on_audio_channel_closed_();
     if (websocket_) { websocket_->Close(); websocket_.reset(); } api_key_.clear();
 }
-void GeminiLiveProtocol::SendStartListening(ListeningMode mode) { (void)mode; if (IsAudioChannelOpened()) listening_ = true; }
+void GeminiLiveProtocol::SendStartListening(ListeningMode mode) { (void)mode; if (IsAudioChannelOpened()) { audio_service_.EnablePcmBridge(true); listening_ = true; } }
 void GeminiLiveProtocol::SendStopListening() {
     if (!IsAudioChannelOpened()) { listening_ = false; return; }
-    ProcessPending(); listening_ = false; SendAudioStreamEnd();
+    ProcessPending(); listening_ = false; audio_service_.EnablePcmBridge(false); SendAudioStreamEnd();
 }
 void GeminiLiveProtocol::SendAbortSpeaking(AbortReason reason) { (void)reason; audio_service_.ClearPcmPlayback(); }
 void GeminiLiveProtocol::SendWakeWordDetected(const std::string& word) { (void)word; }
@@ -187,7 +187,7 @@ void GeminiLiveProtocol::EmitTranscript(const char* type, const char* state, con
     if (state) cJSON_AddStringToObject(root, "state", state); if (text) cJSON_AddStringToObject(root, "text", text);
     on_incoming_json_(root); cJSON_Delete(root);
 }
-void GeminiLiveProtocol::EmitTtsStop() { if (output_turn_started_) { EmitTranscript("tts", "stop", ""); output_turn_started_ = false; } }
+void GeminiLiveProtocol::EmitTtsStop() { if (output_turn_started_) { EmitTranscript("tts", "stop", ""); output_turn_started_ = false; listening_ = false; audio_service_.EnablePcmBridge(false); } }
 void GeminiLiveProtocol::Fail(const std::string& message) {
     if (error_occurred_) return; error_occurred_ = true; if (on_network_error_) on_network_error_(message);
 }

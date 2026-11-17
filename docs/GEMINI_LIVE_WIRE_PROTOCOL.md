@@ -1,6 +1,6 @@
 # Gemini Live wire protocol for ChatAI TPIOS
 
-This document records the current Gemini Live wire contract for the firmware transport. It is not a claim that the transport has been implemented.
+This document records the Gemini Live wire contract and distinguishes implemented firmware behavior from remaining work.
 
 ## Connection and setup
 
@@ -66,7 +66,7 @@ For each received message:
 4. Pass the samples to `AudioService::PushPcmPlayback()`. The existing AudioOutputTask writes these samples directly to the codec and bypasses Opus decoding.
 5. Do not block the WebSocket receive callback on speaker output.
 
-If the actual codec output rate differs from 24 kHz, resample before queueing. The target board profile is expected to use 24 kHz, but this must be confirmed from the initialized codec at runtime.
+The current ChatAI TPIOS board profile configures codec output for 24 kHz. The transport accepts only 24 kHz PCM output; other MIME rates are rejected rather than played at the wrong speed. A future board profile with a different output rate must add resampling.
 
 ## Control events
 

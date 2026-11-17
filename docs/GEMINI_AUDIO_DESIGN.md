@@ -55,7 +55,7 @@ Gemini Live audio must bypass the Opus encoder and decoder:
 
 ## Not implemented yet
 
-This document is a source-verified design, not a claim that Gemini Live is already integrated. The next code change should add the raw PCM queue/playback seam first, then implement and test the dedicated Gemini protocol against that seam. Do not create a firmware build workflow or flash image until both paths are integrated and reviewed.
+This document records both the source-verified design and the current implementation. The raw PCM queue/playback seam and initial Gemini protocol now exist in source. Remaining work includes credential provisioning, reconnect/session resumption, Web Admin/OTA, static validation, and hardware testing. Do not run a build workflow or flash image without explicit user approval.
 
 
 ## PCM bridge implementation status
@@ -75,7 +75,7 @@ The patch is applied to the pinned upstream source at build preparation time by 
 
 ## Application event-loop integration findings
 
-The existing `Application` main loop drains Opus packets only on `MAIN_EVENT_SEND_AUDIO`. The new PCM queue is separate, so a Gemini transport cannot rely on `Protocol::SendAudio()` or the existing Opus send event. The next integration must add a narrow PCM-available notification from `AudioService` to the application event loop, then let `GeminiLiveProtocol::ProcessPending()` drain the bounded PCM queue and send JSON messages. Keep WebSocket receive callbacks short: decode bounded audio payloads and enqueue them with `PushPcmPlayback()`; do not perform codec output in the receive callback.
+The existing `Application` main loop still drains Opus packets on `MAIN_EVENT_SEND_AUDIO`. The patcher now also maps PCM-ready notifications to `MAIN_EVENT_PROTOCOL_PENDING`; the existing loop invokes `GeminiLiveProtocol::ProcessPending()` there. The receive callback parses bounded JSON/audio payloads and queues PCM with `PushPcmPlayback()`; speaker output remains in `AudioOutputTask`.
 
 The upstream `WebSocket` implementation is supplied by `78/esp-ml307` and is already exposed through `Board::GetNetwork()->CreateWebSocket()`. Its send API accepts text frames and its default maximum outgoing payload is 65,535 bytes. The same component's debug connection log includes the URL path, so standard API-key query authentication must not be enabled until that log is redacted. Prefer the documented ephemeral-token endpoint with `Authorization: Token` when a token broker is available.
 
