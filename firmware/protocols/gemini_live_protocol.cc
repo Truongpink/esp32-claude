@@ -78,6 +78,10 @@ bool GeminiLiveProtocol::SendSetup() {
 bool GeminiLiveProtocol::OpenAudioChannel() {
     error_occurred_ = false;
     Settings cfg("gemini", false);
+    if (!cfg.GetBool("enabled", false)) {
+        Fail("Gemini Live is disabled; enable it in the local Web Admin");
+        return false;
+    }
     api_key_ = cfg.GetString("api_key"); model_ = cfg.GetString("model", "gemini-3.8-live");
     system_instruction_ = cfg.GetString("system_prompt", "You are ChatAI TPIOS, a helpful Vietnamese voice assistant. Speak naturally in Vietnamese unless the user asks for another language. Keep replies concise and conversational.");
     if (api_key_.empty()) { Fail("Gemini API key is not configured in local device settings"); return false; }
