@@ -1,4 +1,5 @@
 #include "wifi_board.h"
+#include "web_admin_server.h"
 #include "codecs/no_audio_codec.h"
 #include "display/oled_display.h"
 #include "system_reset.h"
@@ -11,6 +12,7 @@
 #include "assets/lang_config.h"
 
 #include <esp_log.h>
+#include <utility>
 #include <driver/gpio.h>
 #include <driver/i2c_master.h>
 #include <esp_lcd_panel_ops.h>
@@ -171,6 +173,20 @@ public:
         InitializeSsd1306Display();
         InitializeButtons();
         InitializeTools();
+    }
+
+    void SetNetworkEventCallback(NetworkEventCallback callback) override {
+        WifiBoard::SetNetworkEventCallback(
+            [callback = std::move(callback)](NetworkEvent event, const std::string& data) {
+                if (event == NetworkEvent::Connected) {
+                    WebAdminServer::Start();
+                } else if (event == NetworkEvent::Disconnected ||
+                           event == NetworkEvent::WifiConfigModeEnter) {
+                    WebAdminServer::Stop();
+                }
+                if (callback) callback(event, data);
+            }
+        );
     }
 
     virtual Led* GetLed() override {

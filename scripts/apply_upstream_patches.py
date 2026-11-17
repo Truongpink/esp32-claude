@@ -43,6 +43,12 @@ replace_once(
 cmake = UPSTREAM / "main" / "CMakeLists.txt"
 replace_once(
     cmake,
+    'set(MAIN_PRIV_REQUIRES_EXTRA "")\n',
+    'set(MAIN_PRIV_REQUIRES_EXTRA "")\nlist(APPEND MAIN_PRIV_REQUIRES_EXTRA esp_http_server)\n',
+)
+
+replace_once(
+    cmake,
     "if(CONFIG_BOARD_TYPE_BREAD_COMPACT_WIFI)\n",
     'if(CONFIG_BOARD_TYPE_CHAT_AI_TPIOS)\n'
     '    set(BOARD_DIR "chatai-tpios")\n'
