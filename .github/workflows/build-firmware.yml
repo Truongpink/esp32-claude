@@ -31,7 +31,7 @@ jobs:
       - name: Upload complete USB flash image
         uses: actions/upload-artifact@v4
         with:
-          name: ChatAI-TPIOS-v0.1.0-USB-FLASH
+          name: ChatAI-TPIOS-v0.1.1-USB-FLASH
           path: xiaozhi-src/build/merged-binary.bin
           if-no-files-found: error
           retention-days: 14
