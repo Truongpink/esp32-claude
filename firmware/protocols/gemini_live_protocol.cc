@@ -94,10 +94,42 @@ bool GeminiLiveProtocol::OpenAudioChannel() {
     if (!socket) { Fail("Failed to create Gemini Live WebSocket"); return false; }
     websocket_ = std::shared_ptr<WebSocket>(std::move(socket));
     websocket_->OnData([this](const char* data, size_t size, bool binary) {
-        if (binary || !size || size > kMaxMessage) { Fail("Invalid Gemini Live WebSocket message"); return; }
+        if (data == nullptr || size == 0) {
+            ESP_LOGE(TAG, "Gemini Live received an empty WebSocket frame (binary=%d)", binary);
+            Fail("Gemini Live sent an empty WebSocket frame");
+            return;
+        }
+        if (size > kMaxMessage) {
+            ESP_LOGE(TAG, "Gemini Live frame exceeds limit: %u bytes (binary=%d)",
+                     static_cast<unsigned>(size), binary);
+            Fail("Gemini Live WebSocket frame is too large");
+            return;
+        }
+
+        // Gemini Live server messages are JSON envelopes. Parse the payload even
+        // when the transport marks it binary, so a wrapper opcode mismatch is
+        // distinguishable from genuinely non-JSON binary data.
         cJSON* root = cJSON_ParseWithLength(data, size);
-        if (!root) { Fail("Gemini Live returned invalid JSON"); return; }
-        HandleServerMessage(root); cJSON_Delete(root); last_incoming_time_ = std::chrono::steady_clock::now();
+        if (!cJSON_IsObject(root)) {
+            if (root) cJSON_Delete(root);
+            char prefix[25] = {};
+            const size_t preview = std::min<size_t>(size, 8);
+            for (size_t i = 0; i < preview; ++i) {
+                snprintf(prefix + i * 3, sizeof(prefix) - i * 3, "%02X ", static_cast<uint8_t>(data[i]));
+            }
+            ESP_LOGE(TAG, "Gemini Live frame is not a JSON object: type=%s size=%u prefix=%s",
+                     binary ? "binary" : "text", static_cast<unsigned>(size), prefix);
+            Fail(binary ? "Gemini Live sent an unsupported binary WebSocket frame"
+                        : "Gemini Live sent invalid JSON in a text frame");
+            return;
+        }
+        if (binary) {
+            ESP_LOGW(TAG, "Gemini Live JSON payload arrived with binary WebSocket opcode (%u bytes)",
+                     static_cast<unsigned>(size));
+        }
+        HandleServerMessage(root);
+        cJSON_Delete(root);
+        last_incoming_time_ = std::chrono::steady_clock::now();
     });
     websocket_->OnError([this](const NetworkError&) { if (!closing_) { if (!setup_complete_) xEventGroupSetBits(event_group_, kSetupFailed); Fail("Gemini Live WebSocket transport error"); } });
     websocket_->OnDisconnected([this]() {
