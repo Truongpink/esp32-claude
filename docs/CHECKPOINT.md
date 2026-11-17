@@ -81,9 +81,12 @@ The repository HEAD and fixed source file were re-fetched from `main`. Do not cl
 
 ## Latest source-only feature batch
 
-- Committed to `main` through `cf6f957` (wake phrase, Web Admin voice/language/mic gain, Wi-Fi reconfiguration, restart/factory reset, OLED OTA progress, and a fix that keeps the Gemini Live PCM microphone bridge active between assistant turns).
+- Committed to `main` through `ac3016a` (all above, plus descriptive labels for the 30 Gemini Live voices and OLED OTA phase/error statuses).
 - The HTML JavaScript syntax, Web Admin element references, config JSON, API route count, and pinned-upstream patch anchors were checked.
 - The Gemini Live turn-completion path was inspected: it previously disabled the PCM bridge immediately after each assistant reply, so the application returned to Listening with no microphone audio being forwarded. `EmitTtsStop()` now only closes the UI speech event and leaves realtime capture active; explicit `SendStopListening()` still stops the stream.
+- The Web Admin voice selector now labels all 30 supported Gemini Live prebuilt voices with their documented style descriptions; the saved voice name remains the API's exact case-sensitive identifier.
+- OTA OLED feedback now reports partition checks, upload percentage, image validation, boot-slot selection, restart, and distinct failure stages. OTA writes only the inactive application slot; it does not erase NVS, so saved settings remain on the data partition. Factory reset remains a separate explicit action that erases NVS.
+- The Gemini Live protocol already requests `responseModalities: ["AUDIO"]`, streams microphone PCM16 at 16 kHz, and plays response PCM16 at 24 kHz. The internal `tts` event is used for UI speech-state/transcript signaling; it is not a separate TTS API call.
 - No GitHub Actions, firmware build, OTA upload, or hardware operation was run. These changes are not yet compile-verified.
 - Keep `firmware/VERSION` at `0.1.2` until the next build is explicitly authorized; the next build should use `0.1.3`.
 
