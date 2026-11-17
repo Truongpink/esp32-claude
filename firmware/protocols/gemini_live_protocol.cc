@@ -1,11 +1,27 @@
 #include "gemini_live_protocol.h"
 #include "board.h"
+#include "application.h"
 #include "settings.h"
 #include <esp_log.h>
 #include <algorithm>
 #include <cstring>
 #define TAG "GeminiLive"
 namespace {
+void QueuePcmForActiveSpeaking(AudioService* audio, std::vector<int16_t>&& frame) {
+    auto& app = Application::GetInstance();
+    if (app.GetDeviceState() == kDeviceStateSpeaking) {
+        audio->PushPcmPlayback(std::move(frame));
+        return;
+    }
+    app.Schedule([audio, frame = std::move(frame)]() mutable {
+        Application::GetInstance().Schedule([audio, frame = std::move(frame)]() mutable {
+            if (Application::GetInstance().GetDeviceState() == kDeviceStateSpeaking) {
+                audio->PushPcmPlayback(std::move(frame));
+            }
+        });
+    });
+}
+
 constexpr char kUrl[] = "wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent";
 constexpr size_t kMaxMessage = 64 * 1024;
 const char kB64[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
@@ -179,7 +195,7 @@ void GeminiLiveProtocol::HandleAudioPart(const cJSON* part) {
     std::vector<int16_t> samples(decoded.size() / 2); std::memcpy(samples.data(), decoded.data(), decoded.size());
     for (size_t i = 0; i < samples.size(); i += kOutputChunkSamples) {
         size_t n = std::min(kOutputChunkSamples, samples.size() - i);
-        audio_service_.PushPcmPlayback(std::vector<int16_t>(samples.begin() + i, samples.begin() + i + n));
+        QueuePcmForActiveSpeaking(&audio_service_, std::vector<int16_t>(samples.begin() + i, samples.begin() + i + n));
     }
 }
 void GeminiLiveProtocol::EmitTranscript(const char* type, const char* state, const char* text) {
