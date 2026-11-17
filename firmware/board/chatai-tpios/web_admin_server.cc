@@ -5,6 +5,7 @@
 #include "application.h"
 #include "wifi_board.h"
 #include "settings.h"
+#include "gemini_live_protocol.h"
 #include <esp_http_server.h>
 #include <esp_log.h>
 #include <esp_app_format.h>
@@ -120,6 +121,12 @@ esp_err_t StatusHandler(httpd_req_t* req) {
     cJSON_AddBoolToObject(root, "ota_enabled", false);
 #endif
     cJSON_AddNumberToObject(root, "volume", audio.GetInt("volume", 70));
+    const auto diagnostics = GeminiLiveProtocol::GetDiagnostics();
+    cJSON_AddNumberToObject(root, "mic_chunks_sent", diagnostics.microphone_chunks_sent);
+    cJSON_AddNumberToObject(root, "response_audio_chunks", diagnostics.response_audio_chunks_received);
+    cJSON_AddBoolToObject(root, "live_session_connected", diagnostics.session_connected);
+    cJSON_AddBoolToObject(root, "mic_streaming", diagnostics.microphone_streaming);
+    cJSON_AddStringToObject(root, "live_last_error", diagnostics.last_error.c_str());
     SendJson(req, root);
     return ESP_OK;
 }
