@@ -373,6 +373,7 @@ async function loadAdmin() {
   $('statusText').textContent = 'Đã kết nối · ' + (status.ip || '') + ' · ' + (status.ssid || '');
   $('deviceStatus').textContent =
     'Wi-Fi: ' + (status.ssid || '—') + '\nIP: ' + (status.ip || '—') +
+    '\nWeb Admin: http://' + (status.hostname || 'chatai-tpios.local') +
     '\nGemini Live: ' + (status.enabled ? 'Đang bật' : 'Đang tắt') +
     '\nAPI key: ' + (status.key_configured ? 'Đã lưu' : 'Chưa cấu hình') +
     '\nFirmware: ' + (status.version || 'unknown') +
@@ -426,12 +427,23 @@ $('saveBtn').addEventListener('click', async () => {
       method:'POST', headers:{'Content-Type':'application/json'},
       body:JSON.stringify(payload)
     });
-    const data = await response.json();
-    if (!response.ok) throw new Error(data.error || 'Không lưu được cấu hình');
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw new Error((data.error || 'Không lưu được cấu hình') + ' (HTTP ' + response.status + ')');
+    }
     $('apiKey').value = '';
     $('geminiResult').textContent = data.message || 'Đã lưu cấu hình.';
     toast('Đã lưu cấu hình');
-    await loadAdmin();
+
+    // A refresh failure must not turn a successful POST into a false save failure.
+    try {
+      await loadAdmin();
+      $('geminiResult').textContent = data.message || 'Đã lưu và đọc lại cấu hình thành công.';
+    } catch (refreshError) {
+      $('geminiResult').textContent =
+        (data.message || 'Đã lưu cấu hình.') + ' Không tải lại được giao diện: ' + refreshError.message;
+      toast('Đã lưu; tải lại trạng thái thất bại', true);
+    }
   } catch (error) {
     $('geminiResult').textContent = error.message;
     toast('Lưu cấu hình thất bại', true);
