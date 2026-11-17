@@ -134,6 +134,44 @@ replace_once(
 )
 
 
+# Let the application schedule optional spoken notifications through its active Live protocol.
+replace_once(
+    UPSTREAM / "main" / "protocols" / "protocol.h",
+    "    virtual void SendAbortSpeaking(AbortReason reason);\n",
+    "    virtual void SendAbortSpeaking(AbortReason reason);\n"
+    "    virtual bool SendLiveVoiceNotification(const std::string& text) { (void)text; return false; }\n",
+)
+
+replace_once(
+    UPSTREAM / "main" / "application.h",
+    "    void NotifyProtocolPending() { xEventGroupSetBits(event_group_, MAIN_EVENT_PROTOCOL_PENDING); }\n",
+    "    void NotifyProtocolPending() { xEventGroupSetBits(event_group_, MAIN_EVENT_PROTOCOL_PENDING); }\n"
+    "    void SpeakLiveNotification(const std::string& text);\n",
+)
+
+replace_once(
+    UPSTREAM / "main" / "application.cc",
+    "void Application::AbortSpeaking(AbortReason reason) {\n",
+    "void Application::SpeakLiveNotification(const std::string& text) {\n"
+    "    if (text.empty()) {\n"
+    "        return;\n"
+    "    }\n"
+    "\n"
+    "    Schedule([this, text]() {\n"
+    "        // Never interrupt an existing reply or inject text while the user is speaking.\n"
+    "        if (GetDeviceState() != kDeviceStateListening ||\n"
+    "            audio_service_.IsVoiceDetected() ||\n"
+    "            !protocol_ || !protocol_->IsAudioChannelOpened()) {\n"
+    "            return;\n"
+    "        }\n"
+    "        protocol_->SendLiveVoiceNotification(\n"
+    "            \"Hãy đọc nguyên văn câu sau bằng giọng hiện tại, không thêm lời nào: \" + text);\n"
+    "    });\n"
+    "}\n"
+    "\n"
+    "void Application::AbortSpeaking(AbortReason reason) {\n",
+)
+
 # Keep the basic firmware independent from XiaoZhi cloud version/assets services.
 replace_once(
     UPSTREAM / "main" / "application.cc",
