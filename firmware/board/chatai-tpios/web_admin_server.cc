@@ -1,6 +1,7 @@
 #include "web_admin_server.h"
 
 #include "board.h"
+#include "display/display.h"
 #include "audio_codec.h"
 #include "application.h"
 #include "wifi_board.h"
