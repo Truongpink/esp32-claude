@@ -1,126 +1,371 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="vi">
 <head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <meta name="color-scheme" content="dark">
 <title>ChatAI TPIOS</title>
 <style>
-:root{color-scheme:dark;font:16px -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:#10131a;color:#edf1f7}
-*{box-sizing:border-box}body{max-width:680px;margin:24px auto;padding:0 16px 36px}
-h1{font-size:26px;margin:8px 0 4px}h2{font-size:19px;margin:0 0 14px}p,small{color:#aab4c4}
-section{background:#1b2230;border:1px solid #303b4d;border-radius:14px;padding:18px;margin:18px 0}
-label{display:block;margin:14px 0 6px}input,textarea,select{width:100%;padding:12px;border:1px solid #46536a;border-radius:8px;background:#111722;color:#fff;font:inherit}
-textarea{min-height:130px;resize:vertical}.inline{display:flex;gap:10px;align-items:center}.inline input{width:auto}
-button{border:0;border-radius:9px;padding:12px 18px;background:#4e8cff;color:#fff;font-weight:700;font-size:16px;margin-top:12px}
-button.secondary{background:#35445d}.muted{color:#aab4c4}#wifiResult,#result,#status{white-space:pre-wrap;margin-top:12px}
-.hidden{display:none!important}.network{padding:10px 0;border-bottom:1px solid #303b4d}
-header small{display:block}
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: 'Segoe UI', -apple-system, BlinkMacSystemFont, sans-serif;
+    background: #0f0f13; color: #e0e0e0; min-height: 100vh;
+    display: flex; align-items: flex-start; justify-content: center; padding: 20px;
+  }
+  .container {
+    width: 100%; max-width: 480px; background: #1a1a24;
+    border-radius: 16px; overflow: hidden; box-shadow: 0 0 40px rgba(99,102,241,.15);
+  }
+  .header { background: linear-gradient(135deg,#6366f1,#8b5cf6); padding: 24px 20px; text-align: center; }
+  .header h1 { font-size: 21px; font-weight: 700; letter-spacing: .5px; }
+  .header p { font-size: 12px; opacity: .85; margin-top: 5px; }
+  .status-bar { background: #12121a; padding: 11px 20px; display: flex; align-items: center; gap: 9px; font-size: 12px; color: #aaa; }
+  .dot { width: 8px; height: 8px; flex: 0 0 8px; border-radius: 50%; background: #22c55e; animation: pulse 2s infinite; }
+  .dot.offline { background: #ef4444; animation: none; }
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.4} }
+  .body { padding: 20px; display: flex; flex-direction: column; gap: 17px; }
+  .section { background: #12121a; border-radius: 12px; overflow: hidden; border: 1px solid #2a2a3a; }
+  .section-title { padding: 13px 16px; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 1px; color: #8b83ff; border-bottom: 1px solid #2a2a3a; }
+  .field { padding: 13px 16px; border-bottom: 1px solid #1e1e2e; }
+  .field:last-child { border-bottom: none; }
+  .field label { display: block; font-size: 12px; color: #999; margin-bottom: 8px; }
+  .field input, .field textarea, .field select {
+    width: 100%; background: #1a1a24; border: 1px solid #2a2a3a; border-radius: 8px;
+    padding: 11px 12px; color: #e0e0e0; font-size: 14px; outline: none;
+  }
+  .field input:focus, .field textarea:focus, .field select:focus { border-color: #7771ff; }
+  .field textarea { resize: vertical; min-height: 95px; font-family: inherit; }
+  .input-wrap { position: relative; }
+  .input-wrap input { padding-right: 44px; }
+  .eye-btn { position: absolute; right: 12px; top: 50%; transform: translateY(-50%); background: none; border: 0; color: #888; cursor: pointer; font-size: 16px; }
+  .toggle-row { display: flex; align-items: center; justify-content: space-between; padding: 14px 16px; border-bottom: 1px solid #1e1e2e; }
+  .toggle-row:last-child { border-bottom: none; }
+  .toggle-label { font-size: 14px; }
+  .toggle-sub { font-size: 11px; color: #777; margin-top: 3px; line-height: 1.4; }
+  .toggle { position: relative; width: 44px; height: 24px; flex-shrink: 0; }
+  .toggle input { opacity: 0; width: 0; height: 0; }
+  .slider { position: absolute; inset: 0; background: #2a2a3a; border-radius: 24px; }
+  .slider:before { content: ''; position: absolute; width: 18px; height: 18px; left: 3px; top: 3px; background: #666; border-radius: 50%; }
+  .toggle input:checked + .slider { background: #6366f1; }
+  .toggle input:checked + .slider:before { transform: translateX(20px); background: white; }
+  .toggle input:disabled + .slider { opacity: .35; cursor: not-allowed; }
+  .range-row { padding: 14px 16px; }
+  .range-header { display: flex; justify-content: space-between; margin-bottom: 11px; font-size: 14px; }
+  .range-value { color: #8b83ff; font-size: 13px; font-weight: 700; }
+  input[type=range] { width: 100%; accent-color: #7771ff; }
+  .wifi-scan { padding: 12px 16px; }
+  .scan-btn { width: 100%; padding: 10px; background: #1e1e2e; border: 1px solid #2a2a3a; border-radius: 8px; color: #aaa; font-size: 13px; cursor: pointer; margin-bottom: 10px; }
+  .wifi-list { display: flex; flex-direction: column; gap: 6px; }
+  .wifi-item { padding: 10px 12px; background: #1a1a24; border: 1px solid #2a2a3a; border-radius: 8px; cursor: pointer; display: flex; justify-content: space-between; gap: 10px; font-size: 13px; }
+  .wifi-item.selected { border-color: #7771ff; background: #1e1e2e; }
+  .wifi-signal { font-size: 11px; color: #777; white-space: nowrap; }
+  .save-wrap { padding: 0 20px 20px; }
+  .save-btn { width: 100%; padding: 14px; background: linear-gradient(135deg,#6366f1,#8b5cf6); border: 0; border-radius: 10px; color: white; font-size: 15px; font-weight: 700; cursor: pointer; }
+  .save-btn:disabled { opacity: .5; cursor: not-allowed; }
+  .secondary-btn { width: 100%; padding: 11px; background: #252538; border: 1px solid #35354b; border-radius: 9px; color: #ddd; font-weight: 600; cursor: pointer; }
+  .hint { color: #777; font-size: 11px; line-height: 1.5; margin-top: 7px; }
+  .result { white-space: pre-wrap; font-size: 12px; line-height: 1.5; color: #aaa; padding: 0 16px 13px; }
+  .info { padding: 13px 16px; font-size: 13px; line-height: 1.6; color: #aaa; white-space: pre-wrap; }
+  .progress { width: 100%; height: 7px; border-radius: 8px; background: #29293a; overflow: hidden; margin-top: 12px; }
+  .progress > div { height: 100%; width: 0; background: linear-gradient(90deg,#6366f1,#a78bfa); transition: width .15s; }
+  .toast { position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%) translateY(90px); background: #22c55e; color: white; padding: 12px 22px; border-radius: 24px; font-size: 13px; transition: transform .25s; z-index: 100; max-width: calc(100vw - 32px); text-align: center; }
+  .toast.error { background: #ef4444; }
+  .toast.show { transform: translateX(-50%) translateY(0); }
+  .hidden { display: none !important; }
+  button:active { transform: scale(.99); }
+  @media(max-width:380px){body{padding:10px}.body{padding:14px}.header{padding:20px 14px}}
 </style>
 </head>
 <body>
-<header><h1>ChatAI TPIOS</h1><small>Quản trị thiết bị ESP32-S3</small></header>
+<div class="container">
+  <div class="header">
+    <h1>🤖 ChatAI TPIOS</h1>
+    <p>Quản trị thiết bị ESP32-S3</p>
+  </div>
+  <div class="status-bar">
+    <div class="dot offline" id="statusDot"></div>
+    <span id="statusText">Đang kiểm tra kết nối...</span>
+  </div>
 
-<section id="wifiSection" class="hidden">
-<h2>Cấu hình Wi-Fi</h2>
-<p>Chọn mạng Wi-Fi nhà để thiết bị kết nối Internet.</p>
-<label for="networks">Mạng Wi-Fi tìm thấy</label>
-<select id="networks"><option value="">Đang quét mạng...</option></select>
-<button id="refresh" class="secondary" type="button">Quét lại</button>
-<label for="ssid">Tên Wi-Fi (SSID)</label>
-<input id="ssid" maxlength="32" autocomplete="off" placeholder="Nhập tên Wi-Fi">
-<label for="password">Mật khẩu Wi-Fi</label>
-<input id="password" type="password" maxlength="64" autocomplete="off" placeholder="Mật khẩu mạng">
-<button id="connect" type="button">Lưu và kết nối</button>
-<div id="wifiResult"></div>
-</section>
+  <div class="body">
+    <section class="section hidden" id="wifiSection">
+      <div class="section-title">📶 Wi-Fi</div>
+      <div class="wifi-scan">
+        <button class="scan-btn" id="scanBtn" type="button">🔍 Quét mạng Wi-Fi</button>
+        <div class="wifi-list" id="wifiList"></div>
+      </div>
+      <div class="field">
+        <label for="ssid">Tên mạng (SSID)</label>
+        <input id="ssid" maxlength="32" autocomplete="off" placeholder="Nhập tên Wi-Fi">
+      </div>
+      <div class="field">
+        <label for="wifiPass">Mật khẩu</label>
+        <div class="input-wrap">
+          <input id="wifiPass" type="password" maxlength="64" autocomplete="off" placeholder="Mật khẩu Wi-Fi">
+          <button class="eye-btn" type="button" onclick="togglePass('wifiPass')">👁</button>
+        </div>
+      </div>
+      <div class="field"><button class="save-btn" id="connectBtn" type="button">Lưu và kết nối Wi-Fi</button></div>
+      <div class="result" id="wifiResult"></div>
+    </section>
 
-<section id="adminSection" class="hidden">
-<h2>Trạng thái thiết bị</h2>
-<div id="status">Đang tải...</div>
-</section>
+    <section class="section hidden" id="statusSection">
+      <div class="section-title">📡 Trạng thái thiết bị</div>
+      <div class="info" id="deviceStatus">Đang tải...</div>
+    </section>
 
-<section id="geminiSection" class="hidden">
-<h2>Gemini Live</h2>
-<form id="config">
-<label for="key">Gemini API key</label>
-<input id="key" type="password" autocomplete="off" placeholder="Để trống nếu muốn giữ key đã lưu">
-<small>API key được lưu trong bộ nhớ thiết bị và không hiển thị lại.</small>
-<label for="model">Model</label>
-<input id="model" maxlength="96" value="gemini-3.8-live">
-<label for="prompt">System prompt</label>
-<textarea id="prompt" maxlength="1024"></textarea>
-<label class="inline"><input id="enabled" type="checkbox"> Bật Gemini Live</label>
-<button type="submit">Lưu cấu hình</button>
-<div id="result"></div>
-</form>
-<p><small>Cấu hình Gemini có hiệu lực sau khi khởi động lại thiết bị.</small></p>
-</section>
+    <section class="section hidden" id="geminiSection">
+      <div class="section-title">✨ Gemini Live AI</div>
+      <div class="field">
+        <label for="apiKey">Gemini API Key</label>
+        <div class="input-wrap">
+          <input id="apiKey" type="password" autocomplete="off" placeholder="Để trống để giữ API key đã lưu">
+          <button class="eye-btn" type="button" onclick="togglePass('apiKey')">👁</button>
+        </div>
+        <p class="hint">API key được lưu trong NVS và không hiển thị lại. Không chia sẻ key cho người khác.</p>
+      </div>
+      <div class="field">
+        <label for="model">Model Live</label>
+        <input id="model" maxlength="96" value="gemini-3.8-live">
+      </div>
+      <div class="field">
+        <label for="systemPrompt">System Prompt</label>
+        <textarea id="systemPrompt" maxlength="1024" placeholder="Mô tả cách ChatAI phản hồi..."></textarea>
+      </div>
+      <div class="toggle-row">
+        <div><div class="toggle-label">Bật Gemini Live</div><div class="toggle-sub">Dùng Gemini Live làm bộ máy hội thoại</div></div>
+        <label class="toggle"><input type="checkbox" id="geminiEnabled"><span class="slider"></span></label>
+      </div>
+      <div class="result" id="geminiResult"></div>
+    </section>
 
-<section id="helpSection" class="hidden">
-<p>Muốn đổi Wi-Fi, giữ nút BOOT khoảng 2 giây để mở lại mạng cấu hình ChatAI TPIOS.</p>
-</section>
+    <section class="section hidden" id="audioSection">
+      <div class="section-title">🔊 Âm thanh</div>
+      <div class="range-row">
+        <div class="range-header"><span>Âm lượng loa</span><span class="range-value" id="volumeValue">70%</span></div>
+        <input type="range" min="0" max="100" value="70" id="volume">
+      </div>
+      <div class="toggle-row">
+        <div><div class="toggle-label">Độ nhạy micro</div><div class="toggle-sub">Chưa có điều khiển gain trong driver hiện tại</div></div>
+        <span class="range-value">Mặc định</span>
+      </div>
+    </section>
+
+    <section class="section hidden" id="featuresSection">
+      <div class="section-title">⚙️ Tính năng</div>
+      <div class="toggle-row">
+        <div><div class="toggle-label">Wake Word</div><div class="toggle-sub">Chưa được bật trong cấu hình firmware ChatAI hiện tại</div></div>
+        <label class="toggle"><input type="checkbox" disabled><span class="slider"></span></label>
+      </div>
+      <div class="toggle-row">
+        <div><div class="toggle-label">Tự kết nối lại Wi-Fi</div><div class="toggle-sub">Được quản lý tự động bởi Wi-Fi manager</div></div>
+        <label class="toggle"><input type="checkbox" checked disabled><span class="slider"></span></label>
+      </div>
+    </section>
+
+    <section class="section hidden" id="oledSection">
+      <div class="section-title">📺 Màn hình OLED</div>
+      <div class="info">OLED 128×64 · Hiển thị trạng thái hệ thống và hội thoại. Chế độ đồng hồ/tên bot/sóng âm chưa có API cấu hình trong firmware hiện tại.</div>
+    </section>
+
+    <section class="section hidden" id="otaSection">
+      <div class="section-title">⬆️ Cập nhật Firmware OTA</div>
+      <div class="field">
+        <label>Firmware đang chạy</label>
+        <div class="info" id="otaInfo">Đang kiểm tra phân vùng...</div>
+      </div>
+      <div class="field">
+        <label for="firmwareFile">Chọn firmware OTA (.bin)</label>
+        <input id="firmwareFile" type="file" accept=".bin,application/octet-stream">
+        <p class="hint">Chọn file ChatAI-TPIOS-*-OTA.bin (application-only). Không chọn file USB-FLASH vì file đó chứa bootloader và partition table.</p>
+      </div>
+      <div class="field">
+        <button class="save-btn" id="otaBtn" type="button">Cài đặt firmware</button>
+        <div class="progress"><div id="otaProgress"></div></div>
+      </div>
+      <div class="result" id="otaResult"></div>
+    </section>
+  </div>
+
+  <div class="save-wrap hidden" id="saveWrap">
+    <button class="save-btn" id="saveBtn" type="button">💾 Lưu cấu hình Gemini & âm thanh</button>
+  </div>
+</div>
+<div class="toast" id="toast"></div>
 
 <script>
-const $=id=>document.getElementById(id);
-async function scanWifi(){
- const r=await fetch('/scan',{cache:'no-store'});
- if(!r.ok)throw Error('Wi-Fi scan unavailable');
- const data=await r.json(),list=$('networks');
- list.replaceChildren();
- for(const ap of data.aps||[]){
-  const option=document.createElement('option');
-  option.value=ap.ssid;option.textContent=ap.ssid+'  ('+ap.rssi+' dBm)';
-  list.appendChild(option);
- }
- if(!list.options.length){const o=document.createElement('option');o.value='';o.textContent='Chưa tìm thấy mạng';list.appendChild(o);}
- if(list.value)$('ssid').value=list.value;
+const $ = id => document.getElementById(id);
+let deviceOnline = false;
+
+function toast(message, isError) {
+  const el = $('toast');
+  el.textContent = message;
+  el.className = 'toast' + (isError ? ' error' : '') + ' show';
+  setTimeout(() => { el.className = 'toast' + (isError ? ' error' : ''); }, 3200);
 }
-$('networks').addEventListener('change',()=>{$('ssid').value=$('networks').value;});
-$('refresh').addEventListener('click',async()=>{
- $('wifiResult').textContent='Đang quét...';
- try{await scanWifi();$('wifiResult').textContent='Đã cập nhật danh sách mạng.';}
- catch(e){$('wifiResult').textContent=e.message;}
-});
-$('connect').addEventListener('click',async()=>{
- const ssid=$('ssid').value.trim(),password=$('password').value;
- if(!ssid){$('wifiResult').textContent='Vui lòng chọn hoặc nhập tên Wi-Fi.';return;}
- $('connect').disabled=true;$('wifiResult').textContent='Đang thử kết nối Wi-Fi...';
- try{
-  const r=await fetch('/submit',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ssid,password})});
-  const data=await r.json();
-  if(!r.ok||!data.success)throw Error(data.error||'Không kết nối được Wi-Fi.');
-  $('wifiResult').textContent='Đã lưu Wi-Fi. Thiết bị đang chuyển sang mạng nhà...';
-  await fetch('/exit',{method:'POST'});
- }catch(e){$('wifiResult').textContent=e.message;$('connect').disabled=false;}
-});
-async function loadAdmin(){
- try{
-  const [s,c]=await Promise.all([fetch('/api/status',{cache:'no-store'}),fetch('/api/config',{cache:'no-store'})]);
-  if(!s.ok||!c.ok)throw Error('Web Admin Gemini không khả dụng ở chế độ cấu hình Wi-Fi.');
-  const status=await s.json(),cfg=await c.json();
-  $('adminSection').classList.remove('hidden');$('geminiSection').classList.remove('hidden');$('helpSection').classList.remove('hidden');
-  $('status').textContent='Wi-Fi: '+status.ssid+'\nIP: '+status.ip+'\nGemini: '+(status.enabled?'Đang bật':'Đang tắt')+'\nAPI key: '+(status.key_configured?'Đã lưu':'Chưa cấu hình');
-  $('model').value=cfg.model;$('prompt').value=cfg.system_prompt;$('enabled').checked=cfg.enabled;
- }catch(e){}
+function togglePass(id) {
+  const el = $(id);
+  el.type = el.type === 'password' ? 'text' : 'password';
 }
-$('config').addEventListener('submit',async e=>{
- e.preventDefault();$('result').textContent='Đang lưu...';
- const body={model:$('model').value,system_prompt:$('prompt').value,enabled:$('enabled').checked};
- if($('key').value)body.api_key=$('key').value;
- try{
-  const r=await fetch('/api/config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
-  const data=await r.json();if(!r.ok)throw Error(data.error||'Không lưu được cấu hình');
-  $('key').value='';$('result').textContent=data.message;
- }catch(e){$('result').textContent=e.message;}
+function showSection(id) { $(id).classList.remove('hidden'); }
+
+async function scanWifi() {
+  const list = $('wifiList');
+  list.textContent = 'Đang quét mạng...';
+  const response = await fetch('/scan', {cache:'no-store'});
+  if (!response.ok) throw new Error('Không quét được Wi-Fi');
+  const data = await response.json();
+  list.replaceChildren();
+  (data.aps || []).forEach(network => {
+    const item = document.createElement('div');
+    item.className = 'wifi-item';
+    const name = document.createElement('span');
+    name.textContent = network.ssid || '(SSID ẩn)';
+    const signal = document.createElement('span');
+    signal.className = 'wifi-signal';
+    signal.textContent = (network.rssi || '') + ' dBm';
+    item.append(name, signal);
+    item.addEventListener('click', () => {
+      $('ssid').value = network.ssid || '';
+      document.querySelectorAll('.wifi-item').forEach(row => row.classList.remove('selected'));
+      item.classList.add('selected');
+    });
+    list.appendChild(item);
+  });
+  if (!list.children.length) list.textContent = 'Không tìm thấy mạng Wi-Fi.';
+}
+$('scanBtn').addEventListener('click', async () => {
+  try { await scanWifi(); $('wifiResult').textContent = 'Đã quét xong.'; }
+  catch (error) { $('wifiResult').textContent = error.message; }
 });
-(async()=>{
- try{await scanWifi();$('wifiSection').classList.remove('hidden');}
- catch(e){}
- await loadAdmin();
- if($('wifiSection').classList.contains('hidden')&&$('adminSection').classList.contains('hidden')){
-  $('adminSection').classList.remove('hidden');$('status').textContent='Không thể tải thông tin thiết bị. Hãy kiểm tra kết nối và mở lại trang.';
- }
+$('connectBtn').addEventListener('click', async () => {
+  const ssid = $('ssid').value.trim();
+  if (!ssid) { $('wifiResult').textContent = 'Vui lòng nhập tên Wi-Fi.'; return; }
+  $('connectBtn').disabled = true;
+  $('wifiResult').textContent = 'Đang thử kết nối...';
+  try {
+    const response = await fetch('/submit', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({ssid: ssid, password:$('wifiPass').value})
+    });
+    const data = await response.json();
+    if (!response.ok || !data.success) throw new Error(data.error || 'Kết nối Wi-Fi thất bại');
+    $('wifiResult').textContent = 'Đã lưu Wi-Fi. Thiết bị đang chuyển sang mạng nhà...';
+    await fetch('/exit', {method:'POST'});
+  } catch (error) {
+    $('wifiResult').textContent = error.message;
+    $('connectBtn').disabled = false;
+  }
+});
+
+async function loadAdmin() {
+  const response = await fetch('/api/status', {cache:'no-store'});
+  if (!response.ok) throw new Error('Admin API unavailable');
+  const status = await response.json();
+  const configResponse = await fetch('/api/config', {cache:'no-store'});
+  if (!configResponse.ok) throw new Error('Config API unavailable');
+  const config = await configResponse.json();
+  deviceOnline = true;
+  $('statusDot').className = 'dot';
+  $('statusText').textContent = 'Đã kết nối · ' + (status.ip || '') + ' · ' + (status.ssid || '');
+  $('deviceStatus').textContent =
+    'Wi-Fi: ' + (status.ssid || '—') + '\nIP: ' + (status.ip || '—') +
+    '\nGemini Live: ' + (status.enabled ? 'Đang bật' : 'Đang tắt') +
+    '\nAPI key: ' + (status.key_configured ? 'Đã lưu' : 'Chưa cấu hình') +
+    '\nFirmware: ' + (status.version || 'unknown') +
+    '\nPhân vùng đang chạy: ' + (status.partition || 'unknown');
+  $('model').value = config.model || 'gemini-3.8-live';
+  $('systemPrompt').value = config.system_prompt || '';
+  $('geminiEnabled').checked = !!config.enabled;
+  $('volume').value = config.volume === undefined ? 70 : config.volume;
+  $('volumeValue').textContent = $('volume').value + '%';
+  $('otaInfo').textContent = 'Phiên bản: ' + (status.version || 'unknown') +
+    '\nSlot đang chạy: ' + (status.partition || 'unknown') +
+    '\nSlot cập nhật: ' + (status.ota_target || 'không khả dụng') +
+    '\nDung lượng slot: ' + (status.ota_max_bytes ? (status.ota_max_bytes / 1048576).toFixed(2) + ' MB' : '—');
+  showSection('statusSection'); showSection('geminiSection'); showSection('audioSection');
+  showSection('featuresSection'); showSection('oledSection'); showSection('otaSection');
+  $('saveWrap').classList.remove('hidden');
+  if (!status.ota_target || status.ota_target === 'unavailable' || !status.ota_max_bytes) {
+    $('otaBtn').disabled = true;
+    $('otaResult').textContent = 'Thiết bị không báo phân vùng OTA hợp lệ.';
+  }
+}
+
+$('volume').addEventListener('input', () => { $('volumeValue').textContent = $('volume').value + '%'; });
+$('saveBtn').addEventListener('click', async () => {
+  $('saveBtn').disabled = true;
+  $('geminiResult').textContent = 'Đang lưu cấu hình...';
+  const payload = {
+    model:$('model').value.trim(),
+    system_prompt:$('systemPrompt').value.trim(),
+    enabled:$('geminiEnabled').checked,
+    volume:Number($('volume').value)
+  };
+  if ($('apiKey').value.trim()) payload.api_key = $('apiKey').value.trim();
+  try {
+    const response = await fetch('/api/config', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body:JSON.stringify(payload)
+    });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error || 'Không lưu được cấu hình');
+    $('apiKey').value = '';
+    $('geminiResult').textContent = data.message || 'Đã lưu cấu hình.';
+    toast('Đã lưu cấu hình');
+    await loadAdmin();
+  } catch (error) {
+    $('geminiResult').textContent = error.message;
+    toast('Lưu cấu hình thất bại', true);
+  } finally { $('saveBtn').disabled = false; }
+});
+
+$('otaBtn').addEventListener('click', () => {
+  const file = $('firmwareFile').files[0];
+  if (!file) { $('otaResult').textContent = 'Vui lòng chọn file OTA .bin.'; return; }
+  if (!file.name.toLowerCase().endsWith('.bin')) { $('otaResult').textContent = 'Chỉ chấp nhận file .bin.'; return; }
+  if (!confirm('Cập nhật firmware từ file ' + file.name + '? Không tắt nguồn trong quá trình cập nhật.')) return;
+  const xhr = new XMLHttpRequest();
+  $('otaBtn').disabled = true;
+  $('otaResult').textContent = 'Đang tải firmware lên thiết bị...';
+  $('otaProgress').style.width = '0%';
+  xhr.open('POST', '/api/ota');
+  xhr.setRequestHeader('Content-Type', 'application/octet-stream');
+  xhr.upload.onprogress = event => {
+    if (event.lengthComputable) {
+      const percent = Math.round(event.loaded * 100 / event.total);
+      $('otaProgress').style.width = percent + '%';
+      $('otaResult').textContent = 'Đang truyền firmware: ' + percent + '%';
+    }
+  };
+  xhr.onload = () => {
+    let data = {};
+    try { data = JSON.parse(xhr.responseText); } catch (_) {}
+    if (xhr.status >= 200 && xhr.status < 300) {
+      $('otaProgress').style.width = '100%';
+      $('otaResult').textContent = data.message || 'Firmware đã được ghi. Thiết bị đang khởi động lại...';
+    } else {
+      $('otaResult').textContent = data.error || ('Cập nhật thất bại (HTTP ' + xhr.status + ')');
+      $('otaBtn').disabled = false;
+    }
+  };
+  xhr.onerror = () => {
+    $('otaResult').textContent = 'Mất kết nối khi tải firmware. Hãy kiểm tra lại thiết bị trước khi thử lại.';
+    $('otaBtn').disabled = false;
+  };
+  xhr.send(file);
+});
+
+(async () => {
+  try {
+    await loadAdmin();
+  } catch (_) {
+    deviceOnline = false;
+    $('statusDot').className = 'dot offline';
+    $('statusText').textContent = 'Chế độ cấu hình Wi-Fi (AP)';
+    showSection('wifiSection');
+    try { await scanWifi(); } catch (error) { $('wifiResult').textContent = error.message; }
+  }
 })();
 </script>
 </body>
