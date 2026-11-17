@@ -195,7 +195,7 @@
 
 <script>
 const $ = id => document.getElementById(id);
-let deviceOnline = false;
+let otaMaxBytes = 0;
 
 function toast(message, isError) {
   const el = $('toast');
@@ -265,7 +265,7 @@ async function loadAdmin() {
   const configResponse = await fetch('/api/config', {cache:'no-store'});
   if (!configResponse.ok) throw new Error('Config API unavailable');
   const config = await configResponse.json();
-  deviceOnline = true;
+  otaMaxBytes = Number(status.ota_max_bytes || 0);
   $('statusDot').className = 'dot';
   $('statusText').textContent = 'Đã kết nối · ' + (status.ip || '') + ' · ' + (status.ssid || '');
   $('deviceStatus').textContent =
@@ -324,6 +324,7 @@ $('otaBtn').addEventListener('click', () => {
   const file = $('firmwareFile').files[0];
   if (!file) { $('otaResult').textContent = 'Vui lòng chọn file OTA .bin.'; return; }
   if (!file.name.toLowerCase().endsWith('.bin')) { $('otaResult').textContent = 'Chỉ chấp nhận file .bin.'; return; }
+  if (otaMaxBytes > 0 && file.size > otaMaxBytes) { $('otaResult').textContent = 'File vượt quá dung lượng slot OTA (' + (otaMaxBytes / 1048576).toFixed(2) + ' MB).'; return; }
   if (!confirm('Cập nhật firmware từ file ' + file.name + '? Không tắt nguồn trong quá trình cập nhật.')) return;
   const xhr = new XMLHttpRequest();
   $('otaBtn').disabled = true;
@@ -360,7 +361,6 @@ $('otaBtn').addEventListener('click', () => {
   try {
     await loadAdmin();
   } catch (_) {
-    deviceOnline = false;
     $('statusDot').className = 'dot offline';
     $('statusText').textContent = 'Chế độ cấu hình Wi-Fi (AP)';
     showSection('wifiSection');
