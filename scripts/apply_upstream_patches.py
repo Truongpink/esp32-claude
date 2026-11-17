@@ -4,7 +4,7 @@ from pathlib import Path
 import shutil
 
 ROOT = Path(__file__).resolve().parents[1]
-UPSTREAM = Path("xiaozhi-src")
+UPSTREAM = ROOT / "xiaozhi-src"
 BOARD_SRC = ROOT / "firmware" / "board" / "chatai-tpios"
 BOARD_DST = UPSTREAM / "main" / "boards" / "chatai-tpios"
 

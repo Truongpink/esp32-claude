@@ -1,0 +1,12 @@
+# Fetched upstream source and ESP-IDF generated files
+/xiaozhi-src/
+/build/
+/managed_components/
+/sdkconfig
+/sdkconfig.old
+/.idf_component_manager/
+/flasher_args.json
+/flash_project_args
+/project_description.json
+/CMakeCache.txt
+/compile_commands.json

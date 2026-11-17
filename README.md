@@ -14,6 +14,19 @@ This repository contains the ChatAI TPIOS hardware-board overlay and an idempote
 - Pinned upstream tag: `v2.6.0`
 - Pinned upstream commit: `4de00aed740595a8713b01f8332b9b2cf30685bc`
 
+## Prepare and build locally
+
+Install ESP-IDF **6.0.1 or newer** and its ESP32-S3 toolchain first. From the repository root run:
+
+```bash
+python3 scripts/prepare_upstream.py
+cd xiaozhi-src
+idf.py set-target esp32s3
+idf.py build
+```
+
+The preparation script fetches the pinned upstream commit, verifies the exact revision, and applies the board/protocol overlay. It refuses to replace a non-Git directory or silently switch an existing checkout to another commit. It does not flash hardware or start any GitHub Actions workflow.
+
 ## Architecture notes
 
 See [Gemini Live audio integration design](docs/GEMINI_AUDIO_DESIGN.md) for the source-verified audio pipeline and the required PCM integration seam. See [hardware evidence and unresolved pins](docs/HARDWARE.md) before selecting GPIOs, and [Web Admin firmware upload OTA design](docs/OTA_WEB_UPLOAD.md) for the local .bin update path.
