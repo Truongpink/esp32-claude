@@ -185,9 +185,19 @@ esp_err_t ConfigPostHandler(httpd_req_t* req) {
         SendError(req, "403 Forbidden", "Cross-origin request rejected");
         return ESP_OK;
     }
-    if (req->content_len == 0 || req->content_len > kMaxBody) {
-        SendError(req, "400 Bad Request", "Invalid configuration size");
+
+    auto display = Board::GetInstance().GetDisplay();
+    if (display) display->SetStatus("Đang lưu cấu hình...");
+    auto fail = [&](const char* status, const char* message) {
+        if (display) display->SetStatus("Lưu cấu hình thất bại");
+        Application::GetInstance().SpeakLiveNotification(
+            "Lưu cấu hình thất bại, vui lòng kiểm tra lại.");
+        SendError(req, status, message);
         return ESP_OK;
+    };
+
+    if (req->content_len == 0 || req->content_len > kMaxBody) {
+        return fail("400 Bad Request", "Invalid configuration size");
     }
 
     std::string body(req->content_len, '\0');
@@ -195,8 +205,7 @@ esp_err_t ConfigPostHandler(httpd_req_t* req) {
     while (received < body.size()) {
         const int count = httpd_req_recv(req, body.data() + received, body.size() - received);
         if (count <= 0) {
-            SendError(req, "400 Bad Request", "Incomplete request body");
-            return ESP_OK;
+            return fail("400 Bad Request", "Incomplete request body");
         }
         received += static_cast<size_t>(count);
     }
@@ -204,8 +213,7 @@ esp_err_t ConfigPostHandler(httpd_req_t* req) {
     cJSON* root = cJSON_ParseWithLength(body.data(), body.size());
     if (!cJSON_IsObject(root)) {
         if (root) cJSON_Delete(root);
-        SendError(req, "400 Bad Request", "Invalid JSON");
-        return ESP_OK;
+        return fail("400 Bad Request", "Invalid JSON");
     }
 
     const cJSON* key = cJSON_GetObjectItemCaseSensitive(root, "api_key");
@@ -234,17 +242,18 @@ esp_err_t ConfigPostHandler(httpd_req_t* req) {
         (!mic_gain || (cJSON_IsNumber(mic_gain) && mic_gain->valueint >= 0 && mic_gain->valueint <= 20));
     if (!valid) {
         cJSON_Delete(root);
-        SendError(req, "400 Bad Request", "Invalid model, prompt, key, voice, language, wake phrase, mic gain, volume or enabled value");
-        return ESP_OK;
+        return fail("400 Bad Request",
+                    "Invalid model, prompt, key, voice, language, wake phrase, mic gain, volume or enabled value");
     }
 
     Settings existing("gemini", false);
-    const bool has_key = !existing.GetString("api_key").empty() ||
-                         (key && key->valuestring && key->valuestring[0] != '\0');
+    const std::string expected_api_key =
+        key && key->valuestring && key->valuestring[0] != '\0'
+            ? key->valuestring : existing.GetString("api_key");
+    const bool has_key = !expected_api_key.empty();
     if (cJSON_IsTrue(enabled) && !has_key) {
         cJSON_Delete(root);
-        SendError(req, "400 Bad Request", "Enter an API key before enabling Gemini Live");
-        return ESP_OK;
+        return fail("400 Bad Request", "Enter an API key before enabling Gemini Live");
     }
 
     {
@@ -259,7 +268,7 @@ esp_err_t ConfigPostHandler(httpd_req_t* req) {
         if (voice_name) settings.SetString("voice_name", voice_name->valuestring);
         if (language_code) settings.SetString("language_code", language_code->valuestring);
     }
-    bool wake_word_applied = false;
+
     if (wake_word) {
         Settings settings("chatai", true);
         settings.SetString("wake_word", wake_word->valuestring);
@@ -267,16 +276,49 @@ esp_err_t ConfigPostHandler(httpd_req_t* req) {
     if (mic_gain) {
         Board::GetInstance().GetAudioCodec()->SetInputGain(static_cast<float>(mic_gain->valueint));
     }
-    if (wake_word) {
-        wake_word_applied = Application::GetInstance().GetAudioService().SetWakeWordPhrase(wake_word->valuestring);
-    }
     if (volume) {
         Settings settings("chatai", true);
         settings.SetInt("volume", volume->valueint);
         Board::GetInstance().GetAudioCodec()->SetOutputVolume(volume->valueint);
     }
+
+    // Settings commits NVS when each write handle is closed. Read every supplied
+    // value back before reporting success; never include the API key in a response.
+    bool persisted = true;
+    {
+        Settings saved("gemini", false);
+        const char* missing = "\x1f";
+        persisted =
+            saved.GetString("model", missing) == model->valuestring &&
+            saved.GetString("system_prompt", missing) == prompt->valuestring &&
+            saved.GetBool("enabled", !cJSON_IsTrue(enabled)) == cJSON_IsTrue(enabled);
+        if (!expected_api_key.empty()) {
+            persisted = persisted && saved.GetString("api_key", missing) == expected_api_key;
+        }
+        if (bot_name) persisted = persisted && saved.GetString("bot_name", missing) == bot_name->valuestring;
+        if (voice_name) persisted = persisted && saved.GetString("voice_name", missing) == voice_name->valuestring;
+        if (language_code) persisted = persisted && saved.GetString("language_code", missing) == language_code->valuestring;
+    }
+    {
+        Settings saved("chatai", false);
+        if (wake_word) persisted = persisted && saved.GetString("wake_word", "\x1f") == wake_word->valuestring;
+        if (mic_gain) persisted = persisted && saved.GetInt("mic_gain", -1) == mic_gain->valueint;
+        if (volume) persisted = persisted && saved.GetInt("volume", -1) == volume->valueint;
+    }
+    if (!persisted) {
+        cJSON_Delete(root);
+        return fail("500 Internal Server Error",
+                    "Không xác minh được cấu hình đã lưu trong NVS. Vui lòng thử lại.");
+    }
+
+    bool wake_word_applied = false;
+    if (wake_word) {
+        wake_word_applied =
+            Application::GetInstance().GetAudioService().SetWakeWordPhrase(wake_word->valuestring);
+    }
     cJSON_Delete(root);
 
+    if (display) display->SetStatus("Lưu cấu hình thành công");
     cJSON* response = cJSON_CreateObject();
     cJSON_AddBoolToObject(response, "wake_word_applied", wake_word_applied);
     cJSON_AddStringToObject(response, "message", has_wake_word
@@ -285,6 +327,7 @@ esp_err_t ConfigPostHandler(httpd_req_t* req) {
             : "Đã lưu cấu hình. Wake Word sẽ được nạp khi khởi động lại; Gemini Live áp dụng cấu hình mới ở phiên kết nối tiếp theo.")
         : "Đã lưu cấu hình. Gemini Live áp dụng cấu hình mới ở phiên kết nối tiếp theo.");
     SendJson(req, response);
+    Application::GetInstance().SpeakLiveNotification("Đã lưu cấu hình thành công.");
     return ESP_OK;
 }
 
