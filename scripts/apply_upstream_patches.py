@@ -339,3 +339,8 @@ def patch_pcm_application_event() -> None:
 patch_pcm_application_event()
 
 print("ChatAI TPIOS board overlay applied.")
+
+
+# Add configurable MultiNet wake phrase and microphone gain support.
+from patch_voice_features import apply as apply_voice_features
+apply_voice_features(ROOT, UPSTREAM)
