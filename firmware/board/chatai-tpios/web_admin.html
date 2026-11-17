@@ -1,0 +1,127 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="color-scheme" content="dark">
+<title>ChatAI TPIOS</title>
+<style>
+:root{color-scheme:dark;font:16px -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:#10131a;color:#edf1f7}
+*{box-sizing:border-box}body{max-width:680px;margin:24px auto;padding:0 16px 36px}
+h1{font-size:26px;margin:8px 0 4px}h2{font-size:19px;margin:0 0 14px}p,small{color:#aab4c4}
+section{background:#1b2230;border:1px solid #303b4d;border-radius:14px;padding:18px;margin:18px 0}
+label{display:block;margin:14px 0 6px}input,textarea,select{width:100%;padding:12px;border:1px solid #46536a;border-radius:8px;background:#111722;color:#fff;font:inherit}
+textarea{min-height:130px;resize:vertical}.inline{display:flex;gap:10px;align-items:center}.inline input{width:auto}
+button{border:0;border-radius:9px;padding:12px 18px;background:#4e8cff;color:#fff;font-weight:700;font-size:16px;margin-top:12px}
+button.secondary{background:#35445d}.muted{color:#aab4c4}#wifiResult,#result,#status{white-space:pre-wrap;margin-top:12px}
+.hidden{display:none!important}.network{padding:10px 0;border-bottom:1px solid #303b4d}
+header small{display:block}
+</style>
+</head>
+<body>
+<header><h1>ChatAI TPIOS</h1><small>Quản trị thiết bị ESP32-S3</small></header>
+
+<section id="wifiSection" class="hidden">
+<h2>Cấu hình Wi-Fi</h2>
+<p>Chọn mạng Wi-Fi nhà để thiết bị kết nối Internet.</p>
+<label for="networks">Mạng Wi-Fi tìm thấy</label>
+<select id="networks"><option value="">Đang quét mạng...</option></select>
+<button id="refresh" class="secondary" type="button">Quét lại</button>
+<label for="ssid">Tên Wi-Fi (SSID)</label>
+<input id="ssid" maxlength="32" autocomplete="off" placeholder="Nhập tên Wi-Fi">
+<label for="password">Mật khẩu Wi-Fi</label>
+<input id="password" type="password" maxlength="64" autocomplete="off" placeholder="Mật khẩu mạng">
+<button id="connect" type="button">Lưu và kết nối</button>
+<div id="wifiResult"></div>
+</section>
+
+<section id="adminSection" class="hidden">
+<h2>Trạng thái thiết bị</h2>
+<div id="status">Đang tải...</div>
+</section>
+
+<section id="geminiSection" class="hidden">
+<h2>Gemini Live</h2>
+<form id="config">
+<label for="key">Gemini API key</label>
+<input id="key" type="password" autocomplete="off" placeholder="Để trống nếu muốn giữ key đã lưu">
+<small>API key được lưu trong bộ nhớ thiết bị và không hiển thị lại.</small>
+<label for="model">Model</label>
+<input id="model" maxlength="96" value="gemini-3.8-live">
+<label for="prompt">System prompt</label>
+<textarea id="prompt" maxlength="1024"></textarea>
+<label class="inline"><input id="enabled" type="checkbox"> Bật Gemini Live</label>
+<button type="submit">Lưu cấu hình</button>
+<div id="result"></div>
+</form>
+<p><small>Cấu hình Gemini có hiệu lực sau khi khởi động lại thiết bị.</small></p>
+</section>
+
+<section id="helpSection" class="hidden">
+<p>Muốn đổi Wi-Fi, giữ nút BOOT khoảng 2 giây để mở lại mạng cấu hình ChatAI TPIOS.</p>
+</section>
+
+<script>
+const $=id=>document.getElementById(id);
+async function scanWifi(){
+ const r=await fetch('/scan',{cache:'no-store'});
+ if(!r.ok)throw Error('Wi-Fi scan unavailable');
+ const data=await r.json(),list=$('networks');
+ list.replaceChildren();
+ for(const ap of data.aps||[]){
+  const option=document.createElement('option');
+  option.value=ap.ssid;option.textContent=ap.ssid+'  ('+ap.rssi+' dBm)';
+  list.appendChild(option);
+ }
+ if(!list.options.length){const o=document.createElement('option');o.value='';o.textContent='Chưa tìm thấy mạng';list.appendChild(o);}
+ if(list.value)$('ssid').value=list.value;
+}
+$('networks').addEventListener('change',()=>{$('ssid').value=$('networks').value;});
+$('refresh').addEventListener('click',async()=>{
+ $('wifiResult').textContent='Đang quét...';
+ try{await scanWifi();$('wifiResult').textContent='Đã cập nhật danh sách mạng.';}
+ catch(e){$('wifiResult').textContent=e.message;}
+});
+$('connect').addEventListener('click',async()=>{
+ const ssid=$('ssid').value.trim(),password=$('password').value;
+ if(!ssid){$('wifiResult').textContent='Vui lòng chọn hoặc nhập tên Wi-Fi.';return;}
+ $('connect').disabled=true;$('wifiResult').textContent='Đang thử kết nối Wi-Fi...';
+ try{
+  const r=await fetch('/submit',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ssid,password})});
+  const data=await r.json();
+  if(!r.ok||!data.success)throw Error(data.error||'Không kết nối được Wi-Fi.');
+  $('wifiResult').textContent='Đã lưu Wi-Fi. Thiết bị đang chuyển sang mạng nhà...';
+  await fetch('/exit',{method:'POST'});
+ }catch(e){$('wifiResult').textContent=e.message;$('connect').disabled=false;}
+});
+async function loadAdmin(){
+ try{
+  const [s,c]=await Promise.all([fetch('/api/status',{cache:'no-store'}),fetch('/api/config',{cache:'no-store'})]);
+  if(!s.ok||!c.ok)throw Error('Web Admin Gemini không khả dụng ở chế độ cấu hình Wi-Fi.');
+  const status=await s.json(),cfg=await c.json();
+  $('adminSection').classList.remove('hidden');$('geminiSection').classList.remove('hidden');$('helpSection').classList.remove('hidden');
+  $('status').textContent='Wi-Fi: '+status.ssid+'\nIP: '+status.ip+'\nGemini: '+(status.enabled?'Đang bật':'Đang tắt')+'\nAPI key: '+(status.key_configured?'Đã lưu':'Chưa cấu hình');
+  $('model').value=cfg.model;$('prompt').value=cfg.system_prompt;$('enabled').checked=cfg.enabled;
+ }catch(e){}
+}
+$('config').addEventListener('submit',async e=>{
+ e.preventDefault();$('result').textContent='Đang lưu...';
+ const body={model:$('model').value,system_prompt:$('prompt').value,enabled:$('enabled').checked};
+ if($('key').value)body.api_key=$('key').value;
+ try{
+  const r=await fetch('/api/config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+  const data=await r.json();if(!r.ok)throw Error(data.error||'Không lưu được cấu hình');
+  $('key').value='';$('result').textContent=data.message;
+ }catch(e){$('result').textContent=e.message;}
+});
+(async()=>{
+ try{await scanWifi();$('wifiSection').classList.remove('hidden');}
+ catch(e){}
+ await loadAdmin();
+ if($('wifiSection').classList.contains('hidden')&&$('adminSection').classList.contains('hidden')){
+  $('adminSection').classList.remove('hidden');$('status').textContent='Không thể tải thông tin thiết bị. Hãy kiểm tra kết nối và mở lại trang.';
+ }
+})();
+</script>
+</body>
+</html>
