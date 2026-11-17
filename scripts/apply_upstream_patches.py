@@ -26,6 +26,10 @@ def replace_once(path: Path, old: str, new: str) -> None:
 if not (UPSTREAM / "CMakeLists.txt").is_file():
     raise SystemExit("Pinned upstream source not found at ./xiaozhi-src")
 
+# mDNS is an external ESP-IDF component since IDF 5.0; pin a compatible release.
+manifest = UPSTREAM / "main" / "idf_component.yml"
+replace_once(manifest, "dependencies:\\n", "dependencies:\\n  espressif/mdns: ~1.8.2\\n")
+
 # Keep the ESP application descriptor version aligned with firmware/VERSION.
 replace_once(
     UPSTREAM / "CMakeLists.txt",
@@ -84,7 +88,7 @@ cmake = UPSTREAM / "main" / "CMakeLists.txt"
 replace_once(
     cmake,
     'set(MAIN_PRIV_REQUIRES_EXTRA "")\n',
-    'set(MAIN_PRIV_REQUIRES_EXTRA "")\nlist(APPEND MAIN_PRIV_REQUIRES_EXTRA esp_http_server)\n',
+    'set(MAIN_PRIV_REQUIRES_EXTRA "")\nlist(APPEND MAIN_PRIV_REQUIRES_EXTRA esp_http_server mdns)\n',
 )
 
 replace_once(
