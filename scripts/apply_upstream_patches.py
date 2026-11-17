@@ -54,6 +54,13 @@ def patch_pcm_audio_bridge() -> None:
     header = UPSTREAM / "main" / "audio" / "audio_service.h"
     source = UPSTREAM / "main" / "audio" / "audio_service.cc"
 
+    # Notify the application event loop when raw PCM is ready for transport.
+    replace_once(
+        header,
+        "    std::function<void(void)> on_send_queue_available;\n",
+        "    std::function<void(void)> on_send_queue_available;\n"
+        "    std::function<void(void)> on_pcm_input_available;\n",
+    )
     replace_once(
         header,
         "    std::unique_ptr<AudioStreamPacket> PopPacketFromSendQueue();\n",
@@ -86,6 +93,9 @@ def patch_pcm_audio_bridge() -> None:
         "            }\n"
         "            pcm_input_queue_.push_back(std::move(data));\n"
         "            audio_queue_cv_.notify_all();\n"
+        "            if (callbacks_.on_pcm_input_available) {\n"
+        "                callbacks_.on_pcm_input_available();\n"
+        "            }\n"
         "            return;\n"
         "        }\n"
         "        PushTaskToEncodeQueue(kAudioTaskTypeEncodeToSendQueue, std::move(data));\n"
@@ -143,5 +153,24 @@ def patch_pcm_audio_bridge() -> None:
     )
 
 patch_pcm_audio_bridge()
+
+# Route PCM-ready notifications through the existing Application event loop.
+def patch_pcm_application_event() -> None:
+    application = UPSTREAM / "main" / "application.cc"
+    replace_once(
+        application,
+        "    callbacks.on_send_queue_available = [this]() {\n"
+        "        xEventGroupSetBits(event_group_, MAIN_EVENT_SEND_AUDIO);\n"
+        "    };\n",
+        "    callbacks.on_send_queue_available = [this]() {\n"
+        "        xEventGroupSetBits(event_group_, MAIN_EVENT_SEND_AUDIO);\n"
+        "    };\n"
+        "    callbacks.on_pcm_input_available = [this]() {\n"
+        "        xEventGroupSetBits(event_group_, MAIN_EVENT_PROTOCOL_PENDING);\n"
+        "    };\n",
+    )
+
+
+patch_pcm_application_event()
 
 print("ChatAI TPIOS board overlay applied.")
