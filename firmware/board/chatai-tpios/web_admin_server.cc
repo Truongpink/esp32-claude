@@ -9,62 +9,15 @@
 #include <string>
 #include <cstring>
 
+extern const char index_html_start[] asm("_binary_wifi_configuration_html_start");
+
 namespace {
 constexpr char TAG[] = "WebAdmin";
 constexpr size_t kMaxBody = 4096;
 httpd_handle_t server = nullptr;
 std::mutex server_mutex;
 
-const char kIndexHtml[] = R"HTML(
-<!doctype html><html lang="vi"><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<title>ChatAI TPIOS</title>
-<style>
-:root{color-scheme:dark;font:16px system-ui;background:#10131a;color:#edf1f7}
-body{max-width:680px;margin:32px auto;padding:0 16px}
-h1{font-size:26px;margin-bottom:4px}p,small{color:#aab4c4}
-section{background:#1b2230;border:1px solid #303b4d;border-radius:14px;padding:18px;margin:18px 0}
-label{display:block;margin:14px 0 6px}input,textarea{box-sizing:border-box;width:100%;padding:12px;border:1px solid #46536a;border-radius:8px;background:#111722;color:#fff;font:inherit}
-textarea{min-height:130px;resize:vertical}.row{display:flex;gap:10px;align-items:center}.row input{width:auto}
-button{border:0;border-radius:9px;padding:12px 18px;background:#4e8cff;color:#fff;font-weight:700;font-size:16px}
-#status{margin-top:12px;white-space:pre-wrap}
-</style></head><body>
-<h1>ChatAI TPIOS</h1><p>Quản trị thiết bị trong mạng Wi-Fi nội bộ</p>
-<section><h2>Kết nối</h2><div id="status">Đang tải trạng thái...</div></section>
-<section><h2>Gemini Live</h2>
-<form id="config">
-<label>Gemini API key</label><input id="key" type="password" autocomplete="off" placeholder="Để trống nếu muốn giữ key đã lưu">
-<small>API key được lưu trong NVS của thiết bị và không hiển thị lại trên trang.</small>
-<label>Model</label><input id="model" maxlength="96" value="gemini-3.8-live">
-<label>System prompt</label><textarea id="prompt" maxlength="1024"></textarea>
-<label class="row"><input id="enabled" type="checkbox"> Bật Gemini Live</label>
-<button type="submit">Lưu cấu hình</button><p id="result"></p>
-</form></section>
-<p><small>Cấu hình Gemini có hiệu lực sau khi khởi động lại thiết bị.</small></p>
-<script>
-const $=id=>document.getElementById(id);
-async function load(){
- try{
-  const [s,c]=await Promise.all([fetch('/api/status',{cache:'no-store'}),fetch('/api/config',{cache:'no-store'})]);
-  if(!s.ok||!c.ok)throw Error('Không đọc được trạng thái thiết bị');
-  const status=await s.json(),cfg=await c.json();
-  $('status').textContent='Wi-Fi: '+status.ssid+'\nIP: '+status.ip+'\nGemini: '+(status.enabled?'Đang bật':'Đang tắt')+'\nAPI key: '+(status.key_configured?'Đã lưu':'Chưa cấu hình');
-  $('model').value=cfg.model;$('prompt').value=cfg.system_prompt;$('enabled').checked=cfg.enabled;
- }catch(e){$('status').textContent=e.message}
-}
-$('config').addEventListener('submit',async e=>{
- e.preventDefault();$('result').textContent='Đang lưu...';
- const body={model:$('model').value,system_prompt:$('prompt').value,enabled:$('enabled').checked};
- if($('key').value)body.api_key=$('key').value;
- try{
-  const r=await fetch('/api/config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
-  const data=await r.json();if(!r.ok)throw Error(data.error||'Không lưu được cấu hình');
-  $('key').value='';$('result').textContent=data.message;await load();
- }catch(e){$('result').textContent=e.message}
-});
-load();
-</script></body></html>
-)HTML";
+
 
 void SendJson(httpd_req_t* req, cJSON* root, const char* status = "200 OK") {
     char* encoded = cJSON_PrintUnformatted(root);
@@ -85,7 +38,7 @@ void SendError(httpd_req_t* req, const char* status, const char* message) {
 esp_err_t IndexHandler(httpd_req_t* req) {
     httpd_resp_set_type(req, "text/html; charset=utf-8");
     httpd_resp_set_hdr(req, "Cache-Control", "no-store");
-    return httpd_resp_sendstr(req, kIndexHtml);
+    return httpd_resp_sendstr(req, index_html_start);
 }
 
 esp_err_t StatusHandler(httpd_req_t* req) {
