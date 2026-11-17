@@ -11,12 +11,15 @@
 
 #ifdef AUDIO_I2S_METHOD_SIMPLEX
 
+// Provisional only: upstream board issue #2206 reports conflicting results for these pins.
+// Do not treat microphone capture as verified for XH-S3E-AI_V1.0.
 #define AUDIO_I2S_MIC_GPIO_WS   GPIO_NUM_4
 #define AUDIO_I2S_MIC_GPIO_SCK  GPIO_NUM_5
 #define AUDIO_I2S_MIC_GPIO_DIN  GPIO_NUM_6
 #define AUDIO_I2S_SPK_GPIO_DOUT GPIO_NUM_7
 #define AUDIO_I2S_SPK_GPIO_BCLK GPIO_NUM_15
 #define AUDIO_I2S_SPK_GPIO_LRCK GPIO_NUM_16
+#define SPEAKER_AMP_ENABLE_GPIO GPIO_NUM_17
 
 #else
 

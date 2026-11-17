@@ -11,6 +11,7 @@
 #include "assets/lang_config.h"
 
 #include <esp_log.h>
+#include <driver/gpio.h>
 #include <driver/i2c_master.h>
 #include <esp_lcd_panel_ops.h>
 #include <esp_lcd_panel_vendor.h>
@@ -31,6 +32,13 @@ private:
     Button touch_button_;
     Button volume_up_button_;
     Button volume_down_button_;
+
+    void InitializeSpeakerAmplifier() {
+        ESP_ERROR_CHECK(gpio_reset_pin(SPEAKER_AMP_ENABLE_GPIO));
+        ESP_ERROR_CHECK(gpio_set_direction(SPEAKER_AMP_ENABLE_GPIO, GPIO_MODE_OUTPUT));
+        ESP_ERROR_CHECK(gpio_set_level(SPEAKER_AMP_ENABLE_GPIO, 1));
+        ESP_LOGI(TAG, "Speaker amplifier enabled on GPIO%d", SPEAKER_AMP_ENABLE_GPIO);
+    }
 
     void InitializeDisplayI2c() {
         i2c_master_bus_config_t bus_config = {
@@ -158,6 +166,7 @@ public:
         touch_button_(TOUCH_BUTTON_GPIO),
         volume_up_button_(VOLUME_UP_BUTTON_GPIO),
         volume_down_button_(VOLUME_DOWN_BUTTON_GPIO) {
+        InitializeSpeakerAmplifier();
         InitializeDisplayI2c();
         InitializeSsd1306Display();
         InitializeButtons();

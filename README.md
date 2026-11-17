@@ -9,7 +9,7 @@ This repository contains the ChatAI TPIOS hardware-board overlay and an idempote
 - Target: ESP32-S3
 - Board profile: ChatAI TPIOS (separate board identity; does not overwrite the upstream Bread Compact profile)
 - Display profile: SSD1306, 128×64, I²C address 0x3C
-- Audio: simplex I²S, 16 kHz input / 24 kHz output
+- Audio: speaker I²S pins 15/16/7 and amplifier enable GPIO17 are source-reported; microphone GPIOs remain unverified
 - Upstream source: https://github.com/78/xiaozhi-esp32
 - Pinned upstream tag: `v2.6.0`
 - Pinned upstream commit: `4de00aed740595a8713b01f8332b9b2cf30685bc`
