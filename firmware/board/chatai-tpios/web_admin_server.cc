@@ -3,6 +3,7 @@
 #include "board.h"
 #include "audio_codec.h"
 #include "application.h"
+#include "wifi_board.h"
 #include "settings.h"
 #include <esp_http_server.h>
 #include <esp_log.h>
@@ -261,6 +262,19 @@ esp_err_t ConfigPostHandler(httpd_req_t* req) {
     return ESP_OK;
 }
 
+esp_err_t WifiConfigHandler(httpd_req_t* req) {
+    if (!IsSameOrigin(req)) {
+        SendError(req, "403 Forbidden", "Cross-origin request rejected");
+        return ESP_OK;
+    }
+    cJSON* response = cJSON_CreateObject();
+    cJSON_AddStringToObject(response, "message", "Đang chuyển sang chế độ cấu hình Wi-Fi. Kết nối điểm truy cập ChatAI-TPIOS rồi mở 192.168.4.1.");
+    SendJson(req, response);
+    vTaskDelay(pdMS_TO_TICKS(250));
+    static_cast<WifiBoard&>(Board::GetInstance()).EnterWifiConfigMode();
+    return ESP_OK;
+}
+
 esp_err_t RebootHandler(httpd_req_t* req) {
     if (!IsSameOrigin(req)) {
         SendError(req, "403 Forbidden", "Cross-origin request rejected");
@@ -403,7 +417,7 @@ void WebAdminServer::Start() {
 
     httpd_config_t config = HTTPD_DEFAULT_CONFIG();
     config.server_port = 80;
-    config.max_uri_handlers = 7;
+    config.max_uri_handlers = 8;
     config.stack_size = 8192;
 
     if (httpd_start(&server, &config) != ESP_OK) {
@@ -419,6 +433,7 @@ void WebAdminServer::Start() {
         {.uri = "/api/config", .method = HTTP_POST, .handler = ConfigPostHandler, .user_ctx = nullptr},
         {.uri = "/api/ota", .method = HTTP_POST, .handler = OtaUploadHandler, .user_ctx = nullptr},
         {.uri = "/api/reboot", .method = HTTP_POST, .handler = RebootHandler, .user_ctx = nullptr},
+        {.uri = "/api/wifi-config", .method = HTTP_POST, .handler = WifiConfigHandler, .user_ctx = nullptr},
         {.uri = "/api/factory-reset", .method = HTTP_POST, .handler = FactoryResetHandler, .user_ctx = nullptr},
     };
     bool ok = true;
