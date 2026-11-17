@@ -55,6 +55,7 @@ def apply(root: Path, upstream: Path) -> None:
         "    esp_mn_commands_clear();\n"
         "    esp_mn_commands_add(1, command.c_str());\n"
         "    esp_mn_commands_update();\n"
+        "    multinet_->clean(multinet_model_data_);\n"
         "    commands_.clear();\n"
         "    commands_.push_back({command, phrase, \"wake\"});\n"
         "    input_buffer_.clear();\n"
