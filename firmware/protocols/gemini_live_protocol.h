@@ -32,7 +32,7 @@ private:
     std::atomic<bool> setup_complete_{false}, listening_{false}, closing_{false};
     std::atomic<bool> channel_open_notified_{false};
     bool output_turn_started_ = false;
-    std::string api_key_, model_, system_instruction_, last_server_error_;
+    std::string api_key_, model_, bot_name_, voice_name_, language_code_, system_instruction_, last_server_error_;
     bool SendText(const std::string& text) override;
     bool SendSetup();
     bool SendAudioChunk(const int16_t* samples, size_t count);
