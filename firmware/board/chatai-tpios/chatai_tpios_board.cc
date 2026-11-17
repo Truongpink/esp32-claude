@@ -13,6 +13,7 @@
 
 #include <esp_log.h>
 #include <utility>
+#include <memory>
 #include <driver/gpio.h>
 #include <driver/i2c_master.h>
 #include <esp_lcd_panel_ops.h>
@@ -26,10 +27,10 @@
 
 class ChatAITPIOSBoard : public WifiBoard {
 private:
-    i2c_master_bus_handle_t display_i2c_bus_;
+    i2c_master_bus_handle_t display_i2c_bus_ = nullptr;
     esp_lcd_panel_io_handle_t panel_io_ = nullptr;
     esp_lcd_panel_handle_t panel_ = nullptr;
-    Display* display_ = nullptr;
+    std::unique_ptr<Display> display_ = std::make_unique<NoDisplay>();
     Button boot_button_;
     Button touch_button_;
     Button volume_up_button_;
@@ -42,7 +43,7 @@ private:
         ESP_LOGI(TAG, "Speaker amplifier enabled on GPIO%d", SPEAKER_AMP_ENABLE_GPIO);
     }
 
-    void InitializeDisplayI2c() {
+    bool InitializeDisplayI2c() {
         i2c_master_bus_config_t bus_config = {
             .i2c_port = (i2c_port_t)0,
             .sda_io_num = DISPLAY_SDA_PIN,
@@ -55,10 +56,19 @@ private:
                 .enable_internal_pullup = 1,
             },
         };
-        ESP_ERROR_CHECK(i2c_new_master_bus(&bus_config, &display_i2c_bus_));
+        const esp_err_t err = i2c_new_master_bus(&bus_config, &display_i2c_bus_);
+        if (err != ESP_OK) {
+            ESP_LOGE(TAG, "I2C bus initialization failed: %s", esp_err_to_name(err));
+            return false;
+        }
+        return true;
     }
 
     void InitializeSsd1306Display() {
+        if (display_i2c_bus_ == nullptr) {
+            ESP_LOGW(TAG, "OLED initialization skipped: I2C bus is unavailable");
+            return;
+        }
         // SSD1306 config
         esp_lcd_panel_io_i2c_config_t io_config = {
             .dev_addr = 0x3C,
@@ -75,7 +85,11 @@ private:
             },
         };
 
-        ESP_ERROR_CHECK(esp_lcd_new_panel_io_i2c(display_i2c_bus_, &io_config, &panel_io_));
+        esp_err_t err = esp_lcd_new_panel_io_i2c(display_i2c_bus_, &io_config, &panel_io_);
+        if (err != ESP_OK) {
+            ESP_LOGE(TAG, "OLED panel I2C setup failed: %s", esp_err_to_name(err));
+            return;
+        }
 
         ESP_LOGI(TAG, "Install SSD1306 driver");
         esp_lcd_panel_dev_config_t panel_config = {};
@@ -88,26 +102,28 @@ private:
         panel_config.vendor_config = &ssd1306_config;
 
 #ifdef SH1106
-        ESP_ERROR_CHECK(esp_lcd_new_panel_sh1106(panel_io_, &panel_config, &panel_));
+        err = esp_lcd_new_panel_sh1106(panel_io_, &panel_config, &panel_);
 #else
-        ESP_ERROR_CHECK(esp_lcd_new_panel_ssd1306(panel_io_, &panel_config, &panel_));
+        err = esp_lcd_new_panel_ssd1306(panel_io_, &panel_config, &panel_);
 #endif
+        if (err != ESP_OK) {
+            ESP_LOGE(TAG, "OLED driver creation failed: %s", esp_err_to_name(err));
+            return;
+        }
         ESP_LOGI(TAG, "SSD1306 driver installed");
 
         // Reset the display
-        ESP_ERROR_CHECK(esp_lcd_panel_reset(panel_));
-        if (esp_lcd_panel_init(panel_) != ESP_OK) {
-            ESP_LOGE(TAG, "Failed to initialize display");
-            display_ = new NoDisplay();
+        err = esp_lcd_panel_reset(panel_);
+        if (err == ESP_OK) err = esp_lcd_panel_init(panel_);
+        if (err == ESP_OK) err = esp_lcd_panel_invert_color(panel_, false);
+        if (err == ESP_OK) err = esp_lcd_panel_disp_on_off(panel_, true);
+        if (err != ESP_OK) {
+            ESP_LOGE(TAG, "OLED initialization failed: %s; continuing without display", esp_err_to_name(err));
             return;
         }
-        ESP_ERROR_CHECK(esp_lcd_panel_invert_color(panel_, false));
 
-        // Set the display to on
-        ESP_LOGI(TAG, "Turning display on");
-        ESP_ERROR_CHECK(esp_lcd_panel_disp_on_off(panel_, true));
-
-        display_ = new OledDisplay(panel_io_, panel_, DISPLAY_WIDTH, DISPLAY_HEIGHT, DISPLAY_MIRROR_X, DISPLAY_MIRROR_Y);
+        ESP_LOGI(TAG, "OLED initialized: %dx%d", DISPLAY_WIDTH, DISPLAY_HEIGHT);
+        display_ = std::make_unique<OledDisplay>(panel_io_, panel_, DISPLAY_WIDTH, DISPLAY_HEIGHT, DISPLAY_MIRROR_X, DISPLAY_MIRROR_Y);
     }
 
     void InitializeButtons() {
@@ -169,8 +185,9 @@ public:
         volume_up_button_(VOLUME_UP_BUTTON_GPIO),
         volume_down_button_(VOLUME_DOWN_BUTTON_GPIO) {
         InitializeSpeakerAmplifier();
-        InitializeDisplayI2c();
-        InitializeSsd1306Display();
+        if (InitializeDisplayI2c()) {
+            InitializeSsd1306Display();
+        }
         InitializeButtons();
         InitializeTools();
     }
@@ -206,7 +223,7 @@ public:
     }
 
     virtual Display* GetDisplay() override {
-        return display_;
+        return display_.get();
     }
 };
 
