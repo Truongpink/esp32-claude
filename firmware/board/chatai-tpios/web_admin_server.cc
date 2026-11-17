@@ -66,6 +66,11 @@ esp_err_t StatusHandler(httpd_req_t* req) {
     cJSON_AddStringToObject(root, "partition", running ? running->label : "unknown");
     cJSON_AddStringToObject(root, "ota_target", target ? target->label : "unavailable");
     cJSON_AddNumberToObject(root, "ota_max_bytes", target ? target->size : 0);
+#if CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE
+    cJSON_AddBoolToObject(root, "ota_enabled", true);
+#else
+    cJSON_AddBoolToObject(root, "ota_enabled", false);
+#endif
     cJSON_AddNumberToObject(root, "volume", audio.GetInt("volume", 70));
     SendJson(req, root);
     return ESP_OK;
