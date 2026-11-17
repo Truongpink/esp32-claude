@@ -165,3 +165,16 @@ def apply(root: Path, upstream: Path) -> None:
         "    ESP_LOGI(TAG, \"Set microphone software gain to %.1f dB\", input_gain_);\n"
         "}\n",
     )
+
+    # Gemini Live is a continuous, VAD-driven session. Keep the microphone
+    # processing path active while the assistant is speaking so barge-in works.
+    application_cc = upstream / "main/application.cc"
+    replace_once(
+        application_cc,
+        "ListeningMode Application::GetDefaultListeningMode() const {\n"
+        "    return aec_mode_ == kAecOff ? kListeningModeAutoStop : kListeningModeRealtime;\n"
+        "}\n",
+        "ListeningMode Application::GetDefaultListeningMode() const {\n"
+        "    return kListeningModeRealtime;\n"
+        "}\n",
+    )
