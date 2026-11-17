@@ -143,7 +143,7 @@ The repository HEAD and fixed source file were re-fetched from `main`. Do not cl
    - User reports that after changing settings in Web Admin and pressing Save, the UI reports that saving failed.
    - Source inspection: the page POSTs the full configuration to `/api/config`; the server validates the JSON and checks the request Origin against `http://<current DHCP IP>`.
    - The exact runtime HTTP status/error has not yet been captured, so do not assume a single cause. Diagnose the actual response and validate each setting by GET-after-POST and reboot persistence.
-   - Source inspection also found microphone gain is applied to the audio codec but is not currently written to NVS, while the GET handler reads it from NVS. Fix this as part of reliable save/persistence.
+   - Microphone gain is persisted by the patched `AudioCodec::SetInputGain()` implementation in `scripts/patch_voice_features.py`; the earlier note claiming it was not persisted was incorrect.
    - Preserve the API key secrecy and blank-key-means-keep-existing behavior.
 
 2. **LAN IP changes after OTA/reconnect.**
@@ -170,3 +170,21 @@ The repository HEAD and fixed source file were re-fetched from `main`. Do not cl
 2. Trace and fix Web Admin save end-to-end: validation, NVS writes, GET-after-save values, and reboot persistence.
 3. Add stable mDNS hostname support with safe same-origin handling; retain current IP as fallback.
 4. Run static/source checks. Do not trigger GitHub Actions or perform OTA/hardware operations without explicit user permission.
+
+
+## Follow-up source fixes — Web Admin save feedback and stable local hostname (2026-11-18 ICT)
+
+### Implemented on main; not yet built or hardware-tested
+- Added the official Espressif mDNS component dependency `espressif/mdns ~1.8.2` to the pinned upstream project manifest during overlay preparation and added `mdns` to the main component's private requirements.
+- On the Wi-Fi Connected event, the board initializes mDNS once, sets hostname `chatai-tpios`, and advertises the HTTP service on TCP port 80. The intended stable URL is `http://chatai-tpios.local`; DHCP IP remains available as a fallback in the status panel.
+- mDNS is kept initialized across temporary Wi-Fi disconnects so it can resume advertising when the station reconnects. Web Admin HTTP server continues to stop on disconnect/config-mode entry and start on connection.
+- `/api/status` now returns the stable hostname, and Web Admin displays the local URL beside the current DHCP IP.
+- Same-origin validation now compares the browser Origin with the request Host and only accepts the current DHCP IP or `chatai-tpios.local`. It strips the default `:80` port from Host before comparison. Missing Origin remains allowed for existing non-browser clients.
+- Web Admin Save now treats a successful POST as a successful save even if the subsequent UI refresh fails; refresh errors are reported separately instead of falsely claiming the save failed. Non-2xx responses now display their HTTP status alongside the server error.
+- The earlier microphone-gain persistence concern was corrected: `scripts/patch_voice_features.py` patches `AudioCodec::SetInputGain()` to save the value to NVS, and the save endpoint invokes that setter. All other settings are written through the existing NVS-backed `Settings` API; actual read-back and reboot persistence still need device verification.
+
+### Remaining validation
+- The exact runtime cause of the user's original Save failure has not been captured. The UI false-failure path has been corrected, but the next device test must confirm HTTP POST success and that every field reads back correctly.
+- Build and test the mDNS dependency and hostname resolution on the ESP32-S3. Confirm `http://chatai-tpios.local` opens from the user's iPhone on the same Wi-Fi; if the router blocks multicast/mDNS, retain the DHCP IP fallback.
+- Verify save/read-back for API key, model, assistant name, voice, language, system prompt, enabled state, wake phrase, microphone gain, and speaker volume; then reboot and verify persistence.
+- No GitHub Actions, firmware build, OTA upload, or hardware operation was triggered for these source changes.
