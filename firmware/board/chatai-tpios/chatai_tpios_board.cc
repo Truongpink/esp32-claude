@@ -12,6 +12,7 @@
 #include "assets/lang_config.h"
 
 #include <esp_log.h>
+#include <esp_err.h>
 #include <utility>
 #include <memory>
 #include <driver/gpio.h>
