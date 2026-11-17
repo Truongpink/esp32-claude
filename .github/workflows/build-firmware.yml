@@ -20,18 +20,26 @@ jobs:
       - name: Prepare pinned XiaoZhi source and ChatAI overlay
         run: python3 scripts/prepare_upstream.py
 
-      - name: Build with ESP-IDF 6.1
+      - name: Build application and complete USB flash image with ESP-IDF 6.1
         uses: espressif/esp-idf-ci-action@v1
         with:
           esp_idf_version: v6.1
           target: esp32s3
           path: xiaozhi-src
-          command: idf.py build
+          command: idf.py build && idf.py merge-bin
 
-      - name: Upload application firmware only
+      - name: Upload complete USB flash image
         uses: actions/upload-artifact@v4
         with:
-          name: ChatAI-TPIOS-ESP32S3-firmware
+          name: ChatAI-TPIOS-ESP32S3-USB-FLASH
+          path: xiaozhi-src/build/merged-binary.bin
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload application image for OTA only
+        uses: actions/upload-artifact@v4
+        with:
+          name: ChatAI-TPIOS-ESP32S3-OTA
           path: xiaozhi-src/build/xiaozhi.bin
           if-no-files-found: error
           retention-days: 14
