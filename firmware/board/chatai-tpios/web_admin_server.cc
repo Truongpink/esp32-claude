@@ -285,9 +285,9 @@ esp_err_t ConfigPostHandler(httpd_req_t* req) {
     // Settings commits NVS when each write handle is closed. Read every supplied
     // value back before reporting success; never include the API key in a response.
     bool persisted = true;
+    const std::string missing(kMaxSystemPromptBytes + 1, '\x1f');
     {
         Settings saved("gemini", false);
-        const std::string missing(kMaxSystemPromptBytes + 1, '\x1f');
         persisted =
             saved.GetString("model", missing) == model->valuestring &&
             saved.GetString("system_prompt", missing) == prompt->valuestring &&
