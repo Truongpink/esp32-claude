@@ -264,7 +264,8 @@ def patch_pcm_audio_bridge() -> None:
         header,
         "    std::function<void(void)> on_send_queue_available;\n",
         "    std::function<void(void)> on_send_queue_available;\n"
-        "    std::function<void(void)> on_pcm_input_available;\n",
+        "    std::function<void(void)> on_pcm_input_available;\n"
+        "    std::function<void(void)> on_protocol_pending;\n",
     )
     replace_once(
         header,
@@ -274,6 +275,7 @@ def patch_pcm_audio_bridge() -> None:
         "    // Disabled by default; the existing XiaoZhi Opus path remains unchanged.\n"
         "    void EnablePcmBridge(bool enable);\n    void EnablePcmPlaybackMode(bool enable);\n"
         "    bool PopPcmInput(std::vector<int16_t>& pcm);\n"
+        "    void NotifyProtocolPending();\n"
         "    bool PushPcmPlayback(std::vector<int16_t>&& pcm);\n"
         "    void ClearPcmPlayback();\n",
     )
@@ -329,6 +331,11 @@ def patch_pcm_audio_bridge() -> None:
         "    pcm = std::move(pcm_input_queue_.front());\n"
         "    pcm_input_queue_.pop_front();\n"
         "    return true;\n"
+        "}\n"
+        "\nvoid AudioService::NotifyProtocolPending() {\n"
+        "    if (callbacks_.on_protocol_pending) {\n"
+        "        callbacks_.on_protocol_pending();\n"
+        "    }\n"
         "}\n"
         "\nbool AudioService::PushPcmPlayback(std::vector<int16_t>&& pcm) {\n"
         "    if (pcm.empty() || service_stopped_.load()) {\n"
@@ -425,6 +432,9 @@ def patch_pcm_application_event() -> None:
         "        xEventGroupSetBits(event_group_, MAIN_EVENT_SEND_AUDIO);\n"
         "    };\n"
         "    callbacks.on_pcm_input_available = [this]() {\n"
+        "        xEventGroupSetBits(event_group_, MAIN_EVENT_PROTOCOL_PENDING);\n"
+        "    };\n"
+        "    callbacks.on_protocol_pending = [this]() {\n"
         "        xEventGroupSetBits(event_group_, MAIN_EVENT_PROTOCOL_PENDING);\n"
         "    };\n"
         "    callbacks.on_playback_drained = [this]() {\n"
