@@ -103,11 +103,11 @@ std::string GetDiagnosticHistory() {
     const size_t count = std::min(static_cast<size_t>(total_events), kDiagnosticHistoryCapacity);
     const size_t start = (write_index + kDiagnosticHistoryCapacity - count) %
                          kDiagnosticHistoryCapacity;
-    std::string history = "Retained event history (latest 24 events; no-init RAM, not power-loss storage):\\n";
+    std::string history = "Retained event history (latest 24 events; no-init RAM, not power-loss storage):\n";
     for (size_t i = 0; i < count; ++i) {
         const auto& event = events[(start + i) % kDiagnosticHistoryCapacity];
         char line[112] = {};
-        std::snprintf(line, sizeof(line), "Boot %lu +%lu ms: %s\\n",
+        std::snprintf(line, sizeof(line), "Boot %lu +%lu ms: %s\n",
                       static_cast<unsigned long>(event.boot),
                       static_cast<unsigned long>(event.uptime_ms), event.message);
         history += line;
@@ -205,8 +205,10 @@ GeminiLiveProtocol::Diagnostics GeminiLiveProtocol::GetDiagnostics() {
     result.response_audio_chunks_received = g_response_audio_chunks_received.load();
     result.session_connected = g_session_connected.load();
     result.microphone_streaming = g_microphone_streaming.load();
-    std::lock_guard<std::mutex> lock(g_diagnostics_mutex);
-    result.last_error = g_last_error;
+    {
+        std::lock_guard<std::mutex> lock(g_diagnostics_mutex);
+        result.last_error = g_last_error;
+    }
     result.event_history = GetDiagnosticHistory();
     return result;
 }
