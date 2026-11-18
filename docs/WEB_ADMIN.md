@@ -10,7 +10,9 @@ The AP address and station address are different. `192.168.4.1` is available onl
 ## Supported controls
 
 - `GET /api/status`: Wi-Fi SSID/IP, Gemini enabled state, API-key configured flag, firmware version, running partition, inactive OTA target/size, and saved speaker volume. The API key itself is never returned.
-- The **Chẩn đoán Gemini Live** panel in the device page shows the current reset reason, Live session/microphone state, sent microphone chunk count, received response-audio chunk count, and last Gemini error. It can be refreshed and copied from the browser. These are current-session diagnostics, not a persistent log or a PANIC backtrace.
+- The **Chẩn đoán Gemini Live** panel shows the current reset reason, Live session/microphone state, sent microphone chunk count, received response-audio chunk count, and last Gemini error. It can be refreshed and copied.
+- The **Nhật ký hệ thống gần nhất** panel reads a 4 KB circular log buffer stored in `__NOINIT_ATTR`; it is intended to survive software/PANIC restarts, and can be refreshed, copied, downloaded, or cleared. It may be lost after full power removal and does not contain the panic handler's CPU registers or backtrace.
+- `GET /api/logs`: downloads the recent runtime log buffer as text. `POST /api/logs/clear`: clears the buffer (same-origin requests only).
 - `GET /api/config`: Gemini model, system prompt, enabled state, and speaker volume.
 - `POST /api/config`: saves Gemini model/prompt/enabled/API key and speaker volume in NVS. An omitted or blank API key preserves the saved key. Gemini changes take effect after reboot; speaker volume is applied immediately and restored at startup.
 - `POST /api/ota`: accepts one raw application-only firmware `.bin` body as `application/octet-stream`. The handler checks that the dual OTA slots and OTA data partition exist, limits the upload to the inactive slot, streams data to flash, validates the image with ESP-IDF OTA APIs, selects the new boot partition, then restarts.
