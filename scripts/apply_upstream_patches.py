@@ -116,6 +116,14 @@ replace_once(
     '#include "websocket_protocol.h"\n'
     '#include "gemini_live_protocol.h"\n',
 )
+
+# Read the hardware reset cause for a short OLED diagnostic on the next boot.
+replace_once(
+    UPSTREAM / "main" / "application.cc",
+    '#include "gemini_live_protocol.h"\n',
+    '#include "gemini_live_protocol.h"\n'
+    '#include "esp_system.h"\n',
+)
 replace_once(
     UPSTREAM / "main" / "application.cc",
     '    if (ota_->HasMqttConfig()) {\n'
@@ -225,6 +233,23 @@ replace_once(
     '    display->SetupUI();\n'
     '    display->SetChatMessage("system", "ChatAI TPIOS");\n'
     '    vTaskDelay(pdMS_TO_TICKS(1500));\n'
+    '    const char* reset_label = "UNKNOWN";\n'
+    '    switch (esp_reset_reason()) {\n'
+    '        case ESP_RST_POWERON: reset_label = "POWER ON"; break;\n'
+    '        case ESP_RST_EXT: reset_label = "EXTERNAL"; break;\n'
+    '        case ESP_RST_SW: reset_label = "SOFTWARE"; break;\n'
+    '        case ESP_RST_PANIC: reset_label = "PANIC"; break;\n'
+    '        case ESP_RST_INT_WDT: reset_label = "INT WDT"; break;\n'
+    '        case ESP_RST_TASK_WDT: reset_label = "TASK WDT"; break;\n'
+    '        case ESP_RST_WDT: reset_label = "WDT"; break;\n'
+    '        case ESP_RST_DEEPSLEEP: reset_label = "DEEPSLEEP"; break;\n'
+    '        case ESP_RST_BROWNOUT: reset_label = "BROWNOUT"; break;\n'
+    '        case ESP_RST_SDIO: reset_label = "SDIO"; break;\n'
+    '        default: break;\n'
+    '    }\n'
+    '    ESP_LOGW(TAG, "Previous boot reset reason: %s", reset_label);\n'
+    '    display->SetChatMessage("system", (std::string("Reset: ") + reset_label).c_str());\n'
+    '    vTaskDelay(pdMS_TO_TICKS(2000));\n'
     '    display->SetChatMessage("system", "");\n'
     '    display->SetStatus("ChatAI sẵn sàng");\n',
 )
