@@ -2,6 +2,7 @@
 #include "board.h"
 #include "settings.h"
 #include <esp_log.h>
+#include <esp_heap_caps.h>
 #include <algorithm>
 #include <cstring>
 #include <cstdio>
@@ -9,7 +10,8 @@
 #define TAG "GeminiLive"
 namespace {
 constexpr char kUrl[] = "wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent";
-constexpr size_t kMaxMessage = 64 * 1024;
+constexpr size_t kMaxMessage = 256 * 1024;
+constexpr size_t kPcmDecodeChunkSamples = 1440;
 const char kB64[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 std::atomic<uint32_t> g_microphone_chunks_sent{0};
 std::atomic<uint32_t> g_response_audio_chunks_received{0};
@@ -29,8 +31,10 @@ std::string Encode64(const uint8_t* data, size_t size) {
     }
     return out;
 }
-bool Decode64(const char* data, size_t size, std::vector<uint8_t>& out) {
-    if (!data || !size || size > kMaxMessage || size % 4 != 0) return false;
+template <typename Consumer>
+bool Decode64InChunks(const char* data, size_t size, Consumer&& consume) {
+    if (!data || size == 0 || size > kMaxMessage || size % 4 != 0) return false;
+
     auto value = [](char c) -> int {
         if (c >= 'A' && c <= 'Z') return c - 'A';
         if (c >= 'a' && c <= 'z') return c - 'a' + 26;
@@ -39,20 +43,54 @@ bool Decode64(const char* data, size_t size, std::vector<uint8_t>& out) {
         if (c == '/') return 63;
         return -1;
     };
-    out.clear(); out.reserve((size / 4) * 3);
+
+    std::vector<int16_t> samples;
+    samples.reserve(kPcmDecodeChunkSamples);
+    bool has_low_byte = false;
+    uint8_t low_byte = 0;
+
+    auto append_byte = [&](uint8_t byte) -> bool {
+        if (!has_low_byte) {
+            low_byte = byte;
+            has_low_byte = true;
+            return true;
+        }
+
+        const uint16_t raw = static_cast<uint16_t>(low_byte) |
+                             (static_cast<uint16_t>(byte) << 8);
+        samples.push_back(static_cast<int16_t>(raw));
+        has_low_byte = false;
+
+        if (samples.size() == kPcmDecodeChunkSamples) {
+            if (!consume(std::move(samples))) return false;
+            samples.clear();
+            samples.reserve(kPcmDecodeChunkSamples);
+        }
+        return true;
+    };
+
     for (size_t i = 0; i < size; i += 4) {
-        const bool pad2 = data[i + 2] == '=', pad3 = data[i + 3] == '=';
+        const bool pad2 = data[i + 2] == '=';
+        const bool pad3 = data[i + 3] == '=';
         if ((pad2 && !pad3) || ((pad2 || pad3) && i + 4 != size)) return false;
-        const int a = value(data[i]), b = value(data[i + 1]);
-        const int c = pad2 ? 0 : value(data[i + 2]), d = pad3 ? 0 : value(data[i + 3]);
+
+        const int a = value(data[i]);
+        const int b = value(data[i + 1]);
+        const int c = pad2 ? 0 : value(data[i + 2]);
+        const int d = pad3 ? 0 : value(data[i + 3]);
         if (a < 0 || b < 0 || c < 0 || d < 0) return false;
-        const uint32_t v = (static_cast<uint32_t>(a) << 18) | (static_cast<uint32_t>(b) << 12) |
-                           (static_cast<uint32_t>(c) << 6) | static_cast<uint32_t>(d);
-        out.push_back(static_cast<uint8_t>(v >> 16));
-        if (!pad2) out.push_back(static_cast<uint8_t>(v >> 8));
-        if (!pad3) out.push_back(static_cast<uint8_t>(v));
+
+        const uint32_t decoded = (static_cast<uint32_t>(a) << 18) |
+                                 (static_cast<uint32_t>(b) << 12) |
+                                 (static_cast<uint32_t>(c) << 6) |
+                                 static_cast<uint32_t>(d);
+        if (!append_byte(static_cast<uint8_t>(decoded >> 16))) return false;
+        if (!pad2 && !append_byte(static_cast<uint8_t>(decoded >> 8))) return false;
+        if (!pad3 && !append_byte(static_cast<uint8_t>(decoded))) return false;
     }
-    return true;
+
+    if (has_low_byte) return false;
+    return samples.empty() || consume(std::move(samples));
 }
 std::string PrintJson(cJSON* root) {
     char* p = cJSON_PrintUnformatted(root); if (!p) return {};
@@ -138,6 +176,7 @@ bool GeminiLiveProtocol::OpenAudioChannel() {
     auto socket = network->CreateWebSocket(1);
     if (!socket) { Fail("Failed to create Gemini Live WebSocket"); return false; }
     websocket_ = std::shared_ptr<WebSocket>(std::move(socket));
+    websocket_->SetReceiveBufferSize(16384);
     websocket_->OnData([this](const char* data, size_t size, bool binary) {
         if (data == nullptr || size == 0) {
             ESP_LOGE(TAG, "Gemini Live received an empty WebSocket frame (binary=%d)", binary);
@@ -290,20 +329,29 @@ void GeminiLiveProtocol::HandleAudioPart(const cJSON* part) {
     const cJSON* in = cJSON_GetObjectItem(part, "inlineData"); if (!cJSON_IsObject(in)) return;
     const cJSON* mime = cJSON_GetObjectItem(in, "mimeType"); const cJSON* data = cJSON_GetObjectItem(in, "data");
     if (!cJSON_IsString(data) || !cJSON_IsString(mime) || std::string(mime->valuestring).find("audio/pcm;rate=24000") == std::string::npos) { ESP_LOGW(TAG, "Ignoring Gemini audio chunk with unsupported MIME type"); return; }
-    std::vector<uint8_t> decoded;
-    if (!Decode64(data->valuestring, std::strlen(data->valuestring), decoded) || decoded.size() < 2 || decoded.size() % 2) { ESP_LOGW(TAG, "Ignoring malformed Gemini PCM chunk"); return; }
+    const size_t encoded_size = std::strlen(data->valuestring);
+    if (encoded_size == 0 || encoded_size > kMaxMessage || encoded_size % 4 != 0) {
+        ESP_LOGW(TAG, "Ignoring malformed Gemini PCM chunk");
+        return;
+    }
+    if (heap_caps_get_free_size(MALLOC_CAP_8BIT) < 10000 ||
+        heap_caps_get_largest_free_block(MALLOC_CAP_8BIT) < 8192) {
+        ESP_LOGE(TAG, "Low heap, skip");
+        return;
+    }
+
     PauseMicrophoneForResponse();
     if (!output_turn_started_) { output_turn_started_ = true; EmitTranscript("tts", "start", ""); }
-    ++g_response_audio_chunks_received;
-    std::vector<int16_t> samples(decoded.size() / 2); std::memcpy(samples.data(), decoded.data(), decoded.size());
-    for (size_t i = 0; i < samples.size(); i += kOutputChunkSamples) {
-        size_t n = std::min(kOutputChunkSamples, samples.size() - i);
-        if (!audio_service_.PushPcmPlayback(std::vector<int16_t>(samples.begin() + i, samples.begin() + i + n))) {
-            ESP_LOGE(TAG, "PCM playback queue is full; refusing to discard queued speech");
-            Fail("Gemini Live PCM playback queue overflow");
-            return;
-        }
+    const bool queued = Decode64InChunks(data->valuestring, encoded_size,
+        [this](std::vector<int16_t>&& samples) {
+            return audio_service_.PushPcmPlayback(std::move(samples));
+        });
+    if (!queued) {
+        ESP_LOGE(TAG, "Gemini PCM decode or playback enqueue failed");
+        Fail("Gemini Live PCM decode or playback failed");
+        return;
     }
+    ++g_response_audio_chunks_received;
 }
 void GeminiLiveProtocol::EmitTranscript(const char* type, const char* state, const char* text) {
     if (!on_incoming_json_) {
