@@ -166,7 +166,7 @@ esp_err_t RootHandler(httpd_req_t* request) {
         "<label>Mật khẩu</label><br><input name=\"password\" type=\"password\" "
         "maxlength=\"64\" style=\"box-sizing:border-box;width:100%;padding:12px;"
         "margin:8px 0\"><button style=\"padding:12px 20px\">Lưu và kết nối</button>"
-        "</form><p><a href=\\"/admin\\">Mở Web Admin ChatAI</a></p></body></html>";
+        "</form><p><a href=\"/admin\">Mở Web Admin ChatAI</a></p></body></html>";
     httpd_resp_set_type(request, "text/html; charset=utf-8");
     return httpd_resp_send(request, page.c_str(), HTTPD_RESP_USE_STRLEN);
 }
