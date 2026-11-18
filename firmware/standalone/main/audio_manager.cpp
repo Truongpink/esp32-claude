@@ -34,6 +34,8 @@ i2s_chan_handle_t s_speaker_tx = nullptr;
 std::atomic<bool> s_mic_enabled{false};
 std::atomic<bool> s_speaker_enabled{false};
 std::mutex s_state_mutex;
+std::mutex s_mic_io_mutex;
+std::mutex s_speaker_io_mutex;
 std::mutex s_reference_mutex;
 SpeakerReferenceCallback s_reference_callback = nullptr;
 void* s_reference_context = nullptr;
@@ -153,7 +155,8 @@ esp_err_t Initialize() {
 }
 
 esp_err_t EnableMicrophone(bool enable) {
-    std::lock_guard<std::mutex> lock(s_state_mutex);
+    std::lock_guard<std::mutex> state_lock(s_state_mutex);
+    std::lock_guard<std::mutex> io_lock(s_mic_io_mutex);
     if (s_mic_rx == nullptr) {
         return ESP_ERR_INVALID_STATE;
     }
@@ -170,7 +173,8 @@ esp_err_t EnableMicrophone(bool enable) {
 }
 
 esp_err_t EnableSpeaker(bool enable) {
-    std::lock_guard<std::mutex> lock(s_state_mutex);
+    std::lock_guard<std::mutex> state_lock(s_state_mutex);
+    std::lock_guard<std::mutex> io_lock(s_speaker_io_mutex);
     if (s_speaker_tx == nullptr) {
         return ESP_ERR_INVALID_STATE;
     }
@@ -192,6 +196,7 @@ esp_err_t ReadMicrophonePcm16(int16_t* destination, size_t requested_samples,
         return ESP_ERR_INVALID_ARG;
     }
     *samples_read = 0;
+    std::lock_guard<std::mutex> io_lock(s_mic_io_mutex);
 
     if (s_mic_rx == nullptr || !s_mic_enabled.load()) {
         return ESP_ERR_INVALID_STATE;
@@ -209,6 +214,10 @@ esp_err_t ReadMicrophonePcm16(int16_t* destination, size_t requested_samples,
             return (*samples_read > 0 && err == ESP_ERR_TIMEOUT) ? ESP_OK : err;
         }
 
+        if (bytes_read % sizeof(int32_t) != 0 ||
+            bytes_read > chunk * sizeof(int32_t)) {
+            return ESP_ERR_INVALID_SIZE;
+        }
         const size_t received = bytes_read / sizeof(int32_t);
         for (size_t i = 0; i < received; ++i) {
             // Match the legacy board's 32-bit I2S microphone to PCM16 conversion.
@@ -232,6 +241,7 @@ esp_err_t WriteSpeakerPcm16(const int16_t* samples, size_t sample_count,
         return ESP_ERR_INVALID_ARG;
     }
     *samples_written = 0;
+    std::lock_guard<std::mutex> io_lock(s_speaker_io_mutex);
 
     if (s_speaker_tx == nullptr || !s_speaker_enabled.load()) {
         return ESP_ERR_INVALID_STATE;
@@ -249,17 +259,19 @@ esp_err_t WriteSpeakerPcm16(const int16_t* samples, size_t sample_count,
         const esp_err_t err = i2s_channel_write(
             s_speaker_tx, tx_samples.data(), chunk * sizeof(int32_t),
             &bytes_written, timeout_ms);
+        if (bytes_written % sizeof(int32_t) != 0 ||
+            bytes_written > chunk * sizeof(int32_t)) {
+            return ESP_ERR_INVALID_SIZE;
+        }
         const size_t written = bytes_written / sizeof(int32_t);
         if (written > 0) {
-            SpeakerReferenceCallback callback = nullptr;
-            void* context = nullptr;
-            {
-                std::lock_guard<std::mutex> lock(s_reference_mutex);
-                callback = s_reference_callback;
-                context = s_reference_context;
-            }
-            if (callback != nullptr) {
-                callback(samples + *samples_written, written, context);
+            // Keep the callback context alive until invocation completes: a setter
+            // cannot replace/unregister it while this lock is held. The callback
+            // must not call SetSpeakerReferenceCallback() recursively.
+            std::lock_guard<std::mutex> reference_lock(s_reference_mutex);
+            if (s_reference_callback != nullptr) {
+                s_reference_callback(samples + *samples_written, written,
+                                     s_reference_context);
             }
             *samples_written += written;
         }
