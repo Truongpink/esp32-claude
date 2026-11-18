@@ -23,11 +23,12 @@ The AFE bridge supplies signed PCM16 mono at 16 kHz. Each bounded frame is Base6
 
 For each received JSON server message:
 
-1. Parse `serverContent.modelTurn.parts[]`; a message can contain more than one part.
-2. For every `inlineData` audio part, require PCM at 24 kHz.
-3. Base64-decode signed PCM16 little-endian samples.
-4. Push bounded chunks to `AudioService::PushPcmPlayback()`.
-5. Keep the WebSocket receive callback away from blocking codec operations.
+1. The WebSocket callback copies the frame into a fixed three-slot ring (8 KiB per slot) and signals the application protocol event; it does not parse JSON, decode Base64, allocate PCM vectors or wait for playback.
+2. The application protocol task parses `serverContent.modelTurn.parts[]`; a message can contain more than one part.
+3. For every `inlineData` audio part, require PCM at 24 kHz.
+4. Base64-decode signed PCM16 little-endian into 60 ms chunks: `24,000 * 60 / 1,000 = 1,440` samples (2,880 PCM bytes).
+5. Push bounded chunks to `AudioService::PushPcmPlayback()`; the existing audio output task writes them to the 24 kHz board codec.
+6. The XH-S3E board output is already configured for 24 kHz. Do not resample Gemini PCM to 16 kHz. The log `Resampling audio from 16000 to 24000` is emitted by the separate legacy Opus decoder path, which Gemini raw PCM bypasses.
 
 ## Control events
 
