@@ -6,6 +6,8 @@
 #include <esp_attr.h>
 #include <esp_system.h>
 #include <esp_timer.h>
+#include <freertos/FreeRTOS.h>
+#include <freertos/task.h>
 #include <algorithm>
 #include <cstring>
 #include <cstdio>
@@ -698,20 +700,52 @@ void GeminiLiveProtocol::HandleAudioPart(const cJSON* part) {
         return;
     }
 
+    const uint32_t next_chunk = g_response_audio_chunks_received.load() + 1;
+    if (next_chunk == 1) {
+        ESP_LOGW(TAG,
+                 "First Gemini audio chunk: json_data=%u heap_free=%u heap_largest=%u task_stack_free=%u",
+                 static_cast<unsigned>(encoded_size),
+                 static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_8BIT)),
+                 static_cast<unsigned>(heap_caps_get_largest_free_block(MALLOC_CAP_8BIT)),
+                 static_cast<unsigned>(uxTaskGetStackHighWaterMark(nullptr)));
+    }
+
     PauseMicrophoneForResponse();
     if (!output_turn_started_) {
         output_turn_started_ = true;
         RecordDiagnosticEvent("Gemini audio playback turn started");
         EmitTranscript("tts", "start", "");
     }
+
+    size_t decoded_segments = 0;
     const bool queued = Decode64InChunks(data->valuestring, encoded_size,
-        [this](std::vector<int16_t>&& samples) {
-            return audio_service_.PushPcmPlayback(std::move(samples));
+        [this, next_chunk, &decoded_segments](std::vector<int16_t>&& samples) {
+            ++decoded_segments;
+            const size_t sample_count = samples.size();
+            const bool accepted = audio_service_.PushPcmPlayback(std::move(samples));
+            if (next_chunk == 1) {
+                ESP_LOGW(TAG,
+                         "First Gemini PCM enqueue #%u: samples=%u accepted=%s heap_free=%u task_stack_free=%u",
+                         static_cast<unsigned>(decoded_segments),
+                         static_cast<unsigned>(sample_count),
+                         accepted ? "yes" : "no",
+                         static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_8BIT)),
+                         static_cast<unsigned>(uxTaskGetStackHighWaterMark(nullptr)));
+            }
+            return accepted;
         });
     if (!queued) {
         ESP_LOGE(TAG, "Gemini PCM decode or playback enqueue failed");
         Fail("Gemini Live PCM decode or playback failed");
         return;
+    }
+    if (next_chunk == 1) {
+        ESP_LOGW(TAG,
+                 "First Gemini audio chunk decoded: segments=%u heap_free=%u heap_largest=%u task_stack_free=%u",
+                 static_cast<unsigned>(decoded_segments),
+                 static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_8BIT)),
+                 static_cast<unsigned>(heap_caps_get_largest_free_block(MALLOC_CAP_8BIT)),
+                 static_cast<unsigned>(uxTaskGetStackHighWaterMark(nullptr)));
     }
     const uint32_t received = ++g_response_audio_chunks_received;
     SetPersistedGeminiCounters(g_microphone_chunks_sent.load(), received);
