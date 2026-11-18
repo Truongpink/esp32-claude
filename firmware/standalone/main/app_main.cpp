@@ -12,6 +12,7 @@
 #include "audio_manager.h"
 #include "gemini_live_client.h"
 #include "gemini_settings.h"
+#include "firmware_info.h"
 
 namespace {
 constexpr char kTag[] = "ChatAI";
@@ -81,6 +82,8 @@ void RestartIfOtaImageIsPending() {
 
 extern "C" void app_main(void) {
     ESP_LOGI(kTag, "ChatAI TPIOS standalone firmware starting");
+    ESP_LOGI(kTag, "Firmware Build #%lu",
+             static_cast<unsigned long>(chatai::firmware::kBuildNumber));
 
     if (!InitializePlatform()) {
         ESP_LOGE(kTag, "Platform initialization failed");
