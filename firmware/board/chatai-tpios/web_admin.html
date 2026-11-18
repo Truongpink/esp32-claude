@@ -129,7 +129,7 @@
 
   <nav class="admin-nav hidden" id="adminNav" aria-label="Danh mục quản trị">
     <button class="nav-item active" type="button" data-page="home">⌂ Tổng quan</button>
-    <button class="nav-item" type="button" data-page="wifi">📶 Kết nối</button>
+    <button class="nav-item" type="button" data-page="wifi">📶 Kết nối & quản lý</button>
     <button class="nav-item" type="button" data-page="gemini">✨ Gemini Live</button>
     <button class="nav-item" type="button" data-page="audio">🔊 Âm thanh</button>
     <button class="nav-item" type="button" data-page="diagnostics">🧾 Chẩn đoán & nhật ký</button>
@@ -366,11 +366,11 @@ function showSection(id) { $(id).classList.remove('hidden'); }
 
 const adminPages = {
   home: ['statusSection', 'otaSection'],
-  wifi: ['wifiSection'],
+  wifi: ['deviceActionsSection'],
   gemini: ['geminiSection'],
   audio: ['audioSection'],
   diagnostics: ['panicSection', 'diagnosticsSection', 'runtimeLogSection'],
-  system: ['featuresSection', 'oledSection', 'deviceActionsSection']
+  system: ['featuresSection', 'oledSection']
 };
 function showAdminPage(page) {
   const visible = adminPages[page] || adminPages.home;
