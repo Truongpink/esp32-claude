@@ -385,6 +385,22 @@ def patch_pcm_application_event() -> None:
 
 patch_pcm_application_event()
 
+# Enable AEC during Live voice processing whenever this codec supplies a valid
+# software playback-reference channel, even if the generic device-AEC option is off.
+def patch_live_reference_aec() -> None:
+    source = UPSTREAM / "main" / "audio" / "engines" / "afe_audio_engine.cc"
+    replace_once(
+        source,
+        "        const bool enable_aec = (bits & kWakeWordEnabled) ||\n"
+        "                                (device_aec_enabled_.load() && (bits & kVoiceProcessingEnabled));",
+        "        const bool enable_aec = (bits & kWakeWordEnabled) ||\n"
+        "                                ((device_aec_enabled_.load() || codec_->input_reference()) &&\n"
+        "                                 (bits & kVoiceProcessingEnabled));",
+    )
+
+
+patch_live_reference_aec()
+
 # Add configurable MultiNet wake phrase and microphone gain support.
 from patch_voice_features import apply as apply_voice_features
 apply_voice_features(ROOT, UPSTREAM)

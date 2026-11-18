@@ -21,12 +21,170 @@
 #include <esp_lcd_panel_ops.h>
 #include <esp_lcd_panel_vendor.h>
 #include <mdns.h>
+#include <esp_ae_rate_cvt.h>
+#include <esp_audio_types.h>
+#include <algorithm>
+#include <array>
+#include <atomic>
+#include <cmath>
+#include <cstdint>
+#include <limits>
+#include <mutex>
+#include <vector>
 
 #ifdef SH1106
 #include <esp_lcd_panel_sh1106.h>
 #endif
 
 #define TAG "ChatAITPIOSBoard"
+
+class ChatAIReferenceCodec final : public NoAudioCodecSimplex {
+public:
+    ChatAIReferenceCodec(int input_sample_rate, int output_sample_rate,
+                         gpio_num_t spk_bclk, gpio_num_t spk_ws, gpio_num_t spk_dout,
+                         gpio_num_t mic_sck, gpio_num_t mic_ws, gpio_num_t mic_din)
+        : NoAudioCodecSimplex(input_sample_rate, output_sample_rate, spk_bclk, spk_ws,
+                              spk_dout, mic_sck, mic_ws, mic_din) {
+        esp_ae_rate_cvt_cfg_t config = {
+            .src_rate = static_cast<uint32_t>(output_sample_rate),
+            .dest_rate = static_cast<uint32_t>(input_sample_rate),
+            .channel = ESP_AUDIO_MONO,
+            .bits_per_sample = ESP_AUDIO_BIT16,
+            .complexity = 2,
+            .perf_type = ESP_AE_RATE_CVT_PERF_TYPE_SPEED,
+        };
+        esp_ae_rate_cvt_open(&config, &reference_resampler_);
+        if (reference_resampler_ != nullptr) {
+            input_reference_ = true;
+            input_channels_ = 2;  // Interleaved microphone (M) + speaker reference (R).
+            ESP_LOGI(TAG, "Software speaker reference enabled for ESP-SR AEC");
+        } else {
+            ESP_LOGW(TAG, "Speaker reference resampler unavailable; AEC remains disabled");
+        }
+    }
+
+    ~ChatAIReferenceCodec() override {
+        reference_capture_enabled_.store(false);
+        std::lock_guard<std::mutex> lock(reference_resampler_mutex_);
+        if (reference_resampler_ != nullptr) {
+            esp_ae_rate_cvt_close(reference_resampler_);
+            reference_resampler_ = nullptr;
+        }
+    }
+
+protected:
+    int Read(int16_t* dest, int samples) override {
+        if (!input_reference_ || samples <= 0 || (samples & 1) != 0) {
+            return NoAudioCodec::Read(dest, samples);
+        }
+
+        const int mic_samples = samples / 2;
+        std::vector<int16_t> microphone(mic_samples, 0);
+        const int received = NoAudioCodec::Read(microphone.data(), mic_samples);
+        if (received <= 0) {
+            return 0;
+        }
+
+        std::lock_guard<std::mutex> lock(reference_mutex_);
+        for (int i = 0; i < mic_samples; ++i) {
+            const bool has_microphone_sample = i < received;
+            dest[i * 2] = has_microphone_sample ? microphone[i] : 0;
+            dest[i * 2 + 1] = 0;
+            if (has_microphone_sample && reference_size_ > 0) {
+                dest[i * 2 + 1] = reference_buffer_[reference_head_];
+                reference_head_ = (reference_head_ + 1) % kReferenceBufferCapacity;
+                --reference_size_;
+            }
+        }
+        // Keep the AFE frame size fixed; pad a short I2S read with silence.
+        return samples;
+    }
+
+    int Write(const int16_t* data, int samples) override {
+        if (reference_resampler_ != nullptr && samples > 0 &&
+            reference_capture_enabled_.load()) {
+            std::lock_guard<std::mutex> lock(reference_resampler_mutex_);
+            if (reference_capture_enabled_.load()) {
+                std::vector<int16_t> scaled(samples);
+                const int32_t volume_factor = static_cast<int32_t>(
+                    std::pow(static_cast<double>(output_volume_) / 100.0, 2.0) * 65536.0);
+                for (int i = 0; i < samples; ++i) {
+                    const int64_t value = (static_cast<int64_t>(data[i]) * volume_factor) >> 16;
+                    scaled[i] = static_cast<int16_t>(std::clamp<int64_t>(
+                        value, std::numeric_limits<int16_t>::min(),
+                        std::numeric_limits<int16_t>::max()));
+                }
+
+                uint32_t max_output_samples = 0;
+                esp_ae_rate_cvt_get_max_out_sample_num(
+                    reference_resampler_, static_cast<uint32_t>(samples), &max_output_samples);
+                if (max_output_samples > 0) {
+                    std::vector<int16_t> reference(max_output_samples);
+                    uint32_t actual_output_samples = max_output_samples;
+                    esp_ae_rate_cvt_process(
+                        reference_resampler_, reinterpret_cast<esp_ae_sample_t*>(scaled.data()),
+                        static_cast<uint32_t>(samples),
+                        reinterpret_cast<esp_ae_sample_t*>(reference.data()),
+                        &actual_output_samples);
+                    if (actual_output_samples > 0) {
+                        PushReference(reference.data(), actual_output_samples);
+                    }
+                }
+            }
+        }
+        return NoAudioCodec::Write(data, samples);
+    }
+
+    void EnableInput(bool enable) override {
+        reference_capture_enabled_.store(false);
+        if (!enable) {
+            NoAudioCodec::EnableInput(false);
+        }
+        {
+            std::lock_guard<std::mutex> resampler_lock(reference_resampler_mutex_);
+            if (reference_resampler_ != nullptr) {
+                esp_ae_rate_cvt_reset(reference_resampler_);
+            }
+        }
+        {
+            std::lock_guard<std::mutex> queue_lock(reference_mutex_);
+            reference_head_ = 0;
+            reference_size_ = 0;
+        }
+        if (enable) {
+            NoAudioCodec::EnableInput(true);
+            reference_capture_enabled_.store(reference_resampler_ != nullptr);
+        }
+    }
+
+private:
+    static constexpr size_t kReferenceBufferCapacity = 8192;  // 512 ms at 16 kHz.
+    std::array<int16_t, kReferenceBufferCapacity> reference_buffer_{};
+    size_t reference_head_ = 0;
+    size_t reference_size_ = 0;
+    std::mutex reference_mutex_;
+    std::mutex reference_resampler_mutex_;
+    esp_ae_rate_cvt_handle_t reference_resampler_ = nullptr;
+    std::atomic<bool> reference_capture_enabled_{false};
+
+    void PushReference(const int16_t* samples, size_t count) {
+        std::lock_guard<std::mutex> lock(reference_mutex_);
+        if (count > kReferenceBufferCapacity) {
+            samples += count - kReferenceBufferCapacity;
+            count = kReferenceBufferCapacity;
+        }
+        if (reference_size_ + count > kReferenceBufferCapacity) {
+            // A stalled input task invalidates the old timing; restart from the newest audio.
+            reference_head_ = 0;
+            reference_size_ = 0;
+        }
+        for (size_t i = 0; i < count; ++i) {
+            const size_t tail = (reference_head_ + reference_size_) % kReferenceBufferCapacity;
+            reference_buffer_[tail] = samples[i];
+            ++reference_size_;
+        }
+    }
+};
 
 class ChatAITPIOSBoard : public WifiBoard {
 private:
@@ -245,7 +403,7 @@ public:
 
     virtual AudioCodec* GetAudioCodec() override {
 #ifdef AUDIO_I2S_METHOD_SIMPLEX
-        static NoAudioCodecSimplex audio_codec(AUDIO_INPUT_SAMPLE_RATE, AUDIO_OUTPUT_SAMPLE_RATE,
+        static ChatAIReferenceCodec audio_codec(AUDIO_INPUT_SAMPLE_RATE, AUDIO_OUTPUT_SAMPLE_RATE,
             AUDIO_I2S_SPK_GPIO_BCLK, AUDIO_I2S_SPK_GPIO_LRCK, AUDIO_I2S_SPK_GPIO_DOUT, AUDIO_I2S_MIC_GPIO_SCK, AUDIO_I2S_MIC_GPIO_WS, AUDIO_I2S_MIC_GPIO_DIN);
 #else
         static NoAudioCodecDuplex audio_codec(AUDIO_INPUT_SAMPLE_RATE, AUDIO_OUTPUT_SAMPLE_RATE,
