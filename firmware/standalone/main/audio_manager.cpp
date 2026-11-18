@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <climits>
 #include <mutex>
 
@@ -30,8 +31,8 @@ constexpr size_t kReadChunkSamples = 512;
 
 i2s_chan_handle_t s_mic_rx = nullptr;
 i2s_chan_handle_t s_speaker_tx = nullptr;
-bool s_mic_enabled = false;
-bool s_speaker_enabled = false;
+std::atomic<bool> s_mic_enabled{false};
+std::atomic<bool> s_speaker_enabled{false};
 std::mutex s_state_mutex;
 std::mutex s_reference_mutex;
 SpeakerReferenceCallback s_reference_callback = nullptr;
@@ -156,7 +157,7 @@ esp_err_t EnableMicrophone(bool enable) {
     if (s_mic_rx == nullptr) {
         return ESP_ERR_INVALID_STATE;
     }
-    if (enable == s_mic_enabled) {
+    if (enable == s_mic_enabled.load()) {
         return ESP_OK;
     }
 
@@ -173,7 +174,7 @@ esp_err_t EnableSpeaker(bool enable) {
     if (s_speaker_tx == nullptr) {
         return ESP_ERR_INVALID_STATE;
     }
-    if (enable == s_speaker_enabled) {
+    if (enable == s_speaker_enabled.load()) {
         return ESP_OK;
     }
 
@@ -192,7 +193,7 @@ esp_err_t ReadMicrophonePcm16(int16_t* destination, size_t requested_samples,
     }
     *samples_read = 0;
 
-    if (s_mic_rx == nullptr || !s_mic_enabled) {
+    if (s_mic_rx == nullptr || !s_mic_enabled.load()) {
         return ESP_ERR_INVALID_STATE;
     }
 
@@ -232,7 +233,7 @@ esp_err_t WriteSpeakerPcm16(const int16_t* samples, size_t sample_count,
     }
     *samples_written = 0;
 
-    if (s_speaker_tx == nullptr || !s_speaker_enabled) {
+    if (s_speaker_tx == nullptr || !s_speaker_enabled.load()) {
         return ESP_ERR_INVALID_STATE;
     }
 
