@@ -10,6 +10,7 @@ The AP address and station address are different. `192.168.4.1` is available onl
 ## Supported controls
 
 - `GET /api/status`: Wi-Fi SSID/IP, Gemini enabled state, API-key configured flag, firmware version, running partition, inactive OTA target/size, and saved speaker volume. The API key itself is never returned.
+- The **Chẩn đoán Gemini Live** panel in the device page shows the current reset reason, Live session/microphone state, sent microphone chunk count, received response-audio chunk count, and last Gemini error. It can be refreshed and copied from the browser. These are current-session diagnostics, not a persistent log or a PANIC backtrace.
 - `GET /api/config`: Gemini model, system prompt, enabled state, and speaker volume.
 - `POST /api/config`: saves Gemini model/prompt/enabled/API key and speaker volume in NVS. An omitted or blank API key preserves the saved key. Gemini changes take effect after reboot; speaker volume is applied immediately and restored at startup.
 - `POST /api/ota`: accepts one raw application-only firmware `.bin` body as `application/octet-stream`. The handler checks that the dual OTA slots and OTA data partition exist, limits the upload to the inactive slot, streams data to flash, validates the image with ESP-IDF OTA APIs, selects the new boot partition, then restarts.
