@@ -44,6 +44,7 @@ private:
     std::atomic<bool> channel_open_notified_{false};
     std::atomic<bool> output_turn_started_{false};
     std::atomic<bool> turn_complete_pending_{false};
+    std::atomic<bool> resume_listening_after_playback_{false};
     std::string api_key_, model_, bot_name_, voice_name_, language_code_, system_instruction_, last_server_error_;
     bool SendText(const std::string& text) override;
     bool SendSetup();
@@ -54,6 +55,8 @@ private:
     void HandleAudioPart(const cJSON* part);
     void EmitTranscript(const char* type, const char* state, const char* text);
     void EmitTtsStop();
+    void PauseMicrophoneForResponse();
+    void FinishOutputTurn();
     void Fail(const std::string& message);
 };
 #endif
