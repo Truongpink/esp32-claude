@@ -40,7 +40,7 @@ private:
     static constexpr EventBits_t kSetupComplete = BIT0;
     static constexpr EventBits_t kSetupFailed = BIT1;
     static constexpr EventBits_t kReceiveFrameAvailable = BIT2;
-    static constexpr size_t kReceiveFrameCapacity = 8192;
+    static constexpr size_t kReceiveFrameCapacity = 64 * 1024;
     static constexpr size_t kReceiveQueueDepth = 3;
     static constexpr size_t kInputChunkSamples = 320;
     struct ReceiveFrameSlot {
