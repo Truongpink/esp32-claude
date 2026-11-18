@@ -129,6 +129,7 @@
 
   <nav class="admin-nav hidden" id="adminNav" aria-label="Danh mục quản trị">
     <button class="nav-item active" type="button" data-page="home">⌂ Tổng quan</button>
+    <button class="nav-item" type="button" data-page="ota">⬆️ Cập nhật firmware</button>
     <button class="nav-item" type="button" data-page="wifi">📶 Kết nối & quản lý</button>
     <button class="nav-item" type="button" data-page="gemini">✨ Gemini Live</button>
     <button class="nav-item" type="button" data-page="audio">🔊 Âm thanh</button>
@@ -354,6 +355,7 @@ function showSection(id) { $(id).classList.remove('hidden'); }
 
 const adminPages = {
   home: ['statusSection', 'otaSection'],
+  ota: ['otaSection'],
   wifi: ['deviceActionsSection'],
   gemini: ['geminiSection'],
   audio: ['audioSection'],
