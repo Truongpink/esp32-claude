@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cstring>
+#include <cstdio>
 #include <mutex>
 #include <string>
 
@@ -496,15 +497,14 @@ esp_err_t FirmwareStatusHandler(httpd_req_t* request) {
     const size_t target_size = target != nullptr && target != running ? target->size : 0;
     char body[256]{};
     std::snprintf(body, sizeof(body),
-        "{\\\"build_number\\\":%lu,\\\"build_marker\\\":\\\"%s\\\","
-        "\\\"running_partition\\\":\\\"%s\\\",\\\"ota_target\\\":\\\"%s\\\","
-        "\\\"ota_max_bytes\\\":%u}",
+        "{\"build_number\":%lu,\"build_marker\":\"%s\","
+        "\"running_partition\":\"%s\",\"ota_target\":\"%s\","
+        "\"ota_max_bytes\":%u}",
         static_cast<unsigned long>(chatai::firmware::kBuildNumber),
         chatai::firmware::kBuildMarker, running_label, target_label,
         static_cast<unsigned>(target_size));
     return SendJson(request, "200 OK", body);
 }
-
 esp_err_t GeminiStatusHandler(httpd_req_t* request) {
     const char* status = chatai::settings::HasGeminiApiKey()
         ? "{\"key_configured\":true}"
