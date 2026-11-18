@@ -1,3 +1,13 @@
+
+if(DEFINED ENV{CHATAI_FIRMWARE_BUILD})
+    set(CHATAI_FIRMWARE_BUILD "$ENV{CHATAI_FIRMWARE_BUILD}")
+else()
+    set(CHATAI_FIRMWARE_BUILD "0")
+endif()
+if(NOT CHATAI_FIRMWARE_BUILD MATCHES "^[0-9]+$")
+    message(FATAL_ERROR "CHATAI_FIRMWARE_BUILD must be a non-negative integer")
+endif()
+
 idf_component_register(
     SRCS "app_main.cpp" "network_manager.cpp" "display_manager.cpp"
          "audio_manager.cpp" "gemini_settings.cpp" "gemini_live_client.cpp"
@@ -7,3 +17,5 @@ idf_component_register(
              esp_driver_i2c esp_driver_i2s esp_driver_gpio esp_websocket_client
              freertos mbedtls
 )
+
+target_compile_definitions(${COMPONENT_LIB} PRIVATE CHATAI_FIRMWARE_BUILD=${CHATAI_FIRMWARE_BUILD})
