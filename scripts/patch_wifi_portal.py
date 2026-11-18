@@ -158,9 +158,13 @@ def main() -> None:
     )
     websocket_text = websocket_source.read_text(encoding="utf-8")
     # Different compatible 3.8.x releases may contain a different number of
-    # control-frame payload references. Replace every remaining reference;
-    # do not hard-code a count that is unrelated to the protocol behavior.
-    websocket_text = websocket_text.replace("payload.data()", "payload_data")
+    # control-frame payload references. Match the standalone "payload" identifier
+    # only; a plain substring replacement also corrupts "unmasked_payload.data()".
+    websocket_text = re.sub(
+        r"(?<![A-Za-z0-9_])payload\\.data\\(\\)",
+        "payload_data",
+        websocket_text,
+    )
     websocket_source.write_text(websocket_text, encoding="utf-8")
     replace_once(
         websocket_source,
