@@ -21,10 +21,11 @@ def apply(root: Path, upstream: Path) -> None:
         "CONFIG_CUSTOM_WAKE_WORD": '"hey chatai"',
         "CONFIG_CUSTOM_WAKE_WORD_DISPLAY": '"Hey ChatAI"',
         "CONFIG_CUSTOM_WAKE_WORD_THRESHOLD": "20",
+        "CONFIG_ESP_TASK_WDT_TIMEOUT_S": "30",
     }
     lines = [line for line in defaults.splitlines()
              if not any(line.startswith(key + "=") for key in wake_settings)]
-    lines.extend(("", "# ChatAI TPIOS English MultiNet wake word", *(
+    lines.extend(("", "# ChatAI TPIOS audio watchdog and English MultiNet wake word", *(
         f"{key}={value}" for key, value in wake_settings.items()
     )))
     sdkconfig_defaults.write_text("\n".join(lines) + "\n", encoding="utf-8")
@@ -93,6 +94,11 @@ def apply(root: Path, upstream: Path) -> None:
         "    virtual bool SetWakeWordPhrase(const std::string& phrase) { (void)phrase; return false; }\n",
     )
     afe_h = upstream / "main/audio/engines/afe_audio_engine.h"
+    replace_once(
+        afe_h,
+        "    static constexpr size_t kProcessingTaskStackSize = 4096;\\n",
+        "    static constexpr size_t kProcessingTaskStackSize = 16384;\\n",
+    )
     afe_cc = upstream / "main/audio/engines/afe_audio_engine.cc"
     replace_once(
         afe_h,
