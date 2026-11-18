@@ -90,7 +90,7 @@ int CaptureRuntimeLogVprintf(const char* format, va_list args) {
     return original_log_vprintf ? original_log_vprintf(format, args) : length;
 }
 
-void StartRuntimeLogCapture() {
+void StartRuntimeLogCaptureInternal() {
     if (runtime_log_capture_started) return;
     EnsureRuntimeLogStore();
     original_log_vprintf = esp_log_set_vprintf(CaptureRuntimeLogVprintf);
@@ -246,6 +246,7 @@ esp_err_t StatusHandler(httpd_req_t* req) {
     cJSON_AddBoolToObject(root, "live_session_connected", diagnostics.session_connected);
     cJSON_AddBoolToObject(root, "mic_streaming", diagnostics.microphone_streaming);
     cJSON_AddStringToObject(root, "live_last_error", diagnostics.last_error.c_str());
+    cJSON_AddStringToObject(root, "live_event_history", diagnostics.event_history.c_str());
     SendJson(req, root);
     return ESP_OK;
 }
@@ -663,11 +664,15 @@ esp_err_t OtaUploadHandler(httpd_req_t* req) {
 
 } // namespace
 
+void WebAdminServer::InitializeDiagnostics() {
+    StartRuntimeLogCaptureInternal();
+}
+
 void WebAdminServer::Start() {
     std::lock_guard<std::mutex> lock(server_mutex);
     if (server) return;
 
-    StartRuntimeLogCapture();
+    StartRuntimeLogCaptureInternal();
     httpd_config_t config = HTTPD_DEFAULT_CONFIG();
     config.server_port = 80;
     config.max_uri_handlers = 11;
