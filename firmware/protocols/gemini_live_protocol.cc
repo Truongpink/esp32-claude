@@ -3,9 +3,13 @@
 #include "settings.h"
 #include <esp_log.h>
 #include <esp_heap_caps.h>
+#include <esp_attr.h>
+#include <esp_system.h>
+#include <esp_timer.h>
 #include <algorithm>
 #include <cstring>
 #include <cstdio>
+#include <cstdarg>
 #include <mutex>
 #define TAG "GeminiLive"
 namespace {
@@ -19,6 +23,95 @@ std::atomic<bool> g_session_connected{false};
 std::atomic<bool> g_microphone_streaming{false};
 std::mutex g_diagnostics_mutex;
 std::string g_last_error;
+
+constexpr uint32_t kDiagnosticHistoryMagic = 0x47444831;
+constexpr size_t kDiagnosticHistoryCapacity = 24;
+struct DiagnosticHistoryEvent {
+    uint32_t boot;
+    uint32_t uptime_ms;
+    char message[72];
+};
+struct DiagnosticHistoryStore {
+    uint32_t magic;
+    uint32_t boot_count;
+    uint32_t write_index;
+    uint32_t total_events;
+    DiagnosticHistoryEvent events[kDiagnosticHistoryCapacity];
+};
+__NOINIT_ATTR DiagnosticHistoryStore g_diagnostic_history;
+portMUX_TYPE g_diagnostic_history_mux = portMUX_INITIALIZER_UNLOCKED;
+bool g_diagnostic_history_initialized = false;
+
+void EnsureDiagnosticHistory() {
+    portENTER_CRITICAL(&g_diagnostic_history_mux);
+    if (!g_diagnostic_history_initialized) {
+        if (g_diagnostic_history.magic != kDiagnosticHistoryMagic ||
+            g_diagnostic_history.write_index >= kDiagnosticHistoryCapacity) {
+            std::memset(&g_diagnostic_history, 0, sizeof(g_diagnostic_history));
+            g_diagnostic_history.magic = kDiagnosticHistoryMagic;
+        }
+        ++g_diagnostic_history.boot_count;
+        auto& event = g_diagnostic_history.events[g_diagnostic_history.write_index];
+        event.boot = g_diagnostic_history.boot_count;
+        event.uptime_ms = static_cast<uint32_t>(esp_timer_get_time() / 1000);
+        std::snprintf(event.message, sizeof(event.message), "Boot started; reset_reason=%d",
+                      static_cast<int>(esp_reset_reason()));
+        g_diagnostic_history.write_index =
+            (g_diagnostic_history.write_index + 1) % kDiagnosticHistoryCapacity;
+        ++g_diagnostic_history.total_events;
+        g_diagnostic_history_initialized = true;
+    }
+    portEXIT_CRITICAL(&g_diagnostic_history_mux);
+}
+
+void RecordDiagnosticEvent(const char* format, ...) {
+    EnsureDiagnosticHistory();
+    char message[72] = {};
+    va_list args;
+    va_start(args, format);
+    std::vsnprintf(message, sizeof(message), format, args);
+    va_end(args);
+
+    const uint32_t uptime_ms = static_cast<uint32_t>(esp_timer_get_time() / 1000);
+    portENTER_CRITICAL(&g_diagnostic_history_mux);
+    if (g_diagnostic_history.magic == kDiagnosticHistoryMagic) {
+        auto& event = g_diagnostic_history.events[g_diagnostic_history.write_index];
+        event.boot = g_diagnostic_history.boot_count;
+        event.uptime_ms = uptime_ms;
+        std::snprintf(event.message, sizeof(event.message), "%s", message);
+        g_diagnostic_history.write_index =
+            (g_diagnostic_history.write_index + 1) % kDiagnosticHistoryCapacity;
+        ++g_diagnostic_history.total_events;
+    }
+    portEXIT_CRITICAL(&g_diagnostic_history_mux);
+}
+
+std::string GetDiagnosticHistory() {
+    EnsureDiagnosticHistory();
+    DiagnosticHistoryEvent events[kDiagnosticHistoryCapacity] = {};
+    uint32_t write_index = 0;
+    uint32_t total_events = 0;
+    portENTER_CRITICAL(&g_diagnostic_history_mux);
+    write_index = g_diagnostic_history.write_index;
+    total_events = g_diagnostic_history.total_events;
+    std::memcpy(events, g_diagnostic_history.events, sizeof(events));
+    portEXIT_CRITICAL(&g_diagnostic_history_mux);
+
+    const size_t count = std::min(static_cast<size_t>(total_events), kDiagnosticHistoryCapacity);
+    const size_t start = (write_index + kDiagnosticHistoryCapacity - count) %
+                         kDiagnosticHistoryCapacity;
+    std::string history = "Retained event history (latest 24 events; no-init RAM, not power-loss storage):\\n";
+    for (size_t i = 0; i < count; ++i) {
+        const auto& event = events[(start + i) % kDiagnosticHistoryCapacity];
+        char line[112] = {};
+        std::snprintf(line, sizeof(line), "Boot %lu +%lu ms: %s\\n",
+                      static_cast<unsigned long>(event.boot),
+                      static_cast<unsigned long>(event.uptime_ms), event.message);
+        history += line;
+    }
+    return history;
+}
+
 std::string Encode64(const uint8_t* data, size_t size) {
     std::string out;
     out.reserve(4 * ((size + 2) / 3));
@@ -97,7 +190,11 @@ std::string PrintJson(cJSON* root) {
     std::string s(p); cJSON_free(p); return s;
 }
 }
-GeminiLiveProtocol::GeminiLiveProtocol(AudioService& audio) : audio_service_(audio) { event_group_ = xEventGroupCreate(); }
+GeminiLiveProtocol::GeminiLiveProtocol(AudioService& audio) : audio_service_(audio) {
+    EnsureDiagnosticHistory();
+    RecordDiagnosticEvent("Gemini protocol constructed");
+    event_group_ = xEventGroupCreate();
+}
 GeminiLiveProtocol::~GeminiLiveProtocol() { CloseAudioChannel(false); if (event_group_) vEventGroupDelete(event_group_); }
 GeminiLiveProtocol::Diagnostics GeminiLiveProtocol::GetDiagnostics() {
     Diagnostics result;
@@ -107,6 +204,7 @@ GeminiLiveProtocol::Diagnostics GeminiLiveProtocol::GetDiagnostics() {
     result.microphone_streaming = g_microphone_streaming.load();
     std::lock_guard<std::mutex> lock(g_diagnostics_mutex);
     result.last_error = g_last_error;
+    result.event_history = GetDiagnosticHistory();
     return result;
 }
 bool GeminiLiveProtocol::Start() { return true; }
@@ -151,6 +249,7 @@ bool GeminiLiveProtocol::SendSetup() {
     std::string msg = PrintJson(root); cJSON_Delete(root); return !msg.empty() && websocket_->Send(msg);
 }
 bool GeminiLiveProtocol::OpenAudioChannel() {
+    RecordDiagnosticEvent("Gemini connect requested");
     g_microphone_chunks_sent = 0;
     g_response_audio_chunks_received = 0;
     g_session_connected = false;
@@ -229,8 +328,15 @@ bool GeminiLiveProtocol::OpenAudioChannel() {
         cJSON_Delete(root);
         last_incoming_time_ = std::chrono::steady_clock::now();
     });
-    websocket_->OnError([this](const NetworkError&) { if (!closing_) { if (!setup_complete_) xEventGroupSetBits(event_group_, kSetupFailed); Fail("Gemini Live WebSocket transport error"); } });
+    websocket_->OnError([this](const NetworkError&) {
+        if (!closing_) {
+            RecordDiagnosticEvent("WebSocket transport error");
+            if (!setup_complete_) xEventGroupSetBits(event_group_, kSetupFailed);
+            Fail("Gemini Live WebSocket transport error");
+        }
+    });
     websocket_->OnDisconnected([this]() {
+        RecordDiagnosticEvent("WebSocket disconnected");
         if (!setup_complete_) xEventGroupSetBits(event_group_, kSetupFailed);
         setup_complete_ = false; listening_ = false; g_session_connected = false; g_microphone_streaming = false; audio_service_.EnablePcmBridge(false); audio_service_.EnablePcmPlaybackMode(false); audio_service_.ClearPcmPlayback();
         if (!closing_ && channel_open_notified_.exchange(false) && on_audio_channel_closed_) on_audio_channel_closed_();
@@ -239,15 +345,20 @@ bool GeminiLiveProtocol::OpenAudioChannel() {
     // Keep the key out of logs; do not log this URL.
     const std::string url = std::string(kUrl) + "?key=" + api_key_;
     if (auto connected = websocket_->Connect(url.c_str()); !connected) { Fail("Could not connect to Gemini Live"); CloseAudioChannel(false); return false; }
+    RecordDiagnosticEvent("WebSocket connected; setup sent next");
     if (!SendSetup()) { Fail("Could not send Gemini Live setup"); CloseAudioChannel(false); return false; }
     EventBits_t bits = xEventGroupWaitBits(event_group_, kSetupComplete | kSetupFailed, pdTRUE, pdFALSE, pdMS_TO_TICKS(15000));
     if (!(bits & kSetupComplete)) { Fail(last_server_error_.empty() ? "Gemini Live setup timed out" : last_server_error_); CloseAudioChannel(false); return false; }
-    setup_complete_ = true; g_session_connected = true; audio_service_.EnablePcmPlaybackMode(true); last_incoming_time_ = std::chrono::steady_clock::now();
+    setup_complete_ = true; g_session_connected = true;
+    RecordDiagnosticEvent("Gemini session connected");
+    audio_service_.EnablePcmPlaybackMode(true); last_incoming_time_ = std::chrono::steady_clock::now();
     channel_open_notified_ = true; if (on_connected_) on_connected_(); if (on_audio_channel_opened_) on_audio_channel_opened_();
     ESP_LOGI(TAG, "Gemini Live session ready; model=%s", model_.c_str()); return true;
 }
 void GeminiLiveProtocol::CloseAudioChannel(bool send_goodbye) {
-    (void)send_goodbye; closing_ = true; listening_ = false; setup_complete_ = false; turn_complete_pending_ = false; resume_listening_after_playback_ = false; g_session_connected = false; g_microphone_streaming = false;
+    (void)send_goodbye;
+    if (g_session_connected.load() || websocket_) RecordDiagnosticEvent("Gemini channel closing");
+    closing_ = true; listening_ = false; setup_complete_ = false; turn_complete_pending_ = false; resume_listening_after_playback_ = false; g_session_connected = false; g_microphone_streaming = false;
     audio_service_.EnablePcmBridge(false); audio_service_.EnablePcmPlaybackMode(false); audio_service_.ClearPcmPlayback();
     if (channel_open_notified_.exchange(false) && on_audio_channel_closed_) on_audio_channel_closed_();
     if (websocket_) { websocket_->Close(); websocket_.reset(); } api_key_.clear();
@@ -258,11 +369,14 @@ void GeminiLiveProtocol::SendStartListening(ListeningMode mode) {
         audio_service_.EnablePcmBridge(true);
         listening_ = true;
         g_microphone_streaming = true;
+        RecordDiagnosticEvent("Microphone streaming started");
     }
 }
 void GeminiLiveProtocol::SendStopListening() {
     if (!IsAudioChannelOpened()) { listening_ = false; return; }
-    ProcessPending(); listening_ = false; resume_listening_after_playback_ = false; g_microphone_streaming = false; audio_service_.EnablePcmBridge(false); SendAudioStreamEnd();
+    ProcessPending(); listening_ = false; resume_listening_after_playback_ = false; g_microphone_streaming = false;
+    RecordDiagnosticEvent("Microphone streaming stopped; sent=%lu", static_cast<unsigned long>(g_microphone_chunks_sent.load()));
+    audio_service_.EnablePcmBridge(false); SendAudioStreamEnd();
 }
 void GeminiLiveProtocol::SendAbortSpeaking(AbortReason reason) {
     (void)reason;
@@ -278,7 +392,10 @@ bool GeminiLiveProtocol::SendAudioChunk(const int16_t* samples, size_t count) {
     cJSON* audio = cJSON_AddObjectToObject(realtime, "audio"); cJSON_AddStringToObject(audio, "mimeType", "audio/pcm;rate=16000");
     cJSON_AddStringToObject(audio, "data", b64.c_str()); std::string msg = PrintJson(root); cJSON_Delete(root);
     if (msg.empty() || !websocket_->Send(msg)) return false;
-    ++g_microphone_chunks_sent;
+    const uint32_t sent = ++g_microphone_chunks_sent;
+    if (sent == 1 || sent % 50 == 0) {
+        RecordDiagnosticEvent("Microphone audio chunks sent=%lu", static_cast<unsigned long>(sent));
+    }
     return true;
 }
 bool GeminiLiveProtocol::SendAudioStreamEnd() {
@@ -303,10 +420,15 @@ void GeminiLiveProtocol::ProcessPending() {
     }
 }
 void GeminiLiveProtocol::HandleServerMessage(const cJSON* root) {
-    if (cJSON_IsObject(cJSON_GetObjectItem(root, "setupComplete"))) { xEventGroupSetBits(event_group_, kSetupComplete); return; }
+    if (cJSON_IsObject(cJSON_GetObjectItem(root, "setupComplete"))) {
+        RecordDiagnosticEvent("Gemini setupComplete received");
+        xEventGroupSetBits(event_group_, kSetupComplete);
+        return;
+    }
     const cJSON* error = cJSON_GetObjectItem(root, "error");
     if (cJSON_IsObject(error)) {
         const cJSON* m = cJSON_GetObjectItem(error, "message"); last_server_error_ = cJSON_IsString(m) ? m->valuestring : "Gemini Live server error";
+        RecordDiagnosticEvent("Gemini server error: %.48s", last_server_error_.c_str());
         xEventGroupSetBits(event_group_, kSetupFailed); Fail(last_server_error_); return;
     }
     const cJSON* content = cJSON_GetObjectItem(root, "serverContent");
@@ -355,7 +477,11 @@ void GeminiLiveProtocol::HandleAudioPart(const cJSON* part) {
     }
 
     PauseMicrophoneForResponse();
-    if (!output_turn_started_) { output_turn_started_ = true; EmitTranscript("tts", "start", ""); }
+    if (!output_turn_started_) {
+        output_turn_started_ = true;
+        RecordDiagnosticEvent("Gemini audio playback turn started");
+        EmitTranscript("tts", "start", "");
+    }
     const bool queued = Decode64InChunks(data->valuestring, encoded_size,
         [this](std::vector<int16_t>&& samples) {
             return audio_service_.PushPcmPlayback(std::move(samples));
@@ -365,7 +491,10 @@ void GeminiLiveProtocol::HandleAudioPart(const cJSON* part) {
         Fail("Gemini Live PCM decode or playback failed");
         return;
     }
-    ++g_response_audio_chunks_received;
+    const uint32_t received = ++g_response_audio_chunks_received;
+    if (received == 1 || received % 10 == 0) {
+        RecordDiagnosticEvent("Gemini response audio chunks=%lu", static_cast<unsigned long>(received));
+    }
 }
 void GeminiLiveProtocol::EmitTranscript(const char* type, const char* state, const char* text) {
     if (!on_incoming_json_) {
@@ -425,6 +554,7 @@ void GeminiLiveProtocol::Fail(const std::string& message) {
     }
     if (safe_message.size() > 120) safe_message.resize(120);
     { std::lock_guard<std::mutex> lock(g_diagnostics_mutex); g_last_error = safe_message; }
+    RecordDiagnosticEvent("Gemini failure: %.56s", safe_message.c_str());
     audio_service_.EnablePcmBridge(false);
     audio_service_.EnablePcmPlaybackMode(false);
     audio_service_.ClearPcmPlayback();
