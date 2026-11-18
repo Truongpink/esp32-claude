@@ -451,6 +451,51 @@ def patch_live_reference_aec() -> None:
 
 patch_live_reference_aec()
 
+# A speaker I2S error must not abort the whole ESP32 from the audio task.
+# Report the driver error and drop the affected frame; the next frame can retry.
+def patch_nonfatal_speaker_i2s_errors() -> None:
+    source = UPSTREAM / "main" / "audio" / "codecs" / "no_audio_codec.cc"
+    replace_once(
+        source,
+        "    size_t bytes_written;\n"
+        "    ESP_ERROR_CHECK(i2s_channel_write(tx_handle_, buffer.data(), samples * sizeof(int32_t), &bytes_written, portMAX_DELAY));\n"
+        "    return bytes_written / sizeof(int32_t);",
+        "    size_t bytes_written = 0;\n"
+        "    const esp_err_t write_result = i2s_channel_write(\n"
+        "        tx_handle_, buffer.data(), samples * sizeof(int32_t), &bytes_written, portMAX_DELAY);\n"
+        "    if (write_result != ESP_OK) {\n"
+        "        ESP_LOGE(TAG, \"I2S speaker write failed (%d); dropping PCM frame\",\n"
+        "                 static_cast<int>(write_result));\n"
+        "        return 0;\n"
+        "    }\n"
+        "    if (bytes_written != static_cast<size_t>(samples) * sizeof(int32_t)) {\n"
+        "        ESP_LOGW(TAG, \"I2S speaker wrote a partial PCM frame: %u/%u bytes\",\n"
+        "                 static_cast<unsigned>(bytes_written),\n"
+        "                 static_cast<unsigned>(samples * sizeof(int32_t)));\n"
+        "    }\n"
+        "    return bytes_written / sizeof(int32_t);",
+    )
+    replace_once(
+        source,
+        "    if (enable) {\n"
+        "        ESP_ERROR_CHECK(i2s_channel_enable(tx_handle_));\n"
+        "    } else {\n"
+        "        ESP_ERROR_CHECK(i2s_channel_disable(tx_handle_));\n"
+        "    }\n"
+        "    AudioCodec::EnableOutput(enable);",
+        "    const esp_err_t err = enable ? i2s_channel_enable(tx_handle_)\n"
+        "                                 : i2s_channel_disable(tx_handle_);\n"
+        "    if (err != ESP_OK) {\n"
+        "        ESP_LOGE(TAG, \"I2S speaker %s failed (%d)\",\n"
+        "                 enable ? \"enable\" : \"disable\", static_cast<int>(err));\n"
+        "        return;\n"
+        "    }\n"
+        "    AudioCodec::EnableOutput(enable);",
+    )
+
+
+patch_nonfatal_speaker_i2s_errors()
+
 # Add configurable MultiNet wake phrase and microphone gain support.
 from patch_voice_features import apply as apply_voice_features
 apply_voice_features(ROOT, UPSTREAM)
