@@ -15,6 +15,7 @@ The Web Admin supports:
 - View whether an API Key is configured (the key value is never returned).
 - Save or replace a Gemini API Key.
 - Delete the saved Gemini API Key.
+- Upload one application-only `.bin` file to the inactive OTA slot, validate it, select it for the next boot, and restart.
 
 The key is stored in NVS namespace `chatai_ai`, key `gemini_key`. The browser input is cleared after saving or deleting. A blank key is not returned as a substitute for the saved value.
 
