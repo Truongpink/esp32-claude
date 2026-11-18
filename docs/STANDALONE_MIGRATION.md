@@ -38,6 +38,9 @@
 - Web Admin is plain local HTTP and NVS encryption is not configured. This is
   acceptable only for a trusted local network in the current personal-device
   design; do not expose the management page to the public Internet.
+  Origin/CSRF checks are cross-site request protections, not user authentication.
+  Any client that can reach the device on the local network can manage the key; an
+  administrator login is not included in this first implementation slice.
 
 ## Migration sequence
 
