@@ -184,8 +184,8 @@ def apply(root: Path, upstream: Path) -> None:
         "}\n",
     )
 
-    # Gemini Live is a continuous, VAD-driven session. Keep the microphone
-    # processing path active while the assistant is speaking so barge-in works.
+    # Use the existing half-duplex state machine: stop AFE while the assistant
+    # speaks, then restart listening after playback drains.
     application_cc = upstream / "main/application.cc"
     replace_once(
         application_cc,
@@ -193,6 +193,6 @@ def apply(root: Path, upstream: Path) -> None:
         "    return aec_mode_ == kAecOff ? kListeningModeAutoStop : kListeningModeRealtime;\n"
         "}\n",
         "ListeningMode Application::GetDefaultListeningMode() const {\n"
-        "    return kListeningModeRealtime;\n"
+        "    return kListeningModeAutoStop;\n"
         "}\n",
     )
