@@ -38,6 +38,8 @@ httpd_handle_t server = nullptr;
 std::mutex server_mutex;
 std::mutex ota_mutex;
 
+const char* ResetReasonLabel(esp_reset_reason_t reason);
+
 constexpr uint32_t kRuntimeLogMagic = 0x434C4F47;
 constexpr size_t kRuntimeLogCapacity = 4096;
 struct RuntimeLogStore {
