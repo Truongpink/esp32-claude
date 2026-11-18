@@ -28,6 +28,16 @@
 - No XiaoZhi source, headers, components, or cloud services are linked by the
   standalone project.
 - Existing firmware, scripts, OTA flow, and manual-only workflow are unchanged.
+- A ChatAI-owned Web Admin now shares the native HTTP server with Wi-Fi provisioning.
+  The server remains active after station connection; `/admin` provides local
+  Gemini API Key save/replace/delete controls.
+- Gemini API Key is stored in NVS namespace `chatai_ai`, key `gemini_key`.
+  The status API returns only a configured boolean; the key is never returned to
+  the browser or logged. Mutating routes check the request Origin and a per-boot
+  CSRF token.
+- Web Admin is plain local HTTP and NVS encryption is not configured. This is
+  acceptable only for a trusted local network in the current personal-device
+  design; do not expose the management page to the public Internet.
 
 ## Migration sequence
 
@@ -44,8 +54,9 @@
 4. **Gemini Live ownership:** move the existing wire-protocol behavior into a
    standalone client that does not inherit XiaoZhi `Protocol` or use
    `AudioService` / `Board` singletons.
-5. **Web Admin and OTA:** port the existing controls and safe inactive-slot OTA
-   behavior to the standalone services.
+5. **Web Admin and OTA — first slice added:** Gemini API Key save/replace/delete is
+   implemented in the standalone Web Admin and NVS. Remaining device controls and
+   safe inactive-slot OTA are still pending.
 6. **Integration and removal:** verify all functions on hardware, then remove the
    XiaoZhi download/patch build path and unused dependencies.
 
