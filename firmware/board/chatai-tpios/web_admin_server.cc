@@ -328,17 +328,58 @@ bool IsSameOrigin(httpd_req_t* req) {
 }
 
 esp_err_t RuntimeLogHandler(httpd_req_t* req) {
-    auto* snapshot = static_cast<char*>(std::malloc(kRuntimeLogCapacity + 1));
-    if (snapshot == nullptr) {
-        SendError(req, "503 Service Unavailable", "Not enough memory to read runtime log");
+    auto* runtime_log = static_cast<char*>(std::malloc(kRuntimeLogCapacity + 1));
+    if (runtime_log == nullptr) {
+        SendError(req, "503 Service Unavailable", "Not enough memory to read diagnostics");
         return ESP_OK;
     }
-    const size_t length = CopyRuntimeLogSnapshot(snapshot, kRuntimeLogCapacity + 1);
+    const size_t runtime_length = CopyRuntimeLogSnapshot(runtime_log, kRuntimeLogCapacity + 1);
+    const auto* app = esp_app_get_description();
+    const auto* running = esp_ota_get_running_partition();
+    const auto diagnostics = GeminiLiveProtocol::GetDiagnostics();
+    char header[512] = {};
+    std::snprintf(header, sizeof(header),
+        "ChatAI TPIOS - COMBINED DIAGNOSTICS\\n"
+        "Firmware: %s\\n"
+        "Running partition: %s\\n"
+        "Reset reason: %s\\n"
+        "PANIC detected: %s\\n\\n"
+        "GEMINI LIVE STATUS\\n"
+        "Session connected: %s\\n"
+        "Microphone streaming: %s\\n"
+        "Microphone chunks sent: %lu\\n"
+        "Response audio chunks: %lu\\n"
+        "Last Gemini error: %s\\n\\n",
+        app ? app->version : "unknown",
+        running ? running->label : "unknown",
+        ResetReasonLabel(esp_reset_reason()),
+        esp_reset_reason() == ESP_RST_PANIC ? "YES" : "NO",
+        diagnostics.session_connected ? "YES" : "NO",
+        diagnostics.microphone_streaming ? "YES" : "NO",
+        static_cast<unsigned long>(diagnostics.microphone_chunks_sent),
+        static_cast<unsigned long>(diagnostics.response_audio_chunks_received),
+        diagnostics.last_error.empty() ? "None" : diagnostics.last_error.c_str());
+
     httpd_resp_set_type(req, "text/plain; charset=utf-8");
     httpd_resp_set_hdr(req, "Cache-Control", "no-store");
-    httpd_resp_set_hdr(req, "Content-Disposition", "attachment; filename=chatai-runtime-log.txt");
-    const esp_err_t result = httpd_resp_send(req, snapshot, length);
-    std::free(snapshot);
+    httpd_resp_set_hdr(req, "Content-Disposition", "attachment; filename=chatai-diagnostics.txt");
+    esp_err_t result = httpd_resp_sendstr_chunk(req, header);
+    if (result == ESP_OK) result = httpd_resp_sendstr_chunk(req, "PREVIOUS GEMINI SESSION\\n");
+    if (result == ESP_OK) result = httpd_resp_sendstr_chunk(req,
+        diagnostics.previous_session_summary.empty()
+            ? "No previous Gemini session snapshot.\\n"
+            : diagnostics.previous_session_summary.c_str());
+    if (result == ESP_OK) result = httpd_resp_sendstr_chunk(req, "\\nGEMINI EVENT HISTORY\\n");
+    if (result == ESP_OK) result = httpd_resp_sendstr_chunk(req,
+        diagnostics.event_history.empty()
+            ? "No retained Gemini events.\\n"
+            : diagnostics.event_history.c_str());
+    if (result == ESP_OK) result = httpd_resp_sendstr_chunk(req, "\\nSYSTEM RUNTIME LOG (latest 4 KB)\\n");
+    if (result == ESP_OK && runtime_length > 0) {
+        result = httpd_resp_send_chunk(req, runtime_log, runtime_length);
+    }
+    if (result == ESP_OK) result = httpd_resp_send_chunk(req, nullptr, 0);
+    std::free(runtime_log);
     return result;
 }
 
