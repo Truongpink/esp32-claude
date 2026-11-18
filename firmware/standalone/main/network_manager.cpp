@@ -1,6 +1,7 @@
 #include "network_manager.h"
 
 #include <atomic>
+#include <cstdio>
 #include <cstring>
 #include <lwip/ip4_addr.h>
 
