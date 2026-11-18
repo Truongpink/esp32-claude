@@ -3,7 +3,7 @@
 ## Target
 
 - Board family: ESP32-S3 voice-chat board, reported as XH-S3E-AI V1.0.
-- Memory variant reported by the product description: N16R8 (16 MB flash / 8 MB PSRAM). Confirm the actual module marking and flash configuration on the physical board before relying on these values.
+- Memory variant: N16R8 (16 MB flash / 8 MB PSRAM), confirmed by the user.
 - Display: SSD1306, 128×64, I²C address 0x3C.
 
 ## Current firmware pin configuration
