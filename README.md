@@ -22,7 +22,7 @@ The only supported repository build is the manual Standalone workflow:
 
 The artifact contains exactly one file: `ChatAI_TPIOS.bin`. GitHub Actions packages downloadable artifacts as ZIP files automatically, so the downloaded container is a ZIP, but it contains no bootloader, partition table, or other files.
 
-The BIN is the application image only. A first-time USB installation still requires a compatible bootloader and partition table; those files are intentionally not included in this application-only artifact.
+The BIN is the application image only. It is intended for OTA through the device's local Web Admin. The standalone firmware now targets the existing 16 MB dual-slot layout used by the earlier OTA firmware; the installed bootloader and partition table are retained during application-only OTA.
 
 ## Local build
 
