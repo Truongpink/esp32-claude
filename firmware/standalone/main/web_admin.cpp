@@ -114,6 +114,11 @@ function zipCrc32(bytes) {
 
 async function readFirmwareBuild(blob) {
   const bytes = new Uint8Array(await blob.arrayBuffer());
+  if (bytes.length < 64 || bytes[0] !== 0xE9 ||
+      bytes[32] !== 0x32 || bytes[33] !== 0x54 ||
+      bytes[34] !== 0xCD || bytes[35] !== 0xAB) {
+    throw new Error("File không có cấu trúc ESP-IDF application hợp lệ.");
+  }
   const marker = new TextEncoder().encode("CHATAI_BUILD_NUMBER=");
   for (let i = 0; i <= bytes.length - marker.length; i++) {
     let match = true;
@@ -123,7 +128,7 @@ async function readFirmwareBuild(blob) {
     if (!match) continue;
     let end = i + marker.length;
     while (end < bytes.length && bytes[end] >= 48 && bytes[end] <= 57) end++;
-    if (end === i + marker.length) break;
+    if (end === i + marker.length) continue;
     const value = Number(new TextDecoder().decode(bytes.slice(i + marker.length, end)));
     if (Number.isSafeInteger(value) && value >= 0) return value;
   }
@@ -345,6 +350,7 @@ updateFirmwareButton.addEventListener("click", async () => {
     otaProgress.style.width = "100%";
     otaResult.textContent = data.message || "ESP32 đã chấp nhận firmware.";
     await waitForRunningBuild(targetBuild);
+    updateFirmwareButton.disabled = false;
   } catch (error) {
     otaResult.textContent = error.message;
     updateFirmwareButton.disabled = false;
