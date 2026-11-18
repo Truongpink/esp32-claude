@@ -75,7 +75,7 @@ The patch is applied to the pinned upstream source at build preparation time by 
 
 ## Application event-loop integration findings
 
-The existing `Application` main loop still drains Opus packets on `MAIN_EVENT_SEND_AUDIO`. The patcher also maps raw-PCM-ready notifications to `MAIN_EVENT_PROTOCOL_PENDING`; the main loop invokes `GeminiLiveProtocol::ProcessPending()` there. The receive callback parses bounded JSON/audio payloads and queues PCM with `PushPcmPlayback()`; speaker output remains in `AudioOutputTask`.
+The existing `Application` main loop still drains Opus packets on `MAIN_EVENT_SEND_AUDIO`. The patcher also maps raw-PCM-ready and incoming-WebSocket-frame notifications to `MAIN_EVENT_PROTOCOL_PENDING`; the main loop invokes `GeminiLiveProtocol::ProcessPending()` there. The WebSocket callback only copies bounded frames into the fixed receive ring and signals the event loop. JSON parsing, Base64 decoding and PCM queueing occur later in `ProcessPending()`; speaker output remains in `AudioOutputTask`.
 
 **Turn-by-turn source trace (pinned upstream plus the ChatAI patcher):**
 
