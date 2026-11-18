@@ -6,6 +6,7 @@
 
 #include "network_manager.h"
 #include "display_manager.h"
+#include "audio_manager.h"
 
 namespace {
 constexpr char kTag[] = "ChatAI";
@@ -45,6 +46,12 @@ bool InitializePlatform() {
                  esp_err_to_name(display_result));
     }
 
+    const esp_err_t audio_result = chatai::audio::Initialize();
+    if (audio_result != ESP_OK) {
+        ESP_LOGW(kTag, "Standalone I2S audio unavailable: %s",
+                 esp_err_to_name(audio_result));
+    }
+
     return true;
 }
 }  // namespace
@@ -57,6 +64,6 @@ extern "C" void app_main(void) {
         return;
     }
 
-    ESP_LOGI(kTag, "ESP-IDF platform, native Wi-Fi and ChatAI OLED are initialized");
+    ESP_LOGI(kTag, "ESP-IDF platform, native Wi-Fi, OLED and I2S audio are initialized");
     ESP_LOGI(kTag, "Standalone mode: no XiaoZhi application or cloud components");
 }
