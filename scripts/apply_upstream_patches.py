@@ -451,9 +451,9 @@ def patch_live_reference_aec() -> None:
 
 patch_live_reference_aec()
 
-# A speaker I2S error must not abort the whole ESP32 from the audio task.
-# Report the driver error and drop the affected frame; the next frame can retry.
-def patch_nonfatal_speaker_i2s_errors() -> None:
+# Runtime I2S errors must be logged instead of aborting the whole ESP32.
+# Failed transitions are left unchanged so the codec state does not lie.
+def patch_nonfatal_i2s_runtime_errors() -> None:
     source = UPSTREAM / "main" / "audio" / "codecs" / "no_audio_codec.cc"
     replace_once(
         source,
@@ -532,7 +532,7 @@ def patch_nonfatal_speaker_i2s_errors() -> None:
     )
 
 
-patch_nonfatal_speaker_i2s_errors()
+patch_nonfatal_i2s_runtime_errors()
 
 # Add configurable MultiNet wake phrase and microphone gain support.
 from patch_voice_features import apply as apply_voice_features
