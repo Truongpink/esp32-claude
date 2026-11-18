@@ -6,6 +6,7 @@
 #include <freertos/FreeRTOS.h>
 #include <freertos/event_groups.h>
 #include <atomic>
+#include <array>
 #include <memory>
 #include <cstdint>
 #include <string>
@@ -38,9 +39,22 @@ public:
 private:
     static constexpr EventBits_t kSetupComplete = BIT0;
     static constexpr EventBits_t kSetupFailed = BIT1;
+    static constexpr EventBits_t kReceiveFrameAvailable = BIT2;
+    static constexpr size_t kReceiveFrameCapacity = 8192;
+    static constexpr size_t kReceiveQueueDepth = 3;
     static constexpr size_t kInputChunkSamples = 320;
-    static constexpr size_t kOutputChunkSamples = 1440;
+    struct ReceiveFrameSlot {
+        std::array<char, kReceiveFrameCapacity> data{};
+        size_t size = 0;
+        bool binary = false;
+        uint8_t state = 0; // 0=free, 1=reserved/processing, 2=ready
+    };
     AudioService& audio_service_;
+    std::array<ReceiveFrameSlot, kReceiveQueueDepth> receive_frames_{};
+    size_t receive_write_index_ = 0;
+    size_t receive_read_index_ = 0;
+    portMUX_TYPE receive_mux_ = portMUX_INITIALIZER_UNLOCKED;
+    std::atomic<uint32_t> receive_frames_dropped_{0};
     std::shared_ptr<WebSocket> websocket_;
     EventGroupHandle_t event_group_ = nullptr;
     std::atomic<bool> setup_complete_{false}, listening_{false}, closing_{false};
@@ -53,6 +67,9 @@ private:
     bool SendSetup();
     bool SendAudioChunk(const int16_t* samples, size_t count);
     bool SendAudioStreamEnd();
+    void QueueIncomingFrame(const char* data, size_t size, bool binary);
+    void ProcessIncomingFrames();
+    void ProcessIncomingFrame(const char* data, size_t size, bool binary);
     void HandleServerMessage(const cJSON* root);
     void HandleServerContent(const cJSON* content);
     void HandleAudioPart(const cJSON* part);
