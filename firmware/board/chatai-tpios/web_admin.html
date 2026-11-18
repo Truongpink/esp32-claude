@@ -173,6 +173,7 @@
     <section class="section hidden" id="diagnosticsSection">
       <div class="section-title">🧾 Chẩn đoán Gemini Live</div>
       <div class="info" id="diagnosticsText">Đang tải dữ liệu chẩn đoán...</div>
+      <div class="info" id="diagnosticsHistoryText">Đang tải lịch sử sự kiện...</div>
       <div class="field">
         <button class="secondary-btn" id="refreshDiagnostics" type="button">↻ Cập nhật chẩn đoán</button>
       </div>
@@ -184,7 +185,7 @@
 
     <section class="section hidden" id="runtimeLogSection">
       <div class="section-title">📜 Nhật ký hệ thống gần nhất</div>
-      <div class="info">Bắt đầu ghi sau khi Wi-Fi kết nối và Web Admin khởi động. Lưu vòng tối đa 4 KB log gần nhất, giữ lại qua lần khởi động lại bằng phần nhớ no-init; có thể mất khi mất nguồn hoàn toàn. Nhật ký không thay thế Core Dump/backtrace.</div>
+      <div class="info">Bắt đầu ghi từ giai đoạn khởi tạo board, lưu vòng tối đa 4 KB log gần nhất trong vùng no-init RAM. Có thể mất khi mất nguồn hoàn toàn; không thay thế Core Dump/backtrace.</div>
       <div class="field">
         <textarea id="runtimeLogText" rows="12" readonly spellcheck="false" placeholder="Đang tải nhật ký..."></textarea>
       </div>
@@ -489,6 +490,8 @@ function renderDiagnostics(status) {
     '\nMicrophone chunks sent: ' + Number(status.mic_chunks_sent || 0) +
     '\nResponse audio chunks: ' + Number(status.response_audio_chunks || 0) +
     '\nLast Gemini error: ' + (status.live_last_error || 'None');
+  $('diagnosticsHistoryText').textContent =
+    status.live_event_history || 'Chưa có lịch sử sự kiện được lưu.';
 }
 async function refreshDiagnostics() {
   const response = await fetch('/api/status', {cache:'no-store'});
