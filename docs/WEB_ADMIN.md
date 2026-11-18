@@ -27,6 +27,7 @@ The key is stored in NVS namespace `chatai_ai`, key `gemini_key`. The browser in
 | GET | `/api/gemini/status` | Returns only whether a key is configured |
 | POST | `/api/gemini/key` | Validate and save a key |
 | DELETE | `/api/gemini/key` | Delete the saved key |
+| POST | `/api/ota` | Stream and validate an application BIN into the inactive OTA slot |
 
 Mutating requests require same-origin validation and the per-boot CSRF token.
 
