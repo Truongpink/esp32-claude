@@ -28,7 +28,7 @@ For each received JSON server message:
 3. For every `inlineData` audio part, require PCM at 24 kHz.
 4. Base64-decode signed PCM16 little-endian into 60 ms chunks: `24,000 * 60 / 1,000 = 1,440` samples (2,880 PCM bytes).
 5. Push bounded chunks to `AudioService::PushPcmPlayback()`; the existing audio output task writes them to the 24 kHz board codec.
-6. The XH-S3E board output is already configured for 24 kHz. Do not resample Gemini PCM to 16 kHz. The log `Resampling audio from 16000 to 24000` is emitted by the separate legacy Opus decoder path, which Gemini raw PCM bypasses.
+6. The XH-S3E board output is already configured for 24 kHz. Do not resample Gemini PCM to 16 kHz. The log `Resampling audio from 16000 to 24000` is emitted by the separate legacy Opus decoder path, which Gemini raw PCM bypasses. The current 60 ms PCM chunk is 2,880 bytes; `NoAudioCodec::Write()` sizes its 32-bit I2S staging vector from the actual sample count (5,760 bytes for 1,440 samples), and the patched `audio_output` task stack is 16 KiB.
 
 ## Control events
 
