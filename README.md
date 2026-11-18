@@ -1,72 +1,57 @@
 # ChatAI TPIOS — ESP32-S3
 
-Firmware project based on the upstream XiaoZhi ESP32 codebase, pinned to **v2.6.0** for reproducible integration.
+Independent ChatAI TPIOS firmware built directly with ESP-IDF 6.1. The firmware owns Wi-Fi, audio I/O, OLED, local Web Admin, NVS settings, and the direct Gemini Live connection.
 
-## Current repository state
+## Architecture
 
-This repository contains the ChatAI TPIOS hardware-board overlay, Gemini Live protocol, PCM bridge integration, local Web Admin, and an idempotent source patcher. The pinned upstream firmware is fetched at preparation time; it is not copied wholesale into this repository. OTA is deferred and is not part of the current basic firmware release.
+- Target: ESP32-S3.
+- Firmware project: `firmware/standalone`.
+- AI service: Gemini Live over WSS/TLS; no Xiaozhi source, server, proxy, or token broker.
+- Gemini API Key: entered in the device's local Web Admin and stored in NVS. The saved key is never returned by the status endpoint or intentionally written to logs.
+- Audio: mono PCM16 microphone input at 16 kHz and speaker output at 24 kHz.
+- Web Admin: local device interface for saving, replacing, and deleting the Gemini API Key.
+- Display: SSD1306 128×64, I²C address 0x3C.
 
-- Target: ESP32-S3
-- Board profile: ChatAI TPIOS (separate board identity; does not overwrite the upstream Bread Compact profile)
-- Display profile: SSD1306, 128×64, I²C address 0x3C
-- Audio: speaker I²S pins 15/16/7 and amplifier enable GPIO17 are source-reported; microphone GPIOs remain unverified
-- Upstream source: https://github.com/78/xiaozhi-esp32
-- Pinned upstream tag: `v2.6.0`
-- Pinned upstream commit: `4de00aed740595a8713b01f8332b9b2cf30685bc`
+## Build
 
-## Last successful build
+The only supported repository build is the manual Standalone workflow:
 
-The manual GitHub Actions workflow completed successfully on 2026-11-17:
+1. Open **GitHub → Actions → Build ChatAI TPIOS standalone firmware**.
+2. Select **Run workflow** on `main`.
+3. Download the `ChatAI_TPIOS` artifact.
 
-- Run: [Build ChatAI TPIOS firmware #3](https://github.com/Truongpink/esp32-claude/actions/runs/44046363363)
-- Branch / commit: `main` / `39d50a15c64447eb33ba0733af0ee5b57ab512de`
-- Toolchain: ESP-IDF v6.1, target `esp32s3`
-- All workflow steps passed, including upstream preparation, compilation and artifact upload.
-- The current workflow has since been changed to produce `ChatAI-TPIOS-v0.1.1-USB-FLASH` from the ESP-IDF merged USB image; that newer workflow configuration has not yet been run.
+The artifact contains exactly one file: `ChatAI_TPIOS.bin`. GitHub Actions packages downloadable artifacts as ZIP files automatically, so the downloaded container is a ZIP, but it contains no bootloader, partition table, or other files.
 
-This is a successful CI compile, not yet a physical-board validation. The image has not been confirmed flashed or tested on the user's device.
+The BIN is the application image only. A first-time USB installation still requires a compatible bootloader and partition table; those files are intentionally not included in this application-only artifact.
 
-## Implemented source features
+## Local build
 
-- Separate ChatAI TPIOS ESP32-S3 board overlay and OLED SSD1306 128×64 configuration.
-- Reproducible fetch of the pinned XiaoZhi source and idempotent overlay patching.
-- Initial Gemini Live WebSocket protocol and PCM bridge (16 kHz mono PCM16 input, 24 kHz mono PCM16 output), with transcription, turn-complete and interruption handling.
-- Gemini Live is selected directly as the device protocol; the current firmware does not fall back to the XiaoZhi cloud protocol.
-- Local Web Admin for status and Gemini settings, without PIN/login as requested.
-- OTA upload and update flow are deferred; the current Web Admin exposes device status and Gemini configuration only.
-- Manual-only GitHub Actions build workflow; no push/PR build triggers.
+With ESP-IDF 6.1 installed:
 
-## Next phase: physical bring-up
-
-1. Run the current manual workflow, download `ChatAI-TPIOS-v0.1.1-USB-FLASH`, and flash `ChatAI-TPIOS-v0.1.1-USB-FLASH.bin` over USB. The earlier successful run's `xiaozhi.bin` was app-only, not the complete USB image.
-2. Verify boot, OLED, Wi-Fi and local Web Admin on the actual board.
-3. Verify microphone wiring/pins; GPIO 4/5/6 remains provisional due conflicting upstream reports.
-4. Test speaker output at 24 kHz, microphone capture, two-way Gemini Live voice, buttons and volume.
-5. Test OTA only after confirming the installed partition table and first known-good boot.
-6. Then improve reconnect/session resumption and production credential provisioning.
-
-The exact hardware revision and microphone mapping are not yet confirmed. The local Web Admin uses plain HTTP on a trusted LAN and the current direct API-key/NVS path is bring-up scope, not production-grade security. Do not expose port 80 to the public Internet.
-
-## Prepare and build locally
-
-Install ESP-IDF **6.0.1 or newer** and its ESP32-S3 toolchain first. From the repository root run:
-
-```bash
-python3 scripts/prepare_upstream.py
-cd xiaozhi-src
-idf.py set-target esp32s3
-idf.py build
+```sh
+idf.py -C firmware/standalone set-target esp32s3
+idf.py -C firmware/standalone reconfigure
+idf.py -C firmware/standalone build
 ```
 
-The preparation script fetches the pinned upstream commit, verifies the exact revision, and applies the board/protocol overlay. It refuses to replace a non-Git directory or silently switch an existing checkout to another commit. It does not flash hardware or start any GitHub Actions workflow.
+The application image is generated at:
 
-## Documentation
+`firmware/standalone/build/ChatAI_TPIOS.bin`
 
-- [Project checkpoint](docs/CHECKPOINT.md)
-- [Gemini Live audio integration design](docs/GEMINI_AUDIO_DESIGN.md)
+## Current limitations
+
+- The current partition configuration is a single-app layout; OTA is not implemented in this Standalone firmware.
+- Physical board pin mappings, microphone capture, speaker playback, and a complete Gemini Live conversation still require validation on the actual device.
+- The local Web Admin uses HTTP and the Gemini API Key is stored in NVS without NVS encryption. Use only on a trusted local network; do not expose the admin page to the Internet.
+- Do not assume flash size or hardware pin mappings beyond the configuration documented in `docs/HARDWARE.md`.
+
+## Project documentation
+
+- [Current project checkpoint](docs/CHECKPOINT.md)
+- [Standalone architecture and migration status](docs/STANDALONE_MIGRATION.md)
 - [Gemini Live wire protocol](docs/GEMINI_LIVE_WIRE_PROTOCOL.md)
-- [Hardware evidence and unresolved pins](docs/HARDWARE.md)
+- [Gemini authentication and key handling](docs/GEMINI_AUTH_DESIGN.md)
+- [Hardware profile and unverified pins](docs/HARDWARE.md)
 - [Local Web Admin](docs/WEB_ADMIN.md)
-- [OTA upload design (deferred; not included in the current firmware)](docs/OTA_WEB_UPLOAD.md)
 
-The workflow is manual-only: Actions → Build ChatAI TPIOS firmware → Run workflow. Do not add automatic push/PR triggers.
+GitHub Actions remains manual-only. Never add automatic push/PR triggers, and do not run builds or flash hardware without explicit authorization.

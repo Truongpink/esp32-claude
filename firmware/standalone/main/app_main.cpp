@@ -61,7 +61,7 @@ extern "C" void app_main(void) {
     ESP_LOGI(kTag, "ChatAI TPIOS standalone firmware starting");
 
     if (!InitializePlatform()) {
-        ESP_LOGE(kTag, "Platform initialization stopped; no legacy fallback is loaded");
+        ESP_LOGE(kTag, "Platform initialization failed");
         return;
     }
 
@@ -72,5 +72,5 @@ extern "C" void app_main(void) {
     }
 
     ESP_LOGI(kTag, "ESP-IDF platform, native Wi-Fi and OLED startup completed");
-    ESP_LOGI(kTag, "Standalone mode: no XiaoZhi application or cloud components");
+    ESP_LOGI(kTag, "Gemini Live standalone mode initialized");
 }

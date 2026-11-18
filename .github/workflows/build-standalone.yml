@@ -29,22 +29,17 @@ jobs:
           path: firmware/standalone
           command: idf.py reconfigure && idf.py build
 
-      - name: Verify build outputs
+      - name: Verify application firmware
         shell: bash
         run: |
           set -euo pipefail
           test -s firmware/standalone/build/ChatAI_TPIOS.bin
-          test -s firmware/standalone/build/bootloader/bootloader.bin
-          test -s firmware/standalone/build/partition_table/partition-table.bin
-          echo "Standalone build outputs are present."
+          echo "ChatAI_TPIOS.bin is present."
 
-      - name: Upload standalone firmware binaries
+      - name: Upload application firmware only
         uses: actions/upload-artifact@v4
         with:
-          name: chatai-tpios-standalone-esp32s3
-          path: |
-            firmware/standalone/build/ChatAI_TPIOS.bin
-            firmware/standalone/build/bootloader/bootloader.bin
-            firmware/standalone/build/partition_table/partition-table.bin
+          name: ChatAI_TPIOS
+          path: firmware/standalone/build/ChatAI_TPIOS.bin
           if-no-files-found: error
           retention-days: 30

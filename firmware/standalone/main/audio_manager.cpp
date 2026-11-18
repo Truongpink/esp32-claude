@@ -220,7 +220,7 @@ esp_err_t ReadMicrophonePcm16(int16_t* destination, size_t requested_samples,
         }
         const size_t received = bytes_read / sizeof(int32_t);
         for (size_t i = 0; i < received; ++i) {
-            // Match the legacy board's 32-bit I2S microphone to PCM16 conversion.
+            // Convert 32-bit I2S microphone samples to PCM16.
             const int32_t value = raw_samples[i] >> 12;
             destination[*samples_read + i] = static_cast<int16_t>(
                 std::clamp<int32_t>(value, INT16_MIN, INT16_MAX));

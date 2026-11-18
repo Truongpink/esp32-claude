@@ -1,68 +1,40 @@
-# Gemini Live authentication design
+# Gemini Live authentication and API Key handling
 
-## Decision
+## Chosen architecture
 
-The ESP32-S3 must not contain the long-lived Gemini API key. The standalone firmware connects directly to Gemini Live over WSS, but obtains a short-lived, constrained ephemeral token from a ChatAI token broker first.
+The ESP32-S3 connects directly to Gemini Live. The Gemini API Key is entered by the user in the device's local Web Admin and stored in NVS.
 
-- ChatAI token broker stores the long-lived Gemini API key as a server-side secret and calls Google's AuthTokenService.
-- ESP32-S3 authenticates to the broker, receives a short-lived token, then connects directly to Gemini Live.
-- Google Gemini Live receives audio and returns audio over the device's WSS session.
+There is no Cloudflare Worker, token broker, VPS, or audio proxy in this architecture.
 
-The broker is an authentication service only; it must not proxy microphone audio or model responses.
+## Key storage
 
-## Why not store the Gemini API key in device NVS?
+- NVS namespace: `chatai_ai`
+- NVS key: `gemini_key`
+- Web Admin accepts a new key through an HTTPS-free local HTTP interface.
+- Status responses expose only a boolean indicating whether a key is configured.
+- The saved key is not returned to the browser after saving.
+- The key must never be printed to OLED, application logs, source code, build configuration, or GitHub.
 
-The current standalone project has no verified flash-encryption or NVS-encryption configuration. Its Wi-Fi credentials are currently stored in NVS without encryption. Adding a Gemini API key to the same storage would expose a long-lived, billable credential to physical firmware/flash extraction.
+The current firmware does not enable NVS encryption. Treat physical extraction of the stored key as possible. Keep the device and Web Admin on a trusted local network.
 
-Do not hardcode a Gemini API key in source, build definitions, sdkconfig, or firmware assets; commit keys or tokens; log request headers, API keys, ephemeral tokens, or authenticated URLs; put long-lived credentials in the local Wi-Fi provisioning form or OLED; or enable flash/NVS encryption before the actual partition table, provisioning lifecycle, recovery process, and board security state are verified.
+## Gemini Live transport
 
-## Proposed request flow
+- Connect directly to the Gemini Live WSS endpoint.
+- Use TLS certificate verification with the ESP-IDF certificate bundle.
+- Do not disable certificate verification or fall back to plaintext.
+- Do not log the credential-bearing WebSocket URL or API Key.
+- Wait for `setupComplete` before sending microphone audio.
 
-1. Device connects to Wi-Fi using the existing NetworkManager.
-2. Device requests a short-lived broker challenge or uses a previously enrolled device identity.
-3. Device authenticates to the broker over HTTPS. The device credential must be unique per device, revocable, and scoped only to token issuance. Do not use a shared fleet-wide secret.
-4. Broker validates device identity, rate limits requests, and calls Google's AuthTokenService using its server-side Gemini API key.
-5. Broker creates a single-use ephemeral token with a short expiry and live_connect_constraints restricting the permitted model and Live session configuration.
-6. Broker returns only the ephemeral token and its expiry to the device.
-7. Device opens the Google constrained Live WebSocket endpoint using the ephemeral token. Prefer the Authorization: Token <token> handshake header over a query parameter to reduce accidental URL logging.
-8. Device sends the Gemini Live setup message and waits for setupComplete before streaming audio.
-9. Device discards the token from RAM after the session has been established; it never persists it to NVS or logs it.
+## Web Admin behavior
 
-The token broker must not accept arbitrary model names or unrestricted Live configurations from the device. It should enforce an allowlist and fixed session constraints.
+- `GET /api/gemini/status` returns only `key_configured`.
+- `POST /api/gemini/key` validates and stores a supplied API Key.
+- `DELETE /api/gemini/key` deletes the stored API Key.
+- Mutating requests require same-origin validation and the per-boot CSRF token.
+- The password input is cleared after a save or delete operation.
 
-## Device identity and enrollment
+## Security limitations
 
-Enrollment is not implemented yet. Before coding it, choose and document the bootstrap process.
+The Web Admin uses plain HTTP, so credentials are not encrypted in transit on the local network. Origin and CSRF checks mitigate cross-site browser requests but are not user authentication. Any client that can reach the device on the LAN may manage its API Key.
 
-Required properties: unique per-device identity; explicit owner-controlled enrollment/pairing; revocation and re-enrollment; challenge-response or signed request with replay protection; server-side rate limiting and per-device quotas; no credential shown on OLED, diagnostic logs, or Wi-Fi setup page.
-
-A random secret stored in ordinary NVS is not equivalent to hardware-backed secure storage. Treat it as extractable unless a verified hardware-backed protection mechanism is implemented.
-
-## TLS and WebSocket requirements
-
-- Use WSS only.
-- Enable server certificate verification. Espressif documents that when no server certificate is configured, TLS does not require verification by default. Use the ESP-IDF certificate bundle or a managed CA strategy; never skip verification.
-- Send the ephemeral token in the initial WebSocket handshake Authorization: Token <token> header if supported by the pinned component version. Never log headers.
-- Keep TLS verification failures fatal; do not fall back to plaintext or insecure TLS.
-- Bound token response size, validate expiry, and reject empty or malformed tokens.
-- Do not automatically retry a consumed single-use token. Request a fresh token from the broker after a failed or closed connection.
-
-## Operational controls
-
-The broker must keep the Gemini API key in a server-side secret manager/environment secret; restrict the key to Gemini API use where supported; issue single-use tokens with short expiry and fixed Live constraints; rate limit by device and globally; redact secrets from logs and error traces; provide device revocation and usage monitoring; and avoid storing audio or transcripts unless separately required.
-
-## Current blockers
-
-- No token broker exists in this repository.
-- Device enrollment/authentication is not designed or implemented.
-- No verified secure device credential storage exists.
-- TLS certificate verification configuration for the standalone project has not been implemented.
-- The exact Gemini Live model and allowed session configuration must be verified before token constraints are finalized.
-
-Therefore, do not implement the Gemini WebSocket session client or expose a local API-key entry field yet. The next implementation step is the broker/enrollment contract and deployment choice, followed by TLS verification and the device token client.
-
-## References
-
-- Google Gemini Live API reference: ephemeral tokens via AuthTokenService and the constrained Live WebSocket endpoint.
-- Google ephemeral-token guide: short-lived, constrained credentials for client-to-server Live connections.
-- Espressif ESP WebSocket Client documentation: WSS configuration, handshake headers, and certificate verification behavior.
+Do not expose port 80 to the public Internet or an untrusted network. NVS encryption, secure boot, and hardware-backed key protection are not enabled by this change.
