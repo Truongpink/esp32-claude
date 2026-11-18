@@ -242,6 +242,7 @@ void GeminiLiveProtocol::ProcessPending() {
     std::vector<int16_t> pcm;
     while (audio_service_.PopPcmInput(pcm)) {
         for (size_t i = 0; i < pcm.size(); i += kInputChunkSamples) {
+            if (!listening_ || !IsAudioChannelOpened()) return;
             size_t n = std::min(kInputChunkSamples, pcm.size() - i);
             if (!SendAudioChunk(pcm.data() + i, n)) { Fail("Gemini Live could not send microphone audio"); audio_service_.EnablePcmBridge(false); return; }
         }
