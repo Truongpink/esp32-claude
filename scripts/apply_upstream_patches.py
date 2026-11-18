@@ -477,40 +477,40 @@ def patch_nonfatal_speaker_i2s_errors() -> None:
     )
     replace_once(
         source,
-        "    if (enable) {\\n"
-        "        ESP_ERROR_CHECK(i2s_channel_enable(rx_handle_));\\n"
-        "    } else {\\n"
-        "        ESP_ERROR_CHECK(i2s_channel_disable(rx_handle_));\\n"
-        "    }\\n"
+        "    if (enable) {\n"
+        "        ESP_ERROR_CHECK(i2s_channel_enable(rx_handle_));\n"
+        "    } else {\n"
+        "        ESP_ERROR_CHECK(i2s_channel_disable(rx_handle_));\n"
+        "    }\n"
         "    AudioCodec::EnableInput(enable);",
-        "    const esp_err_t err = enable ? i2s_channel_enable(rx_handle_)\\n"
-        "                                 : i2s_channel_disable(rx_handle_);\\n"
-        "    if (err != ESP_OK) {\\n"
-        "        ESP_LOGE(TAG, \"I2S microphone %s failed (%d)\",\\n"
-        "                 enable ? \"enable\" : \"disable\", static_cast<int>(err));\\n"
-        "        return;\\n"
-        "    }\\n"
+        "    const esp_err_t err = enable ? i2s_channel_enable(rx_handle_)\n"
+        "                                 : i2s_channel_disable(rx_handle_);\n"
+        "    if (err != ESP_OK) {\n"
+        "        ESP_LOGE(TAG, \"I2S microphone %s failed (%d)\",\n"
+        "                 enable ? \"enable\" : \"disable\", static_cast<int>(err));\n"
+        "        return;\n"
+        "    }\n"
         "    AudioCodec::EnableInput(enable);",
     )
     replace_once(
         source,
-        "NoAudioCodec::~NoAudioCodec() {\\n"
-        "    if (rx_handle_ != nullptr) {\\n"
-        "        ESP_ERROR_CHECK(i2s_channel_disable(rx_handle_));\\n"
-        "    }\\n"
-        "    if (tx_handle_ != nullptr) {\\n"
-        "        ESP_ERROR_CHECK(i2s_channel_disable(tx_handle_));\\n"
-        "    }\\n"
+        "NoAudioCodec::~NoAudioCodec() {\n"
+        "    if (rx_handle_ != nullptr) {\n"
+        "        ESP_ERROR_CHECK(i2s_channel_disable(rx_handle_));\n"
+        "    }\n"
+        "    if (tx_handle_ != nullptr) {\n"
+        "        ESP_ERROR_CHECK(i2s_channel_disable(tx_handle_));\n"
+        "    }\n"
         "}",
-        "NoAudioCodec::~NoAudioCodec() {\\n"
-        "    if (rx_handle_ != nullptr) {\\n"
-        "        const esp_err_t err = i2s_channel_disable(rx_handle_);\\n"
-        "        if (err != ESP_OK) ESP_LOGW(TAG, \"I2S microphone shutdown failed (%d)\", static_cast<int>(err));\\n"
-        "    }\\n"
-        "    if (tx_handle_ != nullptr) {\\n"
-        "        const esp_err_t err = i2s_channel_disable(tx_handle_);\\n"
-        "        if (err != ESP_OK) ESP_LOGW(TAG, \"I2S speaker shutdown failed (%d)\", static_cast<int>(err));\\n"
-        "    }\\n"
+        "NoAudioCodec::~NoAudioCodec() {\n"
+        "    if (rx_handle_ != nullptr) {\n"
+        "        const esp_err_t err = i2s_channel_disable(rx_handle_);\n"
+        "        if (err != ESP_OK) ESP_LOGW(TAG, \"I2S microphone shutdown failed (%d)\", static_cast<int>(err));\n"
+        "    }\n"
+        "    if (tx_handle_ != nullptr) {\n"
+        "        const esp_err_t err = i2s_channel_disable(tx_handle_);\n"
+        "        if (err != ESP_OK) ESP_LOGW(TAG, \"I2S speaker shutdown failed (%d)\", static_cast<int>(err));\n"
+        "    }\n"
         "}",
     )
     replace_once(
