@@ -15,7 +15,11 @@
 namespace {
 constexpr char kUrl[] = "wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent";
 constexpr size_t kMaxMessage = 256 * 1024;
-constexpr size_t kPcmDecodeChunkSamples = 1440;
+constexpr size_t kGeminiOutputSampleRate = 24000;
+constexpr size_t kGeminiOutputChunkDurationMs = 60;
+constexpr size_t kPcmDecodeChunkSamples =
+    kGeminiOutputChunkDurationMs * kGeminiOutputSampleRate / 1000;
+static_assert(kPcmDecodeChunkSamples == 1440, "Gemini PCM chunk sizing changed");
 const char kB64[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 std::atomic<uint32_t> g_microphone_chunks_sent{0};
 std::atomic<uint32_t> g_response_audio_chunks_received{0};
@@ -393,7 +397,8 @@ bool GeminiLiveProtocol::OpenAudioChannel() {
     if (api_key_.empty()) { Fail("Gemini API key is not configured in local device settings"); return false; }
     if (model_.rfind("models/", 0) != 0) model_ = "models/" + model_;
     error_occurred_ = false; closing_ = false; listening_ = false; output_turn_started_ = false; turn_complete_pending_ = false; resume_listening_after_playback_ = false; setup_complete_ = false; last_server_error_.clear();
-    xEventGroupClearBits(event_group_, kSetupComplete | kSetupFailed);
+    xEventGroupClearBits(event_group_, kSetupComplete | kSetupFailed | kReceiveFrameAvailable);
+    receive_frames_dropped_.store(0);
     auto* network = Board::GetInstance().GetNetwork();
     if (!network) { Fail("Gemini Live network interface is unavailable"); return false; }
     auto socket = network->CreateWebSocket(1);
@@ -407,50 +412,9 @@ bool GeminiLiveProtocol::OpenAudioChannel() {
     }
     websocket_->SetReceiveBufferSize(16384);
     websocket_->OnData([this](const char* data, size_t size, bool binary) {
-        if (data == nullptr || size == 0) {
-            ESP_LOGE(TAG, "Gemini Live received an empty WebSocket frame (binary=%d)", binary);
-            Fail("Gemini Live sent an empty WebSocket frame");
-            return;
-        }
-        if (size > kMaxMessage) {
-            ESP_LOGE(TAG, "Gemini Live frame exceeds limit: %u bytes (binary=%d)",
-                     static_cast<unsigned>(size), binary);
-            Fail("Gemini Live WebSocket frame is too large");
-            return;
-        }
-
-        // cJSON duplicates JSON strings while building its tree. Check both
-        // total and contiguous heap before parsing a potentially large audio frame.
-        if (heap_caps_get_free_size(MALLOC_CAP_8BIT) < size * 2 + 10000 ||
-            heap_caps_get_largest_free_block(MALLOC_CAP_8BIT) < size) {
-            ESP_LOGE(TAG, "Low heap, skip");
-            return;
-        }
-
-        // Gemini Live server messages are JSON envelopes. Parse the payload even
-        // when the transport marks it binary, so a wrapper opcode mismatch is
-        // distinguishable from genuinely non-JSON binary data.
-        cJSON* root = cJSON_ParseWithLength(data, size);
-        if (!cJSON_IsObject(root)) {
-            if (root) cJSON_Delete(root);
-            char prefix[25] = {};
-            const size_t preview = std::min<size_t>(size, 8);
-            for (size_t i = 0; i < preview; ++i) {
-                std::snprintf(prefix + i * 3, sizeof(prefix) - i * 3, "%02X ", static_cast<uint8_t>(data[i]));
-            }
-            ESP_LOGE(TAG, "Gemini Live frame is not a JSON object: type=%s size=%u prefix=%s",
-                     binary ? "binary" : "text", static_cast<unsigned>(size), prefix);
-            Fail(binary ? "Gemini Live sent an unsupported binary WebSocket frame"
-                        : "Gemini Live sent invalid JSON in a text frame");
-            return;
-        }
-        if (binary) {
-            ESP_LOGW(TAG, "Gemini Live JSON payload arrived with binary WebSocket opcode (%u bytes)",
-                     static_cast<unsigned>(size));
-        }
-        HandleServerMessage(root);
-        cJSON_Delete(root);
-        last_incoming_time_ = std::chrono::steady_clock::now();
+        // Never parse JSON, decode Base64, allocate PCM vectors or wait for the
+        // speaker queue in the WebSocket callback. Copy into the fixed ring only.
+        QueueIncomingFrame(data, size, binary);
     });
     websocket_->OnError([this](const NetworkError&) {
         if (!closing_) {
@@ -472,8 +436,22 @@ bool GeminiLiveProtocol::OpenAudioChannel() {
     if (auto connected = websocket_->Connect(url.c_str()); !connected) { Fail("Could not connect to Gemini Live"); CloseAudioChannel(false); return false; }
     RecordDiagnosticEvent("WebSocket connected; setup sent next");
     if (!SendSetup()) { Fail("Could not send Gemini Live setup"); CloseAudioChannel(false); return false; }
-    EventBits_t bits = xEventGroupWaitBits(event_group_, kSetupComplete | kSetupFailed, pdTRUE, pdFALSE, pdMS_TO_TICKS(15000));
-    if (!(bits & kSetupComplete)) { Fail(last_server_error_.empty() ? "Gemini Live setup timed out" : last_server_error_); CloseAudioChannel(false); return false; }
+    const TickType_t setup_timeout = pdMS_TO_TICKS(15000);
+    const TickType_t setup_started = xTaskGetTickCount();
+    while (!setup_complete_.load() && !error_occurred_) {
+        const TickType_t elapsed = xTaskGetTickCount() - setup_started;
+        if (elapsed >= setup_timeout) break;
+        const EventBits_t bits = xEventGroupWaitBits(
+            event_group_, kSetupComplete | kSetupFailed | kReceiveFrameAvailable,
+            pdTRUE, pdFALSE, setup_timeout - elapsed);
+        if (bits & kReceiveFrameAvailable) ProcessIncomingFrames();
+        if (bits & kSetupFailed) break;
+    }
+    if (!setup_complete_.load()) {
+        Fail(last_server_error_.empty() ? "Gemini Live setup timed out" : last_server_error_);
+        CloseAudioChannel(false);
+        return false;
+    }
     setup_complete_ = true; g_session_connected = true;
     SetPersistedGeminiState(true, false);
     RecordDiagnosticEvent("Gemini session connected");
@@ -488,7 +466,16 @@ void GeminiLiveProtocol::CloseAudioChannel(bool send_goodbye) {
     closing_ = true; listening_ = false; setup_complete_ = false; turn_complete_pending_ = false; resume_listening_after_playback_ = false; g_session_connected = false; g_microphone_streaming = false;
     audio_service_.EnablePcmBridge(false); audio_service_.EnablePcmPlaybackMode(false); audio_service_.ClearPcmPlayback();
     if (channel_open_notified_.exchange(false) && on_audio_channel_closed_) on_audio_channel_closed_();
-    if (websocket_) { websocket_->Close(); websocket_.reset(); } api_key_.clear();
+    if (websocket_) { websocket_->Close(); websocket_.reset(); }
+    portENTER_CRITICAL(&receive_mux_);
+    for (auto& frame : receive_frames_) {
+        frame.state = 0;
+        frame.size = 0;
+    }
+    receive_read_index_ = 0;
+    receive_write_index_ = 0;
+    portEXIT_CRITICAL(&receive_mux_);
+    api_key_.clear();
 }
 void GeminiLiveProtocol::SendStartListening(ListeningMode mode) {
     (void)mode;
@@ -533,6 +520,9 @@ bool GeminiLiveProtocol::SendAudioStreamEnd() {
     std::string msg = PrintJson(root); cJSON_Delete(root); return !msg.empty() && SendText(msg);
 }
 void GeminiLiveProtocol::ProcessPending() {
+    // Parse/decode queued server frames on the application protocol task,
+    // never on the WebSocket receive callback.
+    ProcessIncomingFrames();
     // Gemini turnComplete means generation ended, not that the speaker finished.
     // Finish the UI turn only after AudioService confirms the output path is drained.
     if (turn_complete_pending_.load() && audio_service_.IsPlaybackIdle()) {
@@ -549,8 +539,108 @@ void GeminiLiveProtocol::ProcessPending() {
         pcm.clear();
     }
 }
+void GeminiLiveProtocol::QueueIncomingFrame(const char* data, size_t size, bool binary) {
+    if (data == nullptr || size == 0 || size > kReceiveFrameCapacity || closing_.load()) {
+        if (size > kReceiveFrameCapacity) {
+            ESP_LOGW(TAG, "Dropping oversized WebSocket frame: %u bytes",
+                     static_cast<unsigned>(size));
+        }
+        return;
+    }
+
+    size_t slot = 0;
+    portENTER_CRITICAL(&receive_mux_);
+    slot = receive_write_index_;
+    if (receive_frames_[slot].state != 0) {
+        portEXIT_CRITICAL(&receive_mux_);
+        const uint32_t dropped = ++receive_frames_dropped_;
+        if (dropped == 1 || dropped % 10 == 0) {
+            RecordDiagnosticEvent("WebSocket RX ring full; dropped=%lu",
+                                  static_cast<unsigned long>(dropped));
+        }
+        return;
+    }
+    receive_frames_[slot].state = 1;
+    receive_write_index_ = (receive_write_index_ + 1) % kReceiveQueueDepth;
+    portEXIT_CRITICAL(&receive_mux_);
+
+    // The WebSocket-owned pointer is valid only during this callback.
+    std::memcpy(receive_frames_[slot].data.data(), data, size);
+    receive_frames_[slot].size = size;
+    receive_frames_[slot].binary = binary;
+
+    portENTER_CRITICAL(&receive_mux_);
+    receive_frames_[slot].state = 2;
+    portEXIT_CRITICAL(&receive_mux_);
+
+    if (event_group_) xEventGroupSetBits(event_group_, kReceiveFrameAvailable);
+    audio_service_.NotifyProtocolPending();
+}
+
+void GeminiLiveProtocol::ProcessIncomingFrames() {
+    if (event_group_) xEventGroupClearBits(event_group_, kReceiveFrameAvailable);
+    while (true) {
+        size_t slot = 0;
+        size_t size = 0;
+        bool binary = false;
+        portENTER_CRITICAL(&receive_mux_);
+        slot = receive_read_index_;
+        if (receive_frames_[slot].state != 2) {
+            portEXIT_CRITICAL(&receive_mux_);
+            break;
+        }
+        receive_frames_[slot].state = 1;
+        receive_read_index_ = (receive_read_index_ + 1) % kReceiveQueueDepth;
+        size = receive_frames_[slot].size;
+        binary = receive_frames_[slot].binary;
+        portEXIT_CRITICAL(&receive_mux_);
+
+        ProcessIncomingFrame(receive_frames_[slot].data.data(), size, binary);
+
+        portENTER_CRITICAL(&receive_mux_);
+        receive_frames_[slot].size = 0;
+        receive_frames_[slot].state = 0;
+        portEXIT_CRITICAL(&receive_mux_);
+    }
+}
+
+void GeminiLiveProtocol::ProcessIncomingFrame(const char* data, size_t size, bool binary) {
+    if (data == nullptr || size == 0) return;
+    // cJSON duplicates strings; do the heap check and all allocations away from
+    // the network callback, with a much smaller bounded frame (8 KiB maximum).
+    if (heap_caps_get_free_size(MALLOC_CAP_8BIT) < size * 2 + 10000 ||
+        heap_caps_get_largest_free_block(MALLOC_CAP_8BIT) < size) {
+        ESP_LOGW(TAG, "Skipping queued Gemini frame because heap is low");
+        return;
+    }
+
+    cJSON* root = cJSON_ParseWithLength(data, size);
+    if (!cJSON_IsObject(root)) {
+        if (root) cJSON_Delete(root);
+        char prefix[25] = {};
+        const size_t preview = std::min<size_t>(size, 8);
+        for (size_t i = 0; i < preview; ++i) {
+            std::snprintf(prefix + i * 3, sizeof(prefix) - i * 3, "%02X ",
+                          static_cast<uint8_t>(data[i]));
+        }
+        ESP_LOGE(TAG, "Gemini frame is not a JSON object: type=%s size=%u prefix=%s",
+                 binary ? "binary" : "text", static_cast<unsigned>(size), prefix);
+        Fail(binary ? "Gemini Live sent an unsupported binary WebSocket frame"
+                    : "Gemini Live sent invalid JSON in a text frame");
+        return;
+    }
+    if (binary) {
+        ESP_LOGW(TAG, "Gemini JSON payload arrived with binary WebSocket opcode (%u bytes)",
+                 static_cast<unsigned>(size));
+    }
+    HandleServerMessage(root);
+    cJSON_Delete(root);
+    last_incoming_time_ = std::chrono::steady_clock::now();
+}
+
 void GeminiLiveProtocol::HandleServerMessage(const cJSON* root) {
     if (cJSON_IsObject(cJSON_GetObjectItem(root, "setupComplete"))) {
+        setup_complete_ = true;
         RecordDiagnosticEvent("Gemini setupComplete received");
         xEventGroupSetBits(event_group_, kSetupComplete);
         return;
