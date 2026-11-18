@@ -157,9 +157,11 @@ def main() -> None:
         "                current_message_.insert(current_message_.end(), payload_data, payload_data + payload_length);",
     )
     websocket_text = websocket_source.read_text(encoding="utf-8")
-    if websocket_text.count("payload.data()") != 3:
-        raise SystemExit("Expected three WebSocket control-frame payload references; no files were changed.")
-    websocket_source.write_text(websocket_text.replace("payload.data()", "payload_data"), encoding="utf-8")
+    # Different compatible 3.8.x releases may contain a different number of
+    # control-frame payload references. Replace every remaining reference;
+    # do not hard-code a count that is unrelated to the protocol behavior.
+    websocket_text = websocket_text.replace("payload.data()", "payload_data")
+    websocket_source.write_text(websocket_text, encoding="utf-8")
     replace_once(
         websocket_source,
         "        receive_buffer_ = receive_buffer_.substr(buffer_offset);",
