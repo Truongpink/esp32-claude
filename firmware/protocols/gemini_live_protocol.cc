@@ -24,7 +24,7 @@ std::atomic<bool> g_microphone_streaming{false};
 std::mutex g_diagnostics_mutex;
 std::string g_last_error;
 
-constexpr uint32_t kDiagnosticHistoryMagic = 0x47444831;
+constexpr uint32_t kDiagnosticHistoryMagic = 0x47444832;
 constexpr size_t kDiagnosticHistoryCapacity = 24;
 struct DiagnosticHistoryEvent {
     uint32_t boot;
@@ -36,6 +36,20 @@ struct DiagnosticHistoryStore {
     uint32_t boot_count;
     uint32_t write_index;
     uint32_t total_events;
+    uint32_t current_session_started;
+    uint32_t current_mic_chunks;
+    uint32_t current_response_chunks;
+    uint32_t current_session_connected;
+    uint32_t current_mic_streaming;
+    char current_last_error[72];
+    uint32_t previous_valid;
+    uint32_t previous_boot;
+    uint32_t previous_reset_reason;
+    uint32_t previous_mic_chunks;
+    uint32_t previous_response_chunks;
+    uint32_t previous_session_connected;
+    uint32_t previous_mic_streaming;
+    char previous_last_error[72];
     DiagnosticHistoryEvent events[kDiagnosticHistoryCapacity];
 };
 __NOINIT_ATTR DiagnosticHistoryStore g_diagnostic_history;
@@ -54,7 +68,25 @@ void EnsureDiagnosticHistory() {
             std::memset(&g_diagnostic_history, 0, sizeof(g_diagnostic_history));
             g_diagnostic_history.magic = kDiagnosticHistoryMagic;
         }
+        if (g_diagnostic_history.current_session_started) {
+            g_diagnostic_history.previous_valid = 1;
+            g_diagnostic_history.previous_boot = g_diagnostic_history.boot_count;
+            g_diagnostic_history.previous_reset_reason = static_cast<uint32_t>(esp_reset_reason());
+            g_diagnostic_history.previous_mic_chunks = g_diagnostic_history.current_mic_chunks;
+            g_diagnostic_history.previous_response_chunks = g_diagnostic_history.current_response_chunks;
+            g_diagnostic_history.previous_session_connected = g_diagnostic_history.current_session_connected;
+            g_diagnostic_history.previous_mic_streaming = g_diagnostic_history.current_mic_streaming;
+            std::memcpy(g_diagnostic_history.previous_last_error,
+                        g_diagnostic_history.current_last_error,
+                        sizeof(g_diagnostic_history.previous_last_error));
+        }
         ++g_diagnostic_history.boot_count;
+        g_diagnostic_history.current_session_started = 0;
+        g_diagnostic_history.current_mic_chunks = 0;
+        g_diagnostic_history.current_response_chunks = 0;
+        g_diagnostic_history.current_session_connected = 0;
+        g_diagnostic_history.current_mic_streaming = 0;
+        g_diagnostic_history.current_last_error[0] = '\0';
         auto& event = g_diagnostic_history.events[g_diagnostic_history.write_index];
         event.boot = g_diagnostic_history.boot_count;
         event.uptime_ms = uptime_ms;
@@ -87,6 +119,68 @@ void RecordDiagnosticEvent(const char* format, ...) {
         ++g_diagnostic_history.total_events;
     }
     portEXIT_CRITICAL(&g_diagnostic_history_mux);
+}
+
+void BeginPersistedGeminiSession() {
+    EnsureDiagnosticHistory();
+    portENTER_CRITICAL(&g_diagnostic_history_mux);
+    g_diagnostic_history.current_session_started = 1;
+    g_diagnostic_history.current_mic_chunks = 0;
+    g_diagnostic_history.current_response_chunks = 0;
+    g_diagnostic_history.current_session_connected = 0;
+    g_diagnostic_history.current_mic_streaming = 0;
+    g_diagnostic_history.current_last_error[0] = '\0';
+    portEXIT_CRITICAL(&g_diagnostic_history_mux);
+}
+
+void SetPersistedGeminiState(bool connected, bool microphone_streaming) {
+    EnsureDiagnosticHistory();
+    portENTER_CRITICAL(&g_diagnostic_history_mux);
+    g_diagnostic_history.current_session_connected = connected ? 1 : 0;
+    g_diagnostic_history.current_mic_streaming = microphone_streaming ? 1 : 0;
+    portEXIT_CRITICAL(&g_diagnostic_history_mux);
+}
+
+void SetPersistedGeminiCounters(uint32_t microphone_chunks, uint32_t response_chunks) {
+    EnsureDiagnosticHistory();
+    portENTER_CRITICAL(&g_diagnostic_history_mux);
+    g_diagnostic_history.current_mic_chunks = microphone_chunks;
+    g_diagnostic_history.current_response_chunks = response_chunks;
+    portEXIT_CRITICAL(&g_diagnostic_history_mux);
+}
+
+void SetPersistedGeminiError(const char* message) {
+    EnsureDiagnosticHistory();
+    char safe_message[72] = {};
+    if (message) std::snprintf(safe_message, sizeof(safe_message), "%s", message);
+    portENTER_CRITICAL(&g_diagnostic_history_mux);
+    std::memcpy(g_diagnostic_history.current_last_error, safe_message, sizeof(safe_message));
+    portEXIT_CRITICAL(&g_diagnostic_history_mux);
+}
+
+std::string GetPreviousGeminiSessionSummary() {
+    EnsureDiagnosticHistory();
+    uint32_t valid = 0, boot = 0, reason = 0, mic = 0, response = 0, connected = 0, streaming = 0;
+    char last_error[72] = {};
+    portENTER_CRITICAL(&g_diagnostic_history_mux);
+    valid = g_diagnostic_history.previous_valid;
+    boot = g_diagnostic_history.previous_boot;
+    reason = g_diagnostic_history.previous_reset_reason;
+    mic = g_diagnostic_history.previous_mic_chunks;
+    response = g_diagnostic_history.previous_response_chunks;
+    connected = g_diagnostic_history.previous_session_connected;
+    streaming = g_diagnostic_history.previous_mic_streaming;
+    std::memcpy(last_error, g_diagnostic_history.previous_last_error, sizeof(last_error));
+    portEXIT_CRITICAL(&g_diagnostic_history_mux);
+    if (!valid) return "Chưa có phiên Gemini trước đó được lưu.";
+    char summary[256] = {};
+    std::snprintf(summary, sizeof(summary),
+                  "Phiên Gemini gần nhất: boot #%lu; reset reason code=%lu; mic chunks=%lu; response audio chunks=%lu; connected trước reset=%s; mic streaming trước reset=%s; lỗi cuối=%s",
+                  static_cast<unsigned long>(boot), static_cast<unsigned long>(reason),
+                  static_cast<unsigned long>(mic), static_cast<unsigned long>(response),
+                  connected ? "yes" : "no", streaming ? "yes" : "no",
+                  last_error[0] ? last_error : "None");
+    return summary;
 }
 
 std::string GetDiagnosticHistory() {
@@ -210,7 +304,12 @@ GeminiLiveProtocol::Diagnostics GeminiLiveProtocol::GetDiagnostics() {
         result.last_error = g_last_error;
     }
     result.event_history = GetDiagnosticHistory();
+    result.previous_session_summary = GetPreviousGeminiSessionSummary();
     return result;
+}
+void GeminiLiveProtocol::InitializeDiagnosticHistory() {
+    EnsureDiagnosticHistory();
+    RecordDiagnosticEvent("Board diagnostics initialized");
 }
 bool GeminiLiveProtocol::Start() { return true; }
 bool GeminiLiveProtocol::SendAudio(std::unique_ptr<AudioStreamPacket> packet) { (void)packet; return false; }
@@ -254,6 +353,7 @@ bool GeminiLiveProtocol::SendSetup() {
     std::string msg = PrintJson(root); cJSON_Delete(root); return !msg.empty() && websocket_->Send(msg);
 }
 bool GeminiLiveProtocol::OpenAudioChannel() {
+    BeginPersistedGeminiSession();
     RecordDiagnosticEvent("Gemini connect requested");
     g_microphone_chunks_sent = 0;
     g_response_audio_chunks_received = 0;
@@ -342,6 +442,7 @@ bool GeminiLiveProtocol::OpenAudioChannel() {
     });
     websocket_->OnDisconnected([this]() {
         RecordDiagnosticEvent("WebSocket disconnected");
+        SetPersistedGeminiState(false, false);
         if (!setup_complete_) xEventGroupSetBits(event_group_, kSetupFailed);
         setup_complete_ = false; listening_ = false; g_session_connected = false; g_microphone_streaming = false; audio_service_.EnablePcmBridge(false); audio_service_.EnablePcmPlaybackMode(false); audio_service_.ClearPcmPlayback();
         if (!closing_ && channel_open_notified_.exchange(false) && on_audio_channel_closed_) on_audio_channel_closed_();
@@ -355,6 +456,7 @@ bool GeminiLiveProtocol::OpenAudioChannel() {
     EventBits_t bits = xEventGroupWaitBits(event_group_, kSetupComplete | kSetupFailed, pdTRUE, pdFALSE, pdMS_TO_TICKS(15000));
     if (!(bits & kSetupComplete)) { Fail(last_server_error_.empty() ? "Gemini Live setup timed out" : last_server_error_); CloseAudioChannel(false); return false; }
     setup_complete_ = true; g_session_connected = true;
+    SetPersistedGeminiState(true, false);
     RecordDiagnosticEvent("Gemini session connected");
     audio_service_.EnablePcmPlaybackMode(true); last_incoming_time_ = std::chrono::steady_clock::now();
     channel_open_notified_ = true; if (on_connected_) on_connected_(); if (on_audio_channel_opened_) on_audio_channel_opened_();
@@ -363,6 +465,7 @@ bool GeminiLiveProtocol::OpenAudioChannel() {
 void GeminiLiveProtocol::CloseAudioChannel(bool send_goodbye) {
     (void)send_goodbye;
     if (g_session_connected.load() || websocket_) RecordDiagnosticEvent("Gemini channel closing");
+    SetPersistedGeminiState(false, false);
     closing_ = true; listening_ = false; setup_complete_ = false; turn_complete_pending_ = false; resume_listening_after_playback_ = false; g_session_connected = false; g_microphone_streaming = false;
     audio_service_.EnablePcmBridge(false); audio_service_.EnablePcmPlaybackMode(false); audio_service_.ClearPcmPlayback();
     if (channel_open_notified_.exchange(false) && on_audio_channel_closed_) on_audio_channel_closed_();
@@ -374,12 +477,14 @@ void GeminiLiveProtocol::SendStartListening(ListeningMode mode) {
         audio_service_.EnablePcmBridge(true);
         listening_ = true;
         g_microphone_streaming = true;
+        SetPersistedGeminiState(true, true);
         RecordDiagnosticEvent("Microphone streaming started");
     }
 }
 void GeminiLiveProtocol::SendStopListening() {
     if (!IsAudioChannelOpened()) { listening_ = false; return; }
     ProcessPending(); listening_ = false; resume_listening_after_playback_ = false; g_microphone_streaming = false;
+    SetPersistedGeminiState(g_session_connected.load(), false);
     RecordDiagnosticEvent("Microphone streaming stopped; sent=%lu", static_cast<unsigned long>(g_microphone_chunks_sent.load()));
     audio_service_.EnablePcmBridge(false); SendAudioStreamEnd();
 }
@@ -398,7 +503,8 @@ bool GeminiLiveProtocol::SendAudioChunk(const int16_t* samples, size_t count) {
     cJSON_AddStringToObject(audio, "data", b64.c_str()); std::string msg = PrintJson(root); cJSON_Delete(root);
     if (msg.empty() || !websocket_->Send(msg)) return false;
     const uint32_t sent = ++g_microphone_chunks_sent;
-    if (sent == 1 || sent % 50 == 0) {
+    SetPersistedGeminiCounters(sent, g_response_audio_chunks_received.load());
+    if (sent == 1 || sent % 100 == 0) {
         RecordDiagnosticEvent("Microphone audio chunks sent=%lu", static_cast<unsigned long>(sent));
     }
     return true;
@@ -497,7 +603,8 @@ void GeminiLiveProtocol::HandleAudioPart(const cJSON* part) {
         return;
     }
     const uint32_t received = ++g_response_audio_chunks_received;
-    if (received == 1 || received % 10 == 0) {
+    SetPersistedGeminiCounters(g_microphone_chunks_sent.load(), received);
+    if (received == 1 || received % 25 == 0) {
         RecordDiagnosticEvent("Gemini response audio chunks=%lu", static_cast<unsigned long>(received));
     }
 }
@@ -528,6 +635,7 @@ void GeminiLiveProtocol::PauseMicrophoneForResponse() {
     resume_listening_after_playback_ = true;
     listening_ = false;
     g_microphone_streaming = false;
+    SetPersistedGeminiState(g_session_connected.load(), false);
     RecordDiagnosticEvent("Microphone paused for Gemini response");
     audio_service_.EnablePcmBridge(false);
 }
@@ -540,6 +648,7 @@ void GeminiLiveProtocol::FinishOutputTurn() {
         audio_service_.EnablePcmBridge(true);
         listening_ = true;
         g_microphone_streaming = true;
+        SetPersistedGeminiState(true, true);
         RecordDiagnosticEvent("Microphone streaming resumed");
     }
 }
@@ -562,6 +671,8 @@ void GeminiLiveProtocol::Fail(const std::string& message) {
     }
     if (safe_message.size() > 120) safe_message.resize(120);
     { std::lock_guard<std::mutex> lock(g_diagnostics_mutex); g_last_error = safe_message; }
+    SetPersistedGeminiState(false, false);
+    SetPersistedGeminiError(safe_message.c_str());
     RecordDiagnosticEvent("Gemini failure: %.56s", safe_message.c_str());
     audio_service_.EnablePcmBridge(false);
     audio_service_.EnablePcmPlaybackMode(false);
