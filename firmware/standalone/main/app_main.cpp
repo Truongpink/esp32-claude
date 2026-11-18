@@ -11,6 +11,7 @@
 #include "display_manager.h"
 #include "audio_manager.h"
 #include "gemini_live_client.h"
+#include "gemini_settings.h"
 
 namespace {
 constexpr char kTag[] = "ChatAI";
@@ -21,6 +22,11 @@ bool InitializePlatform() {
         // Do not erase NVS automatically: existing user settings must be preserved.
         ESP_LOGE(kTag, "NVS initialization failed: %s", esp_err_to_name(nvs_result));
         return false;
+    }
+
+    const esp_err_t migration_result = chatai::settings::MigrateLegacyGeminiApiKey();
+    if (migration_result != ESP_OK) {
+        ESP_LOGW(kTag, "Could not migrate existing Gemini API Key; it can be entered in Web Admin");
     }
 
     const esp_err_t netif_result = esp_netif_init();
