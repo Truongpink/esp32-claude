@@ -54,15 +54,17 @@ struct DiagnosticHistoryStore {
 };
 __NOINIT_ATTR DiagnosticHistoryStore g_diagnostic_history;
 portMUX_TYPE g_diagnostic_history_mux = portMUX_INITIALIZER_UNLOCKED;
-bool g_diagnostic_history_initialized = false;
+std::atomic<bool> g_diagnostic_history_initialized{false};
 
 void EnsureDiagnosticHistory() {
+    if (g_diagnostic_history_initialized.load()) return;
     char boot_message[72] = {};
     const uint32_t uptime_ms = static_cast<uint32_t>(esp_timer_get_time() / 1000);
-    std::snprintf(boot_message, sizeof(boot_message), "Boot started; reset_reason=%d",
-                  static_cast<int>(esp_reset_reason()));
+    const uint32_t reset_reason = static_cast<uint32_t>(esp_reset_reason());
+    std::snprintf(boot_message, sizeof(boot_message), "Boot started; reset_reason=%lu",
+                  static_cast<unsigned long>(reset_reason));
     portENTER_CRITICAL(&g_diagnostic_history_mux);
-    if (!g_diagnostic_history_initialized) {
+    if (!g_diagnostic_history_initialized.load()) {
         if (g_diagnostic_history.magic != kDiagnosticHistoryMagic ||
             g_diagnostic_history.write_index >= kDiagnosticHistoryCapacity) {
             std::memset(&g_diagnostic_history, 0, sizeof(g_diagnostic_history));
@@ -71,7 +73,7 @@ void EnsureDiagnosticHistory() {
         if (g_diagnostic_history.current_session_started) {
             g_diagnostic_history.previous_valid = 1;
             g_diagnostic_history.previous_boot = g_diagnostic_history.boot_count;
-            g_diagnostic_history.previous_reset_reason = static_cast<uint32_t>(esp_reset_reason());
+            g_diagnostic_history.previous_reset_reason = reset_reason;
             g_diagnostic_history.previous_mic_chunks = g_diagnostic_history.current_mic_chunks;
             g_diagnostic_history.previous_response_chunks = g_diagnostic_history.current_response_chunks;
             g_diagnostic_history.previous_session_connected = g_diagnostic_history.current_session_connected;
@@ -94,7 +96,7 @@ void EnsureDiagnosticHistory() {
         g_diagnostic_history.write_index =
             (g_diagnostic_history.write_index + 1) % kDiagnosticHistoryCapacity;
         ++g_diagnostic_history.total_events;
-        g_diagnostic_history_initialized = true;
+        g_diagnostic_history_initialized.store(true);
     }
     portEXIT_CRITICAL(&g_diagnostic_history_mux);
 }
