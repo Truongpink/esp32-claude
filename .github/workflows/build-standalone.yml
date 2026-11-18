@@ -2,12 +2,6 @@ name: Build ChatAI TPIOS standalone firmware
 
 on:
   workflow_dispatch:
-    inputs:
-      publish_release:
-        description: "Phát hành bản chính thức và tăng Build Number"
-        required: true
-        type: boolean
-        default: false
 
 concurrency:
   group: chatai-tpios-standalone-build
@@ -27,20 +21,29 @@ jobs:
         with:
           ref: main
 
-      - name: Determine official firmware Build Number
+      - name: Determine next firmware Build Number
         id: version
         env:
           GH_TOKEN: ${{ github.token }}
-          PUBLISH_RELEASE: ${{ inputs.publish_release }}
+        shell: bash
         run: |
           set -euo pipefail
-          gh api "repos/${GITHUB_REPOSITORY}/releases?per_page=100" > /tmp/chatai-releases.json
-          latest_build="$(python3 -c 'import json,re,sys; releases=json.load(open(sys.argv[1])); nums=[int(m.group(1)) for r in releases if not r.get("draft") and not r.get("prerelease") for m in [re.fullmatch(r"build-([0-9]+)", r.get("tag_name", ""))] if m]; print(max(nums, default=0)' /tmp/chatai-releases.json)"
-          if [[ "${PUBLISH_RELEASE}" == "true" ]]; then
-            build_number=$((latest_build + 1))
-          else
-            build_number="${latest_build}"
-          fi
+          gh api --paginate "repos/${GITHUB_REPOSITORY}/releases?per_page=100" --jq '.[].tag_name' > /tmp/chatai-release-tags.txt
+          latest_build="$(python3 - /tmp/chatai-release-tags.txt <<'PY'
+          import re
+          import sys
+
+          with open(sys.argv[1], encoding="utf-8") as tags_file:
+              numbers = [
+                  int(match.group(1))
+                  for tag in tags_file
+                  if (match := re.fullmatch(r"build-([0-9]+)", tag.strip()))
+              ]
+
+          print(max(numbers, default=0))
+          PY
+          )"
+          build_number=$((latest_build + 1))
           echo "build_number=${build_number}" >> "$GITHUB_OUTPUT"
           echo "tag=build-${build_number}" >> "$GITHUB_OUTPUT"
           echo "Firmware Build Number: #${build_number}"
@@ -75,7 +78,6 @@ jobs:
           retention-days: 30
 
       - name: Publish official firmware release
-        if: inputs.publish_release
         env:
           GH_TOKEN: ${{ github.token }}
           BUILD_NUMBER: ${{ steps.version.outputs.build_number }}
