@@ -43,6 +43,10 @@ portMUX_TYPE g_diagnostic_history_mux = portMUX_INITIALIZER_UNLOCKED;
 bool g_diagnostic_history_initialized = false;
 
 void EnsureDiagnosticHistory() {
+    char boot_message[72] = {};
+    const uint32_t uptime_ms = static_cast<uint32_t>(esp_timer_get_time() / 1000);
+    std::snprintf(boot_message, sizeof(boot_message), "Boot started; reset_reason=%d",
+                  static_cast<int>(esp_reset_reason()));
     portENTER_CRITICAL(&g_diagnostic_history_mux);
     if (!g_diagnostic_history_initialized) {
         if (g_diagnostic_history.magic != kDiagnosticHistoryMagic ||
@@ -53,9 +57,8 @@ void EnsureDiagnosticHistory() {
         ++g_diagnostic_history.boot_count;
         auto& event = g_diagnostic_history.events[g_diagnostic_history.write_index];
         event.boot = g_diagnostic_history.boot_count;
-        event.uptime_ms = static_cast<uint32_t>(esp_timer_get_time() / 1000);
-        std::snprintf(event.message, sizeof(event.message), "Boot started; reset_reason=%d",
-                      static_cast<int>(esp_reset_reason()));
+        event.uptime_ms = uptime_ms;
+        std::memcpy(event.message, boot_message, sizeof(event.message));
         g_diagnostic_history.write_index =
             (g_diagnostic_history.write_index + 1) % kDiagnosticHistoryCapacity;
         ++g_diagnostic_history.total_events;
@@ -78,7 +81,7 @@ void RecordDiagnosticEvent(const char* format, ...) {
         auto& event = g_diagnostic_history.events[g_diagnostic_history.write_index];
         event.boot = g_diagnostic_history.boot_count;
         event.uptime_ms = uptime_ms;
-        std::snprintf(event.message, sizeof(event.message), "%s", message);
+        std::memcpy(event.message, message, sizeof(event.message));
         g_diagnostic_history.write_index =
             (g_diagnostic_history.write_index + 1) % kDiagnosticHistoryCapacity;
         ++g_diagnostic_history.total_events;
@@ -428,7 +431,7 @@ void GeminiLiveProtocol::HandleServerMessage(const cJSON* root) {
     const cJSON* error = cJSON_GetObjectItem(root, "error");
     if (cJSON_IsObject(error)) {
         const cJSON* m = cJSON_GetObjectItem(error, "message"); last_server_error_ = cJSON_IsString(m) ? m->valuestring : "Gemini Live server error";
-        RecordDiagnosticEvent("Gemini server error: %.48s", last_server_error_.c_str());
+        RecordDiagnosticEvent("Gemini server error received");
         xEventGroupSetBits(event_group_, kSetupFailed); Fail(last_server_error_); return;
     }
     const cJSON* content = cJSON_GetObjectItem(root, "serverContent");
@@ -523,16 +526,19 @@ void GeminiLiveProtocol::PauseMicrophoneForResponse() {
     resume_listening_after_playback_ = true;
     listening_ = false;
     g_microphone_streaming = false;
+    RecordDiagnosticEvent("Microphone paused for Gemini response");
     audio_service_.EnablePcmBridge(false);
 }
 
 void GeminiLiveProtocol::FinishOutputTurn() {
     turn_complete_pending_ = false;
+    RecordDiagnosticEvent("Gemini playback turn finished");
     EmitTtsStop();
     if (resume_listening_after_playback_.exchange(false) && IsAudioChannelOpened()) {
         audio_service_.EnablePcmBridge(true);
         listening_ = true;
         g_microphone_streaming = true;
+        RecordDiagnosticEvent("Microphone streaming resumed");
     }
 }
 
