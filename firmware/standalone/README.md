@@ -1,6 +1,6 @@
 # ChatAI TPIOS — standalone ESP-IDF project
 
-This directory is the new independent firmware project. It is deliberately separate
+This directory is the independent firmware project. It is deliberately separate
 from the existing overlay-based firmware so the known working release path remains
 untouched while components are migrated and verified.
 
@@ -18,9 +18,9 @@ idf.py -C firmware/standalone set-target esp32s3
 idf.py -C firmware/standalone reconfigure
 ```
 
-Build and flash are intentionally not part of this migration step. Do not flash this
-scaffold: it does not yet contain the Gemini Live client, audio streaming integration,
-or OTA implementation. The local Web Admin currently supports Gemini API Key storage only.
+Build and flash are intentionally not part of this migration step. The Gemini Live
+WebSocket client is now connected to startup, but has not been compiled or verified
+on hardware. Audio streaming and OTA are not implemented.
 
 ## Migration rules
 
@@ -37,7 +37,7 @@ or OTA implementation. The local Web Admin currently supports Gemini API Key sto
   available after the station connects. Open `http://<device-ip>/admin`.
 - The page can save, replace, and delete the Gemini API Key in NVS namespace
   `chatai_ai`, key `gemini_key`. Status responses expose only whether a key exists;
-  the stored value is never returned to the browser or written to logs.
+  the stored value is never returned to the browser or written to application logs.
 - Mutating requests require a same-origin check and a per-boot CSRF token.
 - This is a local-network HTTP interface, not an Internet-facing management service.
   HTTP traffic is not encrypted, and the API Key is stored in NVS without encryption
@@ -46,3 +46,16 @@ or OTA implementation. The local Web Admin currently supports Gemini API Key sto
   The Origin/CSRF checks mitigate cross-site browser requests; they are not user
   authentication. Any client already able to reach the device on the local network
   can open the page and manage the key. A login gate is not part of this first slice.
+
+## Gemini Live connection
+
+- Uses the Gemini Developer API WebSocket endpoint directly with the API Key read
+  from NVS. No proxy, Cloudflare Worker, or external server is involved.
+- Model: `gemini-3.8-live`; setup requests audio responses and Vietnamese output.
+- The client waits for `setupComplete` before reporting the session ready.
+- WSS uses ESP-IDF's certificate bundle. Certificate verification is not disabled.
+- The client currently establishes the session only. Microphone streaming, speaker
+  playback, AEC, text injection, and OTA remain future work.
+- The API Key is passed in the WebSocket URL query as required by the Gemini API.
+  It is not intentionally written to application logs; transport/library diagnostic
+  logging should still be reviewed during device testing.
