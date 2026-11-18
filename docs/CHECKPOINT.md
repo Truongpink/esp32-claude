@@ -6,7 +6,7 @@ Last reviewed: 2026-11-19
 
 - Repository: `Truongpink/esp32-claude`
 - Active branch: `main`
-- OTA implementation work is being added on `main` after cleanup commit `1a4e73486d291631ef3ee1611efe51b801c690bd`.
+- OTA implementation is present on `main`; latest reviewed source commit is recorded by the repository HEAD.
 - Only maintained firmware: `firmware/standalone`
 - Toolchain: ESP-IDF 6.1, target ESP32-S3.
 - The former upstream-download and overlay firmware path has been retired.
@@ -28,14 +28,16 @@ Last reviewed: 2026-11-19
 - Published output: one application image, `ChatAI_TPIOS.bin`.
 - GitHub Actions wraps downloadable artifacts in a ZIP container; the archive contains only the BIN.
 - Standalone targets the previously deployed 16 MB dual-slot layout: `ota_0` and `ota_1` are each `0x3F0000` bytes; NVS and otadata offsets match the earlier layout.
-- Web Admin OTA accepts one application-only BIN and writes only to the inactive OTA slot.
+- Web Admin OTA accepts one application-only BIN, writes only to the inactive OTA slot, validates it, and selects it for the next boot.
+- The standalone startup path marks a pending OTA image valid only after platform and Gemini task initialization succeed; startup failures trigger a restart when rollback is pending.
+- The old `gemini/api_key` NVS value is copied to the standalone `chatai_ai/gemini_key` namespace when the new key is absent. The old value is not erased.
 - The user confirmed the board is N16R8 (16 MB flash / 8 MB PSRAM). The physical partition table has not been independently read back; compatibility is based on the prior firmware configuration and successful OTA history.
 
 ## Recent build record
 
 - Workflow run: [44334411807](https://github.com/Truongpink/esp32-claude/actions/runs/44334411807), attempt 3, completed successfully.
 - Important limitation: that run used workflow head SHA `66e6a5f39be69e42a505476674a0e3dcce72f225`, while `main` had advanced to `1dfcf53ecc110497d374bebcff5e1b16f3d6dc82`. Do not treat the run as verification of the newer partition configuration.
-- No build is started by this cleanup. A new build requires separate explicit user permission.
+- No build or GitHub Actions run has been started for these OTA changes. Build verification requires separate explicit user permission.
 
 ## Hardware validation status
 
