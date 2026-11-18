@@ -24,7 +24,6 @@ constexpr char kSsidKey[] = "ssid";
 constexpr char kPasswordKey[] = "password";
 constexpr uint8_t kMaxReconnectAttempts = 5;
 constexpr size_t kMaxFormLength = 256;
-constexpr char kPasswordAlphabet[] = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789";
 
 esp_netif_t* g_sta_netif = nullptr;
 esp_netif_t* g_ap_netif = nullptr;
@@ -37,18 +36,21 @@ std::atomic<uint8_t> g_reconnect_attempts{0};
 std::atomic<bool> g_connected{false};
 std::atomic<bool> g_provisioning_started{false};
 std::string g_provisioning_ssid;
-std::string g_provisioning_password;
 std::string g_form_token;
 
-bool LoadCredentials(std::string& ssid, std::string& password) {
+esp_err_t SaveCredentials(const std::string& ssid, const std::string& password);
+
+bool ReadCredentials(const char* name_space, const char* ssid_key,
+                     const char* password_key, std::string& ssid,
+                     std::string& password) {
     nvs_handle_t handle;
-    if (nvs_open(kNvsNamespace, NVS_READONLY, &handle) != ESP_OK) return false;
+    if (nvs_open(name_space, NVS_READONLY, &handle) != ESP_OK) return false;
 
     size_t ssid_size = 0;
     size_t password_size = 0;
-    const esp_err_t ssid_result = nvs_get_str(handle, kSsidKey, nullptr, &ssid_size);
+    const esp_err_t ssid_result = nvs_get_str(handle, ssid_key, nullptr, &ssid_size);
     const esp_err_t password_result =
-        nvs_get_str(handle, kPasswordKey, nullptr, &password_size);
+        nvs_get_str(handle, password_key, nullptr, &password_size);
     if (ssid_result != ESP_OK || password_result != ESP_OK ||
         ssid_size <= 1 || ssid_size > 33 || password_size == 0 || password_size > 65) {
         nvs_close(handle);
@@ -57,9 +59,9 @@ bool LoadCredentials(std::string& ssid, std::string& password) {
 
     ssid.resize(ssid_size);
     password.resize(password_size);
-    const esp_err_t read_ssid = nvs_get_str(handle, kSsidKey, ssid.data(), &ssid_size);
+    const esp_err_t read_ssid = nvs_get_str(handle, ssid_key, ssid.data(), &ssid_size);
     const esp_err_t read_password =
-        nvs_get_str(handle, kPasswordKey, password.data(), &password_size);
+        nvs_get_str(handle, password_key, password.data(), &password_size);
     nvs_close(handle);
 
     if (read_ssid == ESP_OK && read_password == ESP_OK) {
@@ -67,6 +69,28 @@ bool LoadCredentials(std::string& ssid, std::string& password) {
         password.resize(password_size - 1);
     }
     return read_ssid == ESP_OK && read_password == ESP_OK && !ssid.empty();
+}
+
+bool LoadCredentials(std::string& ssid, std::string& password) {
+    if (ReadCredentials(kNvsNamespace, kSsidKey, kPasswordKey, ssid, password)) {
+        return true;
+    }
+
+    // Xiaozhi stores saved networks in namespace "wifi".
+    for (unsigned index = 0; index <= 9; ++index) {
+        const std::string suffix = index == 0 ? "" : std::to_string(index);
+        const std::string ssid_key = "ssid" + suffix;
+        const std::string password_key = "password" + suffix;
+        if (!ReadCredentials("wifi", ssid_key.c_str(), password_key.c_str(),
+                             ssid, password)) {
+            continue;
+        }
+
+        // Keep the original Xiaozhi namespace intact; migrate a copy for ChatAI.
+        SaveCredentials(ssid, password);
+        return true;
+    }
+    return false;
 }
 
 esp_err_t SaveCredentials(const std::string& ssid, const std::string& password) {
@@ -253,25 +277,14 @@ esp_err_t StartProvisioning() {
     std::snprintf(ssid, sizeof(ssid), "ChatAI-%02X%02X%02X", mac[3], mac[4], mac[5]);
     g_provisioning_ssid = ssid;
 
-    g_provisioning_password.clear();
-    uint32_t random = 0;
-    for (size_t i = 0; i < 12; ++i) {
-        if (i % 4 == 0) random = esp_random();
-        g_provisioning_password.push_back(
-            kPasswordAlphabet[random % (sizeof(kPasswordAlphabet) - 1)]);
-        random >>= 5;
-    }
-
     wifi_config_t ap_config{};
     std::memcpy(ap_config.ap.ssid, g_provisioning_ssid.data(),
                 g_provisioning_ssid.size());
     ap_config.ap.ssid_len = g_provisioning_ssid.size();
-    std::memcpy(ap_config.ap.password, g_provisioning_password.data(),
-                g_provisioning_password.size());
     ap_config.ap.channel = 1;
     ap_config.ap.max_connection = 2;
-    ap_config.ap.authmode = WIFI_AUTH_WPA2_PSK;
-    ap_config.ap.pmf_cfg.required = true;
+    ap_config.ap.authmode = WIFI_AUTH_OPEN;
+    ap_config.ap.pmf_cfg.required = false;
 
     result = esp_wifi_set_mode(WIFI_MODE_APSTA);
     if (result == ESP_OK) result = esp_wifi_set_config(WIFI_IF_AP, &ap_config);
@@ -281,7 +294,7 @@ esp_err_t StartProvisioning() {
         return result;
     }
 
-    ESP_LOGI(kTag, "Secure Wi-Fi setup AP started; credentials are exposed to device UI");
+    ESP_LOGI(kTag, "Open Wi-Fi setup AP started");
     return ESP_OK;
 }
 
@@ -389,7 +402,7 @@ esp_err_t NetworkManager::Initialize() {
     if (g_has_credentials) {
         ESP_LOGI(kTag, "Wi-Fi station initialized; saved network will be connected");
     } else {
-        ESP_LOGI(kTag, "No saved Wi-Fi network; secure setup AP started");
+        ESP_LOGI(kTag, "No saved Wi-Fi network; open setup AP started");
     }
     return ESP_OK;
 }
@@ -441,10 +454,6 @@ bool NetworkManager::IsProvisioningActive() {
 
 std::string NetworkManager::GetProvisioningSsid() {
     return g_provisioning_ssid;
-}
-
-std::string NetworkManager::GetProvisioningPassword() {
-    return g_provisioning_password;
 }
 
 }  // namespace chatai::network

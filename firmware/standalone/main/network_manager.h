@@ -13,7 +13,6 @@ public:
     static std::string GetIpAddress();
     static bool IsProvisioningActive();
     static std::string GetProvisioningSsid();
-    static std::string GetProvisioningPassword();
 };
 
 }  // namespace chatai::network

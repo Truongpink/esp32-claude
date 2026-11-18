@@ -105,9 +105,8 @@ void RenderStatus() {
         DrawText(0, 16, "WIFI SETUP");
         DrawText(0, 24, "SSID:" +
             chatai::network::NetworkManager::GetProvisioningSsid());
-        DrawText(0, 32, "PASS:" +
-            chatai::network::NetworkManager::GetProvisioningPassword());
-        DrawText(0, 48, "OPEN 192.168.4.1");
+        DrawText(0, 40, "OPEN WIFI");
+        DrawText(0, 52, "192.168.4.1");
     } else if (chatai::network::NetworkManager::IsConnected()) {
         DrawText(0, 16, "WIFI CONNECTED");
         DrawText(0, 32, "IP:" +
