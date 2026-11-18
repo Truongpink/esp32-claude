@@ -505,7 +505,8 @@ $('refreshDiagnostics').addEventListener('click', async () => {
   finally { $('refreshDiagnostics').disabled = false; }
 });
 $('copyDiagnostics').addEventListener('click', async () => {
-  const text = $('diagnosticsText').textContent;
+  const text = $('diagnosticsText').textContent + '\n\n' +
+    $('diagnosticsHistoryText').textContent;
   try {
     if (navigator.clipboard && navigator.clipboard.writeText) {
       await navigator.clipboard.writeText(text);
