@@ -681,7 +681,6 @@ void WebAdminServer::InitializeDiagnostics() {
 }
 
 void WebAdminServer::Start() {
-    stdvoid WebAdminServer::Start() {
     // Temporarily disabled during Gemini Live stability testing.
 }
 
