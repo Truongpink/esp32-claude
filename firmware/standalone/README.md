@@ -19,8 +19,8 @@ idf.py -C firmware/standalone reconfigure
 ```
 
 Build and flash are intentionally not part of this migration step. The Gemini Live
-WebSocket client is now connected to startup, but has not been compiled or verified
-on hardware. Audio streaming and OTA are not implemented.
+WebSocket client and bidirectional PCM streaming have been added to startup, but have
+not been compiled or verified on hardware. AEC and OTA are not implemented.
 
 ## Migration rules
 
@@ -54,8 +54,15 @@ on hardware. Audio streaming and OTA are not implemented.
 - Model: `gemini-3.8-live`; setup requests audio responses and Vietnamese output.
 - The client waits for `setupComplete` before reporting the session ready.
 - WSS uses ESP-IDF's certificate bundle. Certificate verification is not disabled.
-- The client currently establishes the session only. Microphone streaming, speaker
-  playback, AEC, text injection, and OTA remain future work.
+- After `setupComplete`, the microphone worker sends mono PCM16 16 kHz audio in
+  20 ms Base64 JSON chunks using `realtimeInput.audio`. Server-side VAD remains the
+  turn detector; no local VAD is added.
+- The receive handler extracts `serverContent.modelTurn.parts[].inlineData` audio,
+  validates `audio/pcm;rate=24000`, decodes PCM16, and queues it for the I2S speaker
+  worker. Playback queue entries are flushed when Gemini reports `interrupted`.
+- Audio streaming is an unverified implementation slice: board microphone pins are
+  provisional, and no compile, network, latency, or acoustic test has been run.
+  AEC, text injection, device controls, and OTA remain future work.
 - The API Key is passed in the WebSocket URL query as required by the Gemini API.
   It is not intentionally written to application logs; transport/library diagnostic
   logging should still be reviewed during device testing.
