@@ -1,4 +1,5 @@
 #include "network_manager.h"
+#include "web_admin.h"
 
 #include <atomic>
 #include <cstdio>
@@ -146,6 +147,11 @@ esp_err_t ConnectFromForm(const std::string& body) {
 }
 
 esp_err_t RootHandler(httpd_req_t* request) {
+    if (!g_provisioning_started.load()) {
+        httpd_resp_set_status(request, "302 Found");
+        httpd_resp_set_hdr(request, "Location", "/admin");
+        return httpd_resp_send(request, nullptr, 0);
+    }
     const std::string page =
         "<!doctype html><html lang=\"vi\"><meta name=\"viewport\" "
         "content=\"width=device-width,initial-scale=1\"><meta charset=\"utf-8\">"
@@ -160,7 +166,7 @@ esp_err_t RootHandler(httpd_req_t* request) {
         "<label>Mật khẩu</label><br><input name=\"password\" type=\"password\" "
         "maxlength=\"64\" style=\"box-sizing:border-box;width:100%;padding:12px;"
         "margin:8px 0\"><button style=\"padding:12px 20px\">Lưu và kết nối</button>"
-        "</form></body></html>";
+        "</form><p><a href=\\"/admin\\">Mở Web Admin ChatAI</a></p></body></html>";
     httpd_resp_set_type(request, "text/html; charset=utf-8");
     return httpd_resp_send(request, page.c_str(), HTTPD_RESP_USE_STRLEN);
 }
@@ -197,8 +203,9 @@ esp_err_t WifiPostHandler(httpd_req_t* request) {
 }
 
 esp_err_t StartHttpServer() {
+    if (g_http_server != nullptr) return ESP_OK;
     httpd_config_t config = HTTPD_DEFAULT_CONFIG();
-    config.max_uri_handlers = 4;
+    config.max_uri_handlers = 8;
     config.lru_purge_enable = true;
     esp_err_t result = httpd_start(&g_http_server, &config);
     if (result != ESP_OK) return result;
@@ -215,6 +222,7 @@ esp_err_t StartHttpServer() {
 
     result = httpd_register_uri_handler(g_http_server, &root_uri);
     if (result == ESP_OK) result = httpd_register_uri_handler(g_http_server, &wifi_uri);
+    if (result == ESP_OK) result = chatai::web_admin::RegisterRoutes(g_http_server, g_form_token);
     if (result != ESP_OK) {
         httpd_stop(g_http_server);
         g_http_server = nullptr;
@@ -254,12 +262,6 @@ esp_err_t StartProvisioning() {
         random >>= 5;
     }
 
-    char token[17]{};
-    std::snprintf(token, sizeof(token), "%08lx%08lx",
-                  static_cast<unsigned long>(esp_random()),
-                  static_cast<unsigned long>(esp_random()));
-    g_form_token = token;
-
     wifi_config_t ap_config{};
     std::memcpy(ap_config.ap.ssid, g_provisioning_ssid.data(),
                 g_provisioning_ssid.size());
@@ -273,13 +275,7 @@ esp_err_t StartProvisioning() {
 
     result = esp_wifi_set_mode(WIFI_MODE_APSTA);
     if (result == ESP_OK) result = esp_wifi_set_config(WIFI_IF_AP, &ap_config);
-    if (result == ESP_OK) result = StartHttpServer();
-
     if (result != ESP_OK) {
-        if (g_http_server != nullptr) {
-            httpd_stop(g_http_server);
-            g_http_server = nullptr;
-        }
         esp_wifi_set_mode(WIFI_MODE_STA);
         g_provisioning_started.store(false);
         return result;
@@ -291,10 +287,6 @@ esp_err_t StartProvisioning() {
 
 esp_err_t StopProvisioning() {
     if (!g_provisioning_started.exchange(false)) return ESP_OK;
-    if (g_http_server != nullptr) {
-        httpd_stop(g_http_server);
-        g_http_server = nullptr;
-    }
     const esp_err_t result = esp_wifi_set_mode(WIFI_MODE_STA);
     ESP_LOGI(kTag, "Wi-Fi setup AP stopped after station connection");
     return result;
@@ -379,6 +371,15 @@ esp_err_t NetworkManager::Initialize() {
     result = esp_wifi_start();
     if (result != ESP_OK) return result;
     g_initialized = true;
+
+    char token[17]{};
+    std::snprintf(token, sizeof(token), "%08lx%08lx",
+                  static_cast<unsigned long>(esp_random()),
+                  static_cast<unsigned long>(esp_random()));
+    g_form_token = token;
+
+    result = StartHttpServer();
+    if (result != ESP_OK) return result;
 
     if (!g_has_credentials) {
         result = StartProvisioning();
