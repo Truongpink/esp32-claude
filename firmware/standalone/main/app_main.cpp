@@ -64,6 +64,19 @@ bool InitializePlatform() {
 
     return true;
 }
+
+void RestartIfOtaImageIsPending() {
+#if CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE
+    const esp_partition_t* running = esp_ota_get_running_partition();
+    esp_ota_img_states_t image_state;
+    if (running != nullptr &&
+        esp_ota_get_state_partition(running, &image_state) == ESP_OK &&
+        image_state == ESP_OTA_IMG_PENDING_VERIFY) {
+        ESP_LOGE(kTag, "New OTA image failed startup; restarting for bootloader rollback");
+        esp_restart();
+    }
+#endif
+}
 }  // namespace
 
 extern "C" void app_main(void) {
@@ -71,14 +84,15 @@ extern "C" void app_main(void) {
 
     if (!InitializePlatform()) {
         ESP_LOGE(kTag, "Platform initialization failed");
+        RestartIfOtaImageIsPending();
         return;
     }
 
     const esp_err_t gemini_result = chatai::gemini::Initialize();
     if (gemini_result != ESP_OK) {
-        ESP_LOGE(kTag, "Gemini Live initialization failed: %s; restarting for OTA rollback",
+        ESP_LOGE(kTag, "Gemini Live initialization failed: %s",
                  esp_err_to_name(gemini_result));
-        esp_restart();
+        RestartIfOtaImageIsPending();
         return;
     }
 
