@@ -17,7 +17,7 @@ idf.py -C firmware/standalone reconfigure
 idf.py -C firmware/standalone build
 ```
 
-The application image is generated at `build/ChatAI_TPIOS.bin` (relative to this directory).
+The application image is generated at `build/ChatAI_TPIOS.bin` (relative to this directory). The embedded firmware Build Number is injected by the manual GitHub workflow; local builds default to Build `#0`.
 
 ## Firmware scope
 
@@ -25,7 +25,7 @@ The application image is generated at `build/ChatAI_TPIOS.bin` (relative to this
 - SSD1306 OLED status display.
 - Native I2S microphone and speaker PCM interfaces.
 - Direct Gemini Live WebSocket connection over WSS/TLS.
-- Local Web Admin for Gemini API Key management and application-only OTA firmware updates.
+- Local Web Admin for Gemini API Key management and application-only OTA firmware updates from BIN or ZIP (ZIP is extracted and CRC32-checked in the browser).
 
 ## Gemini credentials
 
@@ -45,10 +45,14 @@ The implementation still requires a fresh authorized build and physical-device v
 
 ## Flash layout and OTA
 
-The defaults select the 16 MB dual-slot partition layout used by the earlier Xiaozhi-derived ChatAI OTA firmware: `ota_0` and `ota_1` are each `0x3F0000` bytes, with `otadata` and the existing NVS offset preserved. The standalone Web Admin accepts one application-only `ChatAI_TPIOS.bin` and writes it to the inactive OTA slot. The new app confirms successful startup with ESP-IDF rollback support.
+The defaults select the 16 MB dual-slot partition layout used by the earlier Xiaozhi-derived ChatAI OTA firmware: `ota_0` and `ota_1` are each `0x3F0000` bytes, with `otadata` and the existing NVS offset preserved. The standalone Web Admin accepts a raw application BIN or a ZIP containing exactly one application BIN. ZIP extraction, path checks, size checks, and CRC32 validation happen in the browser; the ESP32 receives only the BIN and writes it to the inactive OTA slot. The Web Admin reports the running Build Number from the currently booted image. The new app confirms successful startup with ESP-IDF rollback support.
 
 The user confirmed the board variant is N16R8 (16 MB flash / 8 MB PSRAM). The exact partition table currently installed on the physical unit has not been read back; compatibility is based on the previously deployed project layout and the user's successful OTA history. Keep the existing bootloader and partition table during the application-only transition.
 
 ## Security
 
 The Web Admin is a local HTTP interface, and NVS encryption is not enabled in the current configuration. Use it only on a trusted LAN. Do not expose it to the public Internet. Never print the API Key to OLED, logs, source code, or GitHub.
+
+## Firmware Build Number
+
+The firmware embeds a numeric Build Number and exposes it through `GET /api/firmware/status`. Ordinary manual builds reuse the latest published official Build Number. A manual workflow run with `publish_release=true` builds the next number and publishes a `build-N` GitHub release only after a successful build and OTA-slot size check. Failed build attempts do not advance the official number. Local builds default to `#0`.
