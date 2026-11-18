@@ -97,16 +97,8 @@ A dedicated `GeminiLiveProtocol` source is now included by the upstream patcher.
 Direct-device API-key mode is for bring-up only: use a current Gemini authorization API key, store it in NVS, and send it in the `x-goog-api-key` handshake header. This avoids URL-path logs, but a sufficiently capable physical attacker can still extract the key. Production should use short-lived tokens from a trusted broker. The local Web Admin credential form and OTA handler are implemented in source, but neither this transport nor the Web Admin/OTA path has been compiled or exercised on hardware.
 
 
-## Crash capture for first Gemini response audio
+## Crash diagnostics for Web Admin
 
 The first six WebSocket callback frames log frame size, free/largest heap and callback-task stack. The first received 24 kHz PCM chunk logs encoded payload length, free/largest heap, application-task stack high-water mark, and each PCM enqueue result. The first PCM frame entering the speaker codec logs output-task stack/heap before and after the codec write. These checkpoints distinguish WebSocket receive, JSON/Base64 decode, playback-queue enqueue, and I2S output without logging audio or credentials.
 
-The build overlay enables `CONFIG_ESP_COREDUMP_ENABLE_TO_UART=y`. ESP-IDF 6.1 selects ELF core-dump format for this mode. This project currently uses a custom 16 MiB table with two 0x3F0000 OTA slots and an 8 MiB assets partition extending to the end of flash; it has no reserved coredump partition. Therefore flash core dumps are intentionally not enabled by this OTA-only change: adding a coredump partition requires a separately planned USB flash-layout update, not an application OTA.
-
-The build artifact now includes the matching `chatai-esp32-N.elf` alongside `chatai-esp32-N.bin`. Decode a PC only with the ELF from the exact firmware that produced the crash, for example:
-
-```sh
-xtensa-esp32s3-elf-addr2line -pfiaC -e chatai-esp32-N.elf 0x40384842
-```
-
-The current report's PC cannot be conclusively mapped until the matching ELF for the currently installed firmware is available. No root cause is asserted from the PC alone.
+Crash investigation is intended to use the bounded diagnostic logs exposed by the local Web Admin. The build does not add UART ELF core-dump output, package .elf files, or require a desktop addr2line tool. The panic handler, reset-reason reporting, and audio/network diagnostic checkpoints remain enabled. No root cause is asserted from a reset PC alone.
