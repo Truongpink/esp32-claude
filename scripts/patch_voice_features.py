@@ -96,8 +96,8 @@ def apply(root: Path, upstream: Path) -> None:
     afe_h = upstream / "main/audio/engines/afe_audio_engine.h"
     replace_once(
         afe_h,
-        "    static constexpr size_t kProcessingTaskStackSize = 4096;\\n",
-        "    static constexpr size_t kProcessingTaskStackSize = 16384;\\n",
+        "    static constexpr size_t kProcessingTaskStackSize = 4096;\n",
+        "    static constexpr size_t kProcessingTaskStackSize = 16384;\n",
     )
     afe_cc = upstream / "main/audio/engines/afe_audio_engine.cc"
     replace_once(
