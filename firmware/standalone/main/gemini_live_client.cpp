@@ -69,6 +69,21 @@ std::string UrlEncode(const std::string& value) {
     return encoded;
 }
 
+const char kSetupMessage[] =
+    "{\"setup\":{"
+      "\"model\":\"models/gemini-3.8-live\","
+      "\"generationConfig\":{"
+        "\"responseModalities\":[\"AUDIO\"]"
+      "},"
+      "\"systemInstruction\":{"
+        "\"parts\":[{"
+          "\"text\":\"Bạn là trợ lý ChatAI TPIOS. Hãy giao tiếp tự nhiên, thân thiện "
+          "và rõ ràng bằng tiếng Việt. Chỉ trả lời bằng giọng nói trong phiên hội thoại "
+          "thời gian thực.\""
+        "}]"
+      "}"
+    "}}";
+
 void ClearAudioQueue() {
     if (g_audio_queue == nullptr) {
         return;
