@@ -338,7 +338,7 @@ updateFirmwareButton.addEventListener("click", async () => {
     const confirmText = "Cài đặt " + firmwareName + " (" + formatBytes(firmware.size) +
       ")\nBuild hiện tại: #" + currentBuildNumber + "\nBuild mục tiêu: #" + targetBuild +
       "\nKhông tắt nguồn trong quá trình cập nhật. Tiếp tục?";
-    if (!confirm(confirmText)) return;
+    if (!confirm(confirmText)) { updateFirmwareButton.disabled = false; return; }
 
     otaResult.textContent = "Đang tải firmware lên thiết bị...";
     const data = await uploadOtaFirmware(firmware, firmwareName);
