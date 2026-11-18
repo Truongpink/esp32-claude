@@ -6,7 +6,7 @@ Last reviewed: 2026-11-19
 
 - Repository: `Truongpink/esp32-claude`
 - Active branch: `main`
-- Current HEAD before this cleanup: `1dfcf53ecc110497d374bebcff5e1b16f3d6dc82`
+- OTA implementation work is being added on `main` after cleanup commit `1a4e73486d291631ef3ee1611efe51b801c690bd`.
 - Only maintained firmware: `firmware/standalone`
 - Toolchain: ESP-IDF 6.1, target ESP32-S3.
 - The former upstream-download and overlay firmware path has been retired.
