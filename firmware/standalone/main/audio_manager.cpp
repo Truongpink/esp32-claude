@@ -8,7 +8,6 @@
 #include <driver/gpio.h>
 #include <driver/i2s_std.h>
 #include <esp_log.h>
-#include <freertos/FreeRTOS.h>
 
 namespace chatai::audio {
 namespace {
@@ -203,7 +202,7 @@ esp_err_t ReadMicrophonePcm16(int16_t* destination, size_t requested_samples,
         size_t bytes_read = 0;
         const esp_err_t err = i2s_channel_read(
             s_mic_rx, raw_samples.data(), chunk * sizeof(int32_t),
-            &bytes_read, pdMS_TO_TICKS(timeout_ms));
+            &bytes_read, timeout_ms);
 
         if (err != ESP_OK) {
             return (*samples_read > 0 && err == ESP_ERR_TIMEOUT) ? ESP_OK : err;
@@ -240,7 +239,7 @@ esp_err_t WriteSpeakerPcm16(const int16_t* samples, size_t sample_count,
     size_t bytes_written = 0;
     const esp_err_t err = i2s_channel_write(
         s_speaker_tx, samples, sample_count * sizeof(int16_t),
-        &bytes_written, pdMS_TO_TICKS(timeout_ms));
+        &bytes_written, timeout_ms);
     *samples_written = bytes_written / sizeof(int16_t);
 
     if (*samples_written > 0) {
