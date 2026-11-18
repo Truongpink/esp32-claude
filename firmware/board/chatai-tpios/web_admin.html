@@ -676,22 +676,14 @@ async function extractOtaBinFromZip(file) {
     if (!isDirectory && /\.bin$/i.test(name)) {
       if ((flags & 0x2041) !== 0) throw new Error('ZIP chứa file BIN được mã hóa hoặc dùng cờ nén không an toàn.');
       if (method !== 0 && method !== 8) throw new Error('ZIP dùng kiểu nén BIN không được hỗ trợ.');
-      if (uncompressedSize < 4096 || uncompressedSize > otaMaxBytes ||
-          compressedSize > maxZipBytes || compressedSize === 0) {
-        throw new Error('Kích thước firmware BIN trong ZIP không hợp lệ hoặc vượt dung lượng OTA.');
-      }
       binaries.push({name, flags, method, crc, compressedSize, uncompressedSize, localOffset});
     }
     offset = end;
   }
   if (offset !== directory.byteLength) throw new Error('ZIP có dữ liệu thừa hoặc cấu trúc thư mục không hợp lệ.');
 
-  const excluded = /(^|\/)(bootloader|partition-table|partitions|ota_data_initial|usb-flash|merged)\.bin$/i;
-  const preferred = binaries.filter(entry =>
-    /^chatai-esp32-[^/]+\.bin$/i.test(entry.name) ||
-    /(^|\/)xiaozhi\.bin$/i.test(entry.name) ||
-    /(^|\/)app\.bin$/i.test(entry.name));
-  const candidates = preferred.length ? preferred : binaries.filter(entry => !excluded.test(entry.name));
+  const excluded = /(^|\/)(bootloader|partition-table|partitions|ota_data_initial|usb-flash|merged|flash|firmware-full)\.bin$/i;
+  const candidates = binaries.filter(entry => !excluded.test(entry.name));
   if (candidates.length !== 1) {
     throw new Error(candidates.length
       ? 'ZIP có nhiều file BIN có thể là firmware ứng dụng. Hãy dùng ZIP chỉ chứa một file firmware.'
@@ -699,6 +691,10 @@ async function extractOtaBinFromZip(file) {
   }
 
   const entry = candidates[0];
+  if (entry.uncompressedSize < 4096 || entry.uncompressedSize > otaMaxBytes ||
+      entry.compressedSize === 0 || entry.compressedSize > maxZipBytes) {
+    throw new Error('Kích thước firmware BIN trong ZIP không hợp lệ hoặc vượt dung lượng OTA.');
+  }
   const localHeader = new DataView(await file.slice(entry.localOffset, entry.localOffset + 30).arrayBuffer());
   if (localHeader.byteLength !== 30 || localHeader.getUint32(0, true) !== 0x04034B50 ||
       localHeader.getUint16(6, true) !== entry.flags ||
