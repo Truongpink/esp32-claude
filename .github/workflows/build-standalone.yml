@@ -34,7 +34,13 @@ jobs:
         run: |
           set -euo pipefail
           test -s firmware/standalone/build/ChatAI_TPIOS.bin
-          echo "ChatAI_TPIOS.bin is present."
+          size="$(stat -c '%s' firmware/standalone/build/ChatAI_TPIOS.bin)"
+          max_size=$((0x3F0000))
+          if (( size > max_size )); then
+            echo "Firmware size $size exceeds the 16 MB OTA slot limit $max_size."
+            exit 1
+          fi
+          echo "ChatAI_TPIOS.bin is present and fits the OTA application slot ($size / $max_size bytes)."
 
       - name: Upload application firmware only
         uses: actions/upload-artifact@v4
