@@ -17,6 +17,13 @@
   it shows the setup AP SSID/password and `192.168.4.1`, or the station IP after
   connection. It uses GPIO 41/42 and address 0x3C from the existing board profile.
   These pins and the display remain unverified on the physical device.
+- A standalone ESP-IDF I2S manager now owns speaker TX on I2S0 (GPIO 15/16/7,
+  24 kHz) and microphone RX on I2S1 (provisional GPIO 5/4/6, 16 kHz). Microphone
+  samples are read as 32-bit slots and converted to PCM16. GPIO 17 controls the
+  speaker amplifier. The microphone pin mapping is not verified on hardware.
+- The I2S manager exposes a synchronous speaker-reference PCM callback at 24 kHz
+  for a future AEC adapter. AEC and 24-to-16 kHz reference resampling are not yet
+  integrated in the standalone firmware; the legacy ESP-SR AEC path is untouched.
 - No XiaoZhi source, headers, components, or cloud services are linked by the
   standalone project.
 - Existing firmware, scripts, OTA flow, and manual-only workflow are unchanged.
@@ -29,9 +36,10 @@
    persisted SSID/password, connection state, IPv4 reporting, and bounded reconnect
    attempts. A WPA2-protected setup AP, local HTTP form, and standalone SSD1306
    status screen are implemented in the independent project.
-3. **Hardware/audio ownership:** OLED text output has a standalone first slice;
-   move I2S, GPIO, buttons, PCM capture/playback,
-   and the currently required AEC path behind ChatAI-owned interfaces.
+3. **Hardware/audio ownership — first slice added:** OLED text output and native
+   I2S PCM capture/playback now use ChatAI-owned interfaces. The speaker-reference
+   callback is the integration point for AEC; resampling and AEC remain pending.
+   Buttons and hardware pin verification are still pending.
 4. **Gemini Live ownership:** move the existing wire-protocol behavior into a
    standalone client that does not inherit XiaoZhi `Protocol` or use
    `AudioService` / `Board` singletons.
