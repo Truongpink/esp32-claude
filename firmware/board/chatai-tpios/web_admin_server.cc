@@ -24,6 +24,8 @@
 #include <algorithm>
 #include <cctype>
 #include <cstdio>
+#include <cstdarg>
+#include <esp_attr.h>
 
 extern const char index_html_start[] asm("_binary_wifi_configuration_html_start");
 
@@ -35,6 +37,98 @@ constexpr size_t kMaxSystemPromptBytes = 3900;
 httpd_handle_t server = nullptr;
 std::mutex server_mutex;
 std::mutex ota_mutex;
+
+constexpr uint32_t kRuntimeLogMagic = 0x434C4F47;
+constexpr size_t kRuntimeLogCapacity = 4096;
+struct RuntimeLogStore {
+    uint32_t magic;
+    uint32_t write_index;
+    uint32_t total_bytes;
+    char data[kRuntimeLogCapacity];
+};
+__NOINIT_ATTR RuntimeLogStore runtime_log_store;
+portMUX_TYPE runtime_log_mux = portMUX_INITIALIZER_UNLOCKED;
+vprintf_like_t original_log_vprintf = nullptr;
+bool runtime_log_capture_started = false;
+
+void EnsureRuntimeLogStore() {
+    portENTER_CRITICAL(&runtime_log_mux);
+    if (runtime_log_store.magic != kRuntimeLogMagic ||
+        runtime_log_store.write_index >= kRuntimeLogCapacity) {
+        std::memset(&runtime_log_store, 0, sizeof(runtime_log_store));
+        runtime_log_store.magic = kRuntimeLogMagic;
+    }
+    portEXIT_CRITICAL(&runtime_log_mux);
+}
+
+void AppendRuntimeLog(const char* data, size_t length) {
+    if (data == nullptr || length == 0) return;
+    portENTER_CRITICAL(&runtime_log_mux);
+    if (runtime_log_store.magic == kRuntimeLogMagic &&
+        runtime_log_store.write_index < kRuntimeLogCapacity) {
+        for (size_t i = 0; i < length; ++i) {
+            runtime_log_store.data[runtime_log_store.write_index] = data[i];
+            runtime_log_store.write_index = (runtime_log_store.write_index + 1) % kRuntimeLogCapacity;
+            ++runtime_log_store.total_bytes;
+        }
+    }
+    portEXIT_CRITICAL(&runtime_log_mux);
+}
+
+int CaptureRuntimeLogVprintf(const char* format, va_list args) {
+    char buffer[256];
+    va_list copy;
+    va_copy(copy, args);
+    const int length = std::vsnprintf(buffer, sizeof(buffer), format, copy);
+    va_end(copy);
+    if (length > 0) {
+        AppendRuntimeLog(buffer, std::min(static_cast<size_t>(length), sizeof(buffer) - 1));
+    }
+    return original_log_vprintf ? original_log_vprintf(format, args) : length;
+}
+
+void StartRuntimeLogCapture() {
+    if (runtime_log_capture_started) return;
+    EnsureRuntimeLogStore();
+    original_log_vprintf = esp_log_set_vprintf(CaptureRuntimeLogVprintf);
+    runtime_log_capture_started = true;
+    char marker[96];
+    const int length = std::snprintf(marker, sizeof(marker),
+        "\n--- ChatAI boot; previous reset: %s ---\n", ResetReasonLabel(esp_reset_reason()));
+    if (length > 0) AppendRuntimeLog(marker, std::min(static_cast<size_t>(length), sizeof(marker) - 1));
+}
+
+size_t CopyRuntimeLogSnapshot(char* output, size_t capacity) {
+    if (output == nullptr || capacity == 0) return 0;
+    portENTER_CRITICAL(&runtime_log_mux);
+    if (runtime_log_store.magic != kRuntimeLogMagic ||
+        runtime_log_store.write_index >= kRuntimeLogCapacity) {
+        output[0] = '\0';
+        portEXIT_CRITICAL(&runtime_log_mux);
+        return 0;
+    }
+    const size_t count = std::min(
+        std::min(static_cast<size_t>(runtime_log_store.total_bytes), kRuntimeLogCapacity), capacity - 1);
+    const size_t start = (runtime_log_store.write_index + kRuntimeLogCapacity - count) % kRuntimeLogCapacity;
+    for (size_t i = 0; i < count; ++i) {
+        output[i] = runtime_log_store.data[(start + i) % kRuntimeLogCapacity];
+    }
+    output[count] = '\0';
+    portEXIT_CRITICAL(&runtime_log_mux);
+    return count;
+}
+
+void ClearRuntimeLog() {
+    portENTER_CRITICAL(&runtime_log_mux);
+    if (runtime_log_store.magic == kRuntimeLogMagic) {
+        runtime_log_store.write_index = 0;
+        runtime_log_store.total_bytes = 0;
+        std::memset(runtime_log_store.data, 0, sizeof(runtime_log_store.data));
+    }
+    portEXIT_CRITICAL(&runtime_log_mux);
+    static constexpr char marker[] = "--- runtime log cleared from Web Admin ---\n";
+    AppendRuntimeLog(marker, sizeof(marker) - 1);
+}
 
 const char* ResetReasonLabel(esp_reset_reason_t reason) {
     switch (reason) {
@@ -226,6 +320,27 @@ bool IsSameOrigin(httpd_req_t* req) {
         request_host == WifiManager::GetInstance().GetIpAddress() ||
         request_host == "chatai-tpios.local";
     return allowed_host && origin == std::string(kHttpPrefix) + request_host;
+}
+
+esp_err_t RuntimeLogHandler(httpd_req_t* req) {
+    char snapshot[kRuntimeLogCapacity + 1] = {};
+    const size_t length = CopyRuntimeLogSnapshot(snapshot, sizeof(snapshot));
+    httpd_resp_set_type(req, "text/plain; charset=utf-8");
+    httpd_resp_set_hdr(req, "Cache-Control", "no-store");
+    httpd_resp_set_hdr(req, "Content-Disposition", "attachment; filename=chatai-runtime-log.txt");
+    return httpd_resp_send(req, snapshot, length);
+}
+
+esp_err_t ClearRuntimeLogHandler(httpd_req_t* req) {
+    if (!IsSameOrigin(req)) {
+        SendError(req, "403 Forbidden", "Cross-origin request rejected");
+        return ESP_OK;
+    }
+    ClearRuntimeLog();
+    cJSON* response = cJSON_CreateObject();
+    cJSON_AddStringToObject(response, "message", "Runtime log cleared.");
+    SendJson(req, response);
+    return ESP_OK;
 }
 
 esp_err_t ConfigPostHandler(httpd_req_t* req) {
@@ -543,9 +658,10 @@ void WebAdminServer::Start() {
     std::lock_guard<std::mutex> lock(server_mutex);
     if (server) return;
 
+    StartRuntimeLogCapture();
     httpd_config_t config = HTTPD_DEFAULT_CONFIG();
     config.server_port = 80;
-    config.max_uri_handlers = 9;
+    config.max_uri_handlers = 11;
     config.stack_size = 8192;
 
     if (httpd_start(&server, &config) != ESP_OK) {
@@ -558,6 +674,8 @@ void WebAdminServer::Start() {
         {.uri = "/", .method = HTTP_GET, .handler = IndexHandler, .user_ctx = nullptr},
         {.uri = "/api/status", .method = HTTP_GET, .handler = StatusHandler, .user_ctx = nullptr},
         {.uri = "/api/reset-report", .method = HTTP_GET, .handler = ResetReportHandler, .user_ctx = nullptr},
+        {.uri = "/api/logs", .method = HTTP_GET, .handler = RuntimeLogHandler, .user_ctx = nullptr},
+        {.uri = "/api/logs/clear", .method = HTTP_POST, .handler = ClearRuntimeLogHandler, .user_ctx = nullptr},
         {.uri = "/api/config", .method = HTTP_GET, .handler = ConfigGetHandler, .user_ctx = nullptr},
         {.uri = "/api/config", .method = HTTP_POST, .handler = ConfigPostHandler, .user_ctx = nullptr},
         {.uri = "/api/ota", .method = HTTP_POST, .handler = OtaUploadHandler, .user_ctx = nullptr},
