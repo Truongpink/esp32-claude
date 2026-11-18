@@ -25,7 +25,7 @@ The application image is generated at `build/ChatAI_TPIOS.bin` (relative to this
 - SSD1306 OLED status display.
 - Native I2S microphone and speaker PCM interfaces.
 - Direct Gemini Live WebSocket connection over WSS/TLS.
-- Local Web Admin for Gemini API Key save, replace, and delete operations.
+- Local Web Admin for Gemini API Key management and application-only OTA firmware updates.
 
 ## Gemini credentials
 
