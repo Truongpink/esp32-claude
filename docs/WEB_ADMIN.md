@@ -29,7 +29,7 @@ The key is stored in NVS namespace `chatai_ai`, key `gemini_key`. The browser in
 | DELETE | `/api/gemini/key` | Delete the saved key |
 | POST | `/api/ota` | Stream and validate an application BIN into the inactive OTA slot |
 
-Mutating requests require same-origin validation and the per-boot CSRF token.
+Mutating requests require same-origin validation and the per-boot CSRF token. OTA accepts only a raw application BIN, rejects images larger than the inactive OTA slot, and changes the boot partition only after `esp_ota_end()` validates the image.
 
 ## Security
 
