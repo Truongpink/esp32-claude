@@ -93,14 +93,16 @@ def main() -> None:
     replace_once(
         ssl_source,
         '    BaseType_t rc = xTaskCreate([](void* arg) {',
-        '    if (heap_caps_get_free_size(MALLOC_CAP_INTERNAL) < 16384 + 10000 ||\n'
-        '        heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL) < 16384) {\n'
-        '        ESP_LOGE(TAG, "Low heap, skip SSL receive task");\n'
-        '        connected_ = false;\n'
-        '        destroy_tls();\n'
-        '        return Fail(NetworkError::FromErrno(ENOMEM));\n'
-        '    }\n'
-        '    BaseType_t rc = xTaskCreate([](void* arg) {',
+        """    if (heap_caps_get_free_size(MALLOC_CAP_INTERNAL) < 16384 + 10000 ||
+        heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL) < 16384 ||
+        heap_caps_get_free_size(MALLOC_CAP_8BIT) < 16384 + 10000 ||
+        heap_caps_get_largest_free_block(MALLOC_CAP_8BIT) < 16384) {
+        ESP_LOGE(TAG, "Low heap, skip SSL receive task");
+        connected_ = false;
+        destroy_tls();
+        return Fail(NetworkError::FromErrno(ENOMEM));
+    }
+    BaseType_t rc = xTaskCreate([](void* arg) {""",
     )
     replace_once(
         ssl_source,
