@@ -176,6 +176,12 @@ bool GeminiLiveProtocol::OpenAudioChannel() {
     auto socket = network->CreateWebSocket(1);
     if (!socket) { Fail("Failed to create Gemini Live WebSocket"); return false; }
     websocket_ = std::shared_ptr<WebSocket>(std::move(socket));
+    if (heap_caps_get_free_size(MALLOC_CAP_8BIT) < 2 * 16384 + 10000 ||
+        heap_caps_get_largest_free_block(MALLOC_CAP_8BIT) < 16384) {
+        ESP_LOGE(TAG, "Low heap, skip");
+        Fail("Gemini Live has insufficient heap for WebSocket receive buffers");
+        return false;
+    }
     websocket_->SetReceiveBufferSize(16384);
     websocket_->OnData([this](const char* data, size_t size, bool binary) {
         if (data == nullptr || size == 0) {
@@ -187,6 +193,14 @@ bool GeminiLiveProtocol::OpenAudioChannel() {
             ESP_LOGE(TAG, "Gemini Live frame exceeds limit: %u bytes (binary=%d)",
                      static_cast<unsigned>(size), binary);
             Fail("Gemini Live WebSocket frame is too large");
+            return;
+        }
+
+        // cJSON duplicates JSON strings while building its tree. Check both
+        // total and contiguous heap before parsing a potentially large audio frame.
+        if (heap_caps_get_free_size(MALLOC_CAP_8BIT) < size * 2 + 10000 ||
+            heap_caps_get_largest_free_block(MALLOC_CAP_8BIT) < size) {
+            ESP_LOGE(TAG, "Low heap, skip");
             return;
         }
 
