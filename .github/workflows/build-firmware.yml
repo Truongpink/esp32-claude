@@ -37,12 +37,27 @@ jobs:
       - name: Prepare pinned XiaoZhi source and ChatAI overlay
         run: python3 scripts/prepare_upstream.py
 
+      - name: Restore ESP-IDF managed component cache
+        uses: actions/cache@v4
+        with:
+          path: xiaozhi-src/managed_components
+          key: esp32s3-idf-6.1-managed-${{ hashFiles('xiaozhi-src/main/idf_component.yml') }}
+
+      - name: Restore ESP-IDF compiler cache
+        uses: actions/cache@v4
+        with:
+          path: .ccache
+          key: esp32s3-idf-6.1-${{ runner.os }}-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: |
+            esp32s3-idf-6.1-${{ runner.os }}-
+
       - name: Build application-only OTA image with ESP-IDF 6.1
         uses: espressif/esp-idf-ci-action@v1
         with:
           esp_idf_version: v6.1
           target: esp32s3
           path: xiaozhi-src
+          extra_docker_args: -v ${{ github.workspace }}/.ccache:/root/.ccache -e CCACHE_DIR=/root/.ccache -e CCACHE_MAXSIZE=500M
           command: idf.py reconfigure && python3 ../scripts/patch_wifi_portal.py && idf.py reconfigure && idf.py build
 
       - name: Copy application image with build number
