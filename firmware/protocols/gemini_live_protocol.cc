@@ -545,11 +545,11 @@ void GeminiLiveProtocol::ProcessPending() {
     }
 }
 void GeminiLiveProtocol::QueueIncomingFrame(const char* data, size_t size, bool binary) {
-    const uint32_t callback_frame = ++g_websocket_rx_frames;
-    if (callback_frame <= 6) {
+    const uint32_t callback_message = ++g_websocket_rx_frames;
+    if (callback_message <= 6) {
         ESP_LOGW(TAG,
-                 "WebSocket RX callback #%lu: bytes=%u binary=%s heap_free=%u heap_largest=%u task_stack_free=%u",
-                 static_cast<unsigned long>(callback_frame),
+                 "WebSocket RX message #%lu: bytes=%u binary=%s heap_free=%u heap_largest=%u task_stack_free=%u",
+                 static_cast<unsigned long>(callback_message),
                  static_cast<unsigned>(size), binary ? "yes" : "no",
                  static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_8BIT)),
                  static_cast<unsigned>(heap_caps_get_largest_free_block(MALLOC_CAP_8BIT)),
@@ -557,7 +557,7 @@ void GeminiLiveProtocol::QueueIncomingFrame(const char* data, size_t size, bool 
     }
     if (data == nullptr || size == 0 || size > kReceiveFrameCapacity || closing_.load()) {
         if (size > kReceiveFrameCapacity) {
-            ESP_LOGW(TAG, "Dropping oversized WebSocket frame: %u bytes",
+            ESP_LOGW(TAG, "Dropping oversized WebSocket message: %u bytes",
                      static_cast<unsigned>(size));
         }
         return;
@@ -621,8 +621,9 @@ void GeminiLiveProtocol::ProcessIncomingFrames() {
 
 void GeminiLiveProtocol::ProcessIncomingFrame(const char* data, size_t size, bool binary) {
     if (data == nullptr || size == 0) return;
-    // cJSON duplicates strings; do the heap check and all allocations away from
-    // the network callback, with a much smaller bounded frame (8 KiB maximum).
+    // esp-ml307 reassembles fragmented WebSocket frames before OnData().
+    // cJSON duplicates strings; keep parsing and allocations off the network
+    // callback, with a bounded 64 KiB complete-message receive slot.
     if (heap_caps_get_free_size(MALLOC_CAP_8BIT) < size * 2 + 10000 ||
         heap_caps_get_largest_free_block(MALLOC_CAP_8BIT) < size) {
         ESP_LOGW(TAG, "Skipping queued Gemini frame because heap is low");
