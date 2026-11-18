@@ -489,8 +489,6 @@ esp_err_t ConfigPostHandler(httpd_req_t* req) {
         settings.SetString("wake_word", wake_word->valuestring);
     }
     if (mic_gain) {
-        Settings settings("chatai", true);
-        settings.SetInt("mic_gain", mic_gain->valueint);
         Board::GetInstance().GetAudioCodec()->SetInputGain(static_cast<float>(mic_gain->valueint));
     }
     if (volume) {
