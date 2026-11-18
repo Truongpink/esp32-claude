@@ -426,7 +426,7 @@ def patch_first_pcm_output_diagnostics() -> None:
     replace_once(
         source,
         "#include <cstring>\n",
-        "#include <cstring>\n#include <freertos/task.h>\n",
+        "#include <cstring>\n#include <atomic>\n#include <esp_heap_caps.h>\n#include <freertos/task.h>\n",
     )
     replace_once(
         source,
