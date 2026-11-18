@@ -57,7 +57,7 @@ jobs:
           esp_idf_version: v6.1
           target: esp32s3
           path: xiaozhi-src
-          extra_docker_args: -v ${{ github.workspace }}/.ccache:/root/.ccache -e CCACHE_DIR=/root/.ccache -e CCACHE_MAXSIZE=500M
+          extra_docker_args: -v ${{ github.workspace }}/.ccache:/root/.ccache -e CCACHE_DIR=/root/.ccache -e IDF_CCACHE_ENABLE=1 -e CCACHE_MAXSIZE=500M
           command: idf.py reconfigure && python3 ../scripts/patch_wifi_portal.py && idf.py reconfigure && idf.py build
 
       - name: Copy application image with build number
