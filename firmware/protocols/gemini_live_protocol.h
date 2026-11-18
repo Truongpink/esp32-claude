@@ -18,7 +18,9 @@ public:
         bool microphone_streaming = false;
         std::string last_error;
         std::string event_history;
+        std::string previous_session_summary;
     };
+    static void InitializeDiagnosticHistory();
     static Diagnostics GetDiagnostics();
     explicit GeminiLiveProtocol(AudioService& audio_service);
     ~GeminiLiveProtocol() override;
