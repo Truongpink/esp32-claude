@@ -1,17 +1,19 @@
 # Local Web Admin firmware update (OTA)
 
-The Web Admin accepts a raw ESP-IDF application firmware `.bin` file. It does not accept a merged image containing bootloader/partition table, nor an arbitrary binary.
+The Web Admin accepts either a raw ESP-IDF application firmware `.bin` or a `.zip` archive containing that application image.
 
 ## Upload flow
 
 1. Open the device Web Admin over its private Wi-Fi LAN.
-2. Select the ChatAI TPIOS application `.bin` and press **Nạp firmware**.
-3. The browser streams the file as `application/octet-stream` to `POST /api/ota`; the device writes bounded 1 KiB chunks directly to the inactive application partition.
-4. The handler checks that an inactive OTA application partition exists and that the declared upload length fits its actual partition size.
-5. ESP-IDF validates the image with `esp_ota_end`. Only after validation succeeds does the device call `esp_ota_set_boot_partition`.
-6. The device responds and restarts. An interrupted upload or failed validation leaves the current boot partition selected.
+2. Select the application-only `.bin` or the build ZIP and press **Cài đặt firmware**.
+3. For ZIP files, the browser checks the archive and extracts the selected application image locally. It supports ZIP stored and deflate entries; it does not extract files onto the ESP32 filesystem.
+4. The browser sends only the resulting application `.bin` as `application/octet-stream` to `POST /api/ota`. The device writes bounded 1 KiB chunks directly to the inactive application partition.
+5. The ZIP reader rejects multi-disk and ZIP64 archives, encrypted or unsupported entries, unsafe paths, invalid headers, CRC32 mismatches, oversized firmware, and archives with zero or multiple possible application BIN files. Known boot files (bootloader, boot_app0, partition table, ota_data_initial, USB-FLASH/merged images) are not candidates.
+6. The device checks that an inactive OTA application partition exists and that the declared upload length fits its actual partition size.
+7. ESP-IDF validates the image with `esp_ota_end`. Only after validation succeeds does the device call `esp_ota_set_boot_partition`.
+8. The device responds and restarts. An interrupted upload or failed validation leaves the current boot partition selected.
 
-The uploader does not buffer the complete firmware in RAM. The file must fit the inactive slot. The upstream default slot size is 0x3F0000 bytes (4,128,768 bytes, approximately 3.94 MiB); the handler checks the actual target partition size at runtime and does not assume this default.
+The ZIP is processed in the phone's browser, not in ESP32 RAM. The archive size is bounded by the Web Admin's ZIP limit (at most 16 MiB); the selected uncompressed application image must fit the actual inactive OTA slot. The firmware uploader does not buffer the complete raw `.bin` in ESP32 RAM.
 
 ## Partition layout and rollback
 
@@ -29,4 +31,4 @@ The server uses plain HTTP. The firmware binary is not confidential, but the sam
 
 The handler verifies image structure through ESP-IDF OTA validation, but it does not cryptographically authenticate a publisher-specific signature. Secure Boot / signed-image enforcement is not configured by this change. Only upload firmware obtained from the trusted ChatAI TPIOS build process.
 
-No build, hardware OTA test, GitHub Actions workflow, or flash operation has been run.
+No firmware build, hardware ZIP/OTA test, GitHub Actions workflow, or flash operation has been run for this change.
