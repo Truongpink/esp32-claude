@@ -27,6 +27,7 @@ static_assert(kPcmDecodeChunkSamples == 1440, "Gemini PCM chunk sizing changed")
 const char kB64[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 std::atomic<uint32_t> g_microphone_chunks_sent{0};
 std::atomic<uint32_t> g_response_audio_chunks_received{0};
+std::atomic<uint32_t> g_websocket_rx_frames{0};
 std::atomic<bool> g_session_connected{false};
 std::atomic<bool> g_microphone_streaming{false};
 std::mutex g_diagnostics_mutex;
@@ -544,6 +545,16 @@ void GeminiLiveProtocol::ProcessPending() {
     }
 }
 void GeminiLiveProtocol::QueueIncomingFrame(const char* data, size_t size, bool binary) {
+    const uint32_t callback_frame = ++g_websocket_rx_frames;
+    if (callback_frame <= 6) {
+        ESP_LOGW(TAG,
+                 "WebSocket RX callback #%lu: bytes=%u binary=%s heap_free=%u heap_largest=%u task_stack_free=%u",
+                 static_cast<unsigned long>(callback_frame),
+                 static_cast<unsigned>(size), binary ? "yes" : "no",
+                 static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_8BIT)),
+                 static_cast<unsigned>(heap_caps_get_largest_free_block(MALLOC_CAP_8BIT)),
+                 static_cast<unsigned>(uxTaskGetStackHighWaterMark(nullptr)));
+    }
     if (data == nullptr || size == 0 || size > kReceiveFrameCapacity || closing_.load()) {
         if (size > kReceiveFrameCapacity) {
             ESP_LOGW(TAG, "Dropping oversized WebSocket frame: %u bytes",
