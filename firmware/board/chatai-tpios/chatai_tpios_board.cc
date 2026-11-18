@@ -20,6 +20,7 @@
 #include <driver/i2c_master.h>
 #include <esp_lcd_panel_ops.h>
 #include <esp_lcd_panel_vendor.h>
+#include <mdns.h>
 #include <esp_ae_rate_cvt.h>
 #include <esp_audio_types.h>
 #include <algorithm>
@@ -364,8 +365,31 @@ public:
     void SetNetworkEventCallback(NetworkEventCallback callback) override {
         WifiBoard::SetNetworkEventCallback(
             [callback = std::move(callback)](NetworkEvent event, const std::string& data) {
-                if (event == NetworkEvent::Disconnected ||
-                    event == NetworkEvent::WifiConfigModeEnter) {
+                if (event == NetworkEvent::Connected) {
+                    static bool mdns_ready = false;
+                    if (!mdns_ready) {
+                        esp_err_t err = mdns_init();
+                        if (err == ESP_OK || err == ESP_ERR_INVALID_STATE) {
+                            err = mdns_hostname_set("chatai-tpios");
+                            if (err == ESP_OK) {
+                                const esp_err_t service_err =
+                                    mdns_service_add(nullptr, "_http", "_tcp", 80, nullptr, 0);
+                                if (service_err != ESP_OK) {
+                                    ESP_LOGW(TAG, "Could not advertise Web Admin service: %s",
+                                             esp_err_to_name(service_err));
+                                }
+                                mdns_ready = true;
+                                ESP_LOGI(TAG, "Web Admin hostname: http://chatai-tpios.local");
+                            } else {
+                                ESP_LOGW(TAG, "Could not set mDNS hostname: %s", esp_err_to_name(err));
+                            }
+                        } else {
+                            ESP_LOGW(TAG, "Could not initialize mDNS: %s", esp_err_to_name(err));
+                        }
+                    }
+                    WebAdminServer::Start();
+                } else if (event == NetworkEvent::Disconnected ||
+                           event == NetworkEvent::WifiConfigModeEnter) {
                     WebAdminServer::Stop();
                 }
                 if (callback) callback(event, data);
