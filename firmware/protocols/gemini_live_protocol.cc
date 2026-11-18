@@ -201,13 +201,11 @@ std::string GetPreviousGeminiSessionSummary() {
 
 std::string GetDiagnosticHistory() {
     EnsureDiagnosticHistory();
-    DiagnosticHistoryEvent events[kDiagnosticHistoryCapacity] = {};
     uint32_t write_index = 0;
     uint32_t total_events = 0;
     portENTER_CRITICAL(&g_diagnostic_history_mux);
     write_index = g_diagnostic_history.write_index;
     total_events = g_diagnostic_history.total_events;
-    std::memcpy(events, g_diagnostic_history.events, sizeof(events));
     portEXIT_CRITICAL(&g_diagnostic_history_mux);
 
     const size_t count = std::min(static_cast<size_t>(total_events), kDiagnosticHistoryCapacity);
@@ -215,7 +213,12 @@ std::string GetDiagnosticHistory() {
                          kDiagnosticHistoryCapacity;
     std::string history = "Retained event history (latest 24 events; no-init RAM, not power-loss storage):\n";
     for (size_t i = 0; i < count; ++i) {
-        const auto& event = events[(start + i) % kDiagnosticHistoryCapacity];
+        DiagnosticHistoryEvent event = {};
+        const size_t index = (start + i) % kDiagnosticHistoryCapacity;
+        portENTER_CRITICAL(&g_diagnostic_history_mux);
+        std::memcpy(&event, &g_diagnostic_history.events[index], sizeof(event));
+        portEXIT_CRITICAL(&g_diagnostic_history_mux);
+
         char line[112] = {};
         std::snprintf(line, sizeof(line), "Boot %lu +%lu ms: %s\n",
                       static_cast<unsigned long>(event.boot),
