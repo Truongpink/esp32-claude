@@ -2,6 +2,9 @@
 #include <esp_event.h>
 #include <esp_log.h>
 #include <esp_netif.h>
+#include <esp_ota_ops.h>
+#include <esp_partition.h>
+#include <esp_system.h>
 #include <nvs_flash.h>
 
 #include "network_manager.h"
@@ -67,9 +70,28 @@ extern "C" void app_main(void) {
 
     const esp_err_t gemini_result = chatai::gemini::Initialize();
     if (gemini_result != ESP_OK) {
-        ESP_LOGW(kTag, "Gemini Live client unavailable: %s",
+        ESP_LOGE(kTag, "Gemini Live initialization failed: %s; restarting for OTA rollback",
                  esp_err_to_name(gemini_result));
+        esp_restart();
+        return;
     }
+
+#if CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE
+    const esp_partition_t* running = esp_ota_get_running_partition();
+    esp_ota_img_states_t image_state;
+    if (running != nullptr &&
+        esp_ota_get_state_partition(running, &image_state) == ESP_OK &&
+        image_state == ESP_OTA_IMG_PENDING_VERIFY) {
+        const esp_err_t validation_result = esp_ota_mark_app_valid_cancel_rollback();
+        if (validation_result != ESP_OK) {
+            ESP_LOGE(kTag, "Could not confirm OTA image: %s",
+                     esp_err_to_name(validation_result));
+            esp_restart();
+            return;
+        }
+        ESP_LOGI(kTag, "OTA firmware startup validated; rollback cancelled");
+    }
+#endif
 
     ESP_LOGI(kTag, "ESP-IDF platform, native Wi-Fi and OLED startup completed");
     ESP_LOGI(kTag, "Gemini Live standalone mode initialized");
