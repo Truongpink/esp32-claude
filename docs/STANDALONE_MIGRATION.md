@@ -54,9 +54,12 @@
    I2S PCM capture/playback now use ChatAI-owned interfaces. The speaker-reference
    callback is the integration point for AEC; resampling and AEC remain pending.
    Buttons and hardware pin verification are still pending.
-4. **Gemini Live ownership:** move the existing wire-protocol behavior into a
-   standalone client that does not inherit XiaoZhi `Protocol` or use
-   `AudioService` / `Board` singletons.
+4. **Gemini Live ownership — first audio slice added:** a standalone WebSocket client
+   connects directly to Gemini Live, waits for `setupComplete`, streams mono PCM16
+   16 kHz microphone chunks through `realtimeInput.audio`, and queues 24 kHz PCM16
+   model audio for I2S playback. Server-side VAD is retained. AEC, interruption
+   timing measurements, session recovery validation, and hardware verification
+   remain pending. No XiaoZhi `Protocol`, `AudioService`, or `Board` singleton is used.
 5. **Web Admin and OTA — first slice added:** Gemini API Key save/replace/delete is
    implemented in the standalone Web Admin and NVS. Remaining device controls and
    safe inactive-slot OTA are still pending.
