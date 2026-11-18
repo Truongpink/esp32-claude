@@ -101,6 +101,35 @@ def apply(root: Path, upstream: Path) -> None:
     )
     afe_cc = upstream / "main/audio/engines/afe_audio_engine.cc"
     replace_once(
+        afe_cc,
+        "    if (processing_task_stack_ == nullptr) {\\n"
+        "        processing_task_stack_ = static_cast<StackType_t*>(\\n"
+        "            heap_caps_malloc(kProcessingTaskStackSize, MALLOC_CAP_SPIRAM));\\n"
+        "    }\\n"
+        "    if (processing_task_buffer_ == nullptr) {\\n"
+        "        processing_task_buffer_ =\\n"
+        "            static_cast<StaticTask_t*>(heap_caps_malloc(sizeof(StaticTask_t), MALLOC_CAP_INTERNAL));\\n"
+        "    }\\n",
+        "    if (processing_task_stack_ == nullptr) {\\n"
+        "        if (heap_caps_get_free_size(MALLOC_CAP_SPIRAM) < kProcessingTaskStackSize + 10000 ||\\n"
+        "            heap_caps_get_largest_free_block(MALLOC_CAP_SPIRAM) < kProcessingTaskStackSize) {\\n"
+        "            ESP_LOGE(TAG, \\"Low heap, skip AFE task stack allocation\\");\\n"
+        "        } else {\\n"
+        "            processing_task_stack_ = static_cast<StackType_t*>(\\n"
+        "                heap_caps_malloc(kProcessingTaskStackSize, MALLOC_CAP_SPIRAM));\\n"
+        "        }\\n"
+        "    }\\n"
+        "    if (processing_task_buffer_ == nullptr) {\\n"
+        "        if (heap_caps_get_free_size(MALLOC_CAP_INTERNAL) < sizeof(StaticTask_t) + 10000 ||\\n"
+        "            heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL) < sizeof(StaticTask_t)) {\\n"
+        "            ESP_LOGE(TAG, \\"Low internal heap, skip AFE task control allocation\\");\\n"
+        "        } else {\\n"
+        "            processing_task_buffer_ =\\n"
+        "                static_cast<StaticTask_t*>(heap_caps_malloc(sizeof(StaticTask_t), MALLOC_CAP_INTERNAL));\\n"
+        "        }\\n"
+        "    }\\n",
+    )
+    replace_once(
         afe_h,
         "    std::vector<std::string> GetWakeWords() const override;\n",
         "    std::vector<std::string> GetWakeWords() const override;\n"
