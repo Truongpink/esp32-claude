@@ -342,7 +342,7 @@ def patch_pcm_audio_bridge() -> None:
         "        return false;\n"
         "    }\n"
         "    std::unique_lock<std::mutex> lock(audio_queue_mutex_);\n"
-        "    // Back-pressure the WebSocket receive callback until the speaker frees a slot.\n"
+        "    // This enqueue runs on the application protocol task, never the WebSocket callback.\n"
         "    // Do not turn a temporary playback burst into a fatal Gemini session error.\n"
         "    if (!audio_queue_cv_.wait_for(lock, std::chrono::seconds(2), [this]() {\n"
         "        return service_stopped_.load() || !audio_playback_queue_.full();\n"
