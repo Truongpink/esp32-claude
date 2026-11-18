@@ -60,14 +60,18 @@ jobs:
           extra_docker_args: -v ${{ github.workspace }}/.ccache:/root/.ccache -e CCACHE_DIR=/root/.ccache -e IDF_CCACHE_ENABLE=1 -e CCACHE_MAXSIZE=500M
           command: idf.py reconfigure && python3 ../scripts/patch_wifi_portal.py && idf.py reconfigure && idf.py build && ccache -s
 
-      - name: Copy application image with build number
-        run: sudo install -m 0644 xiaozhi-src/build/xiaozhi.bin "chatai-esp32-${{ steps.version.outputs.value }}.bin"
+      - name: Copy application image and matching ELF with build number
+        run: |
+          sudo install -m 0644 xiaozhi-src/build/xiaozhi.bin "chatai-esp32-${{ steps.version.outputs.value }}.bin"
+          sudo install -m 0644 xiaozhi-src/build/xiaozhi.elf "chatai-esp32-${{ steps.version.outputs.value }}.elf"
 
-      - name: Upload OTA application image
+      - name: Upload OTA application image and matching ELF
         uses: actions/upload-artifact@v4
         with:
           name: chatai-esp32-${{ steps.version.outputs.value }}
-          path: chatai-esp32-${{ steps.version.outputs.value }}.bin
+          path: |
+            chatai-esp32-${{ steps.version.outputs.value }}.bin
+            chatai-esp32-${{ steps.version.outputs.value }}.elf
           if-no-files-found: error
           retention-days: 90
 
