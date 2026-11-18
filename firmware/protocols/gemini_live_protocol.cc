@@ -233,6 +233,18 @@ bool GeminiLiveProtocol::SendAudioStreamEnd() {
     std::string msg = PrintJson(root); cJSON_Delete(root); return !msg.empty() && SendText(msg);
 }
 void GeminiLiveProtocol::ProcessPending() {
+    // Apply microphone engine state changes on the application event-loop task,
+    // not inside the WebSocket receive callback or audio output task.
+    if (pause_voice_processing_pending_.exchange(false)) {
+        audio_service_.EnableVoiceProcessing(false);
+    }
+    if (resume_voice_processing_pending_.exchange(false) && IsAudioChannelOpened()) {
+        audio_service_.EnableVoiceProcessing(true);
+        audio_service_.EnablePcmBridge(true);
+        listening_ = true;
+        g_microphone_streaming = true;
+    }
+
     // Gemini turnComplete means generation ended, not that the speaker finished.
     // Finish the UI turn only after AudioService confirms the output path is drained.
     if (turn_complete_pending_.load() && audio_service_.IsPlaybackIdle()) {
@@ -333,15 +345,18 @@ void GeminiLiveProtocol::PauseMicrophoneForResponse() {
     listening_ = false;
     g_microphone_streaming = false;
     audio_service_.EnablePcmBridge(false);
+    // Stop AFE/microphone capture as well as the Gemini PCM bridge. This is
+    // deferred to ProcessPending() so AudioService is changed on the app task.
+    pause_voice_processing_pending_ = true;
 }
 
 void GeminiLiveProtocol::FinishOutputTurn() {
     turn_complete_pending_ = false;
     EmitTtsStop();
     if (resume_listening_after_playback_.exchange(false) && IsAudioChannelOpened()) {
-        audio_service_.EnablePcmBridge(true);
-        listening_ = true;
-        g_microphone_streaming = true;
+        // Resume capture only after the speaker has fully drained; ProcessPending()
+        // performs the AudioService transition on the application event-loop task.
+        resume_voice_processing_pending_ = true;
     }
 }
 
