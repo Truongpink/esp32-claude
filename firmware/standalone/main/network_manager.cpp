@@ -2,6 +2,7 @@
 
 #include <atomic>
 #include <cstring>
+#include <lwip/ip4_addr.h>
 
 #include <esp_event.h>
 #include <esp_log.h>
@@ -37,7 +38,7 @@ bool LoadCredentials(std::string& ssid, std::string& password) {
         nvs_get_str(handle, kPasswordKey, nullptr, &password_size);
 
     if (ssid_result != ESP_OK || password_result != ESP_OK ||
-        ssid_size <= 1 || ssid_size > 33 || password_size > 65) {
+        ssid_size <= 1 || ssid_size > 33 || password_size == 0 || password_size > 65) {
         nvs_close(handle);
         return false;
     }
@@ -161,13 +162,14 @@ esp_err_t NetworkManager::Connect(
     }
 
     wifi_config_t config{};
-    std::memcpy(config.sta.ssid, ssid.c_str(), ssid.size() + 1);
-    std::memcpy(config.sta.password, password.c_str(), password.size() + 1);
+    std::memcpy(config.sta.ssid, ssid.data(), ssid.size());
+    std::memcpy(config.sta.password, password.data(), password.size());
     config.sta.threshold.authmode =
         password.empty() ? WIFI_AUTH_OPEN : WIFI_AUTH_WPA2_PSK;
     config.sta.pmf_cfg.capable = true;
     config.sta.pmf_cfg.required = false;
 
+    g_has_credentials.store(false);
     esp_wifi_disconnect();
     esp_err_t result = esp_wifi_set_config(WIFI_IF_STA, &config);
     if (result != ESP_OK) return result;
@@ -175,7 +177,7 @@ esp_err_t NetworkManager::Connect(
     result = SaveCredentials(ssid, password);
     if (result != ESP_OK) return result;
 
-    g_has_credentials = true;
+    g_has_credentials.store(true);
     g_reconnect_attempts = 0;
     g_connected.store(false);
     return esp_wifi_connect();
@@ -192,7 +194,7 @@ std::string NetworkManager::GetIpAddress() {
     if (esp_netif_get_ip_info(g_sta_netif, &ip_info) != ESP_OK) return {};
 
     char address[16]{};
-    if (esp_ip4addr_ntoa(&ip_info.ip, address, sizeof(address)) == nullptr) return {};
+    std::snprintf(address, sizeof(address), IPSTR, IP2STR(&ip_info.ip));
     return address;
 }
 
