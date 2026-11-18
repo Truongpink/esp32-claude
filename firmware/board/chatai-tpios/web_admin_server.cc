@@ -678,10 +678,51 @@ esp_err_t OtaUploadHandler(httpd_req_t* req) {
 
 void WebAdminServer::InitializeDiagnostics() {
     GeminiLiveProtocol::InitializeDiagnosticHistory();
+    StartRuntimeLogCaptureInternal();
 }
 
 void WebAdminServer::Start() {
-    // Temporarily disabled during Gemini Live stability testing.
+    std::lock_guard<std::mutex> lock(server_mutex);
+    if (server) return;
+
+    StartRuntimeLogCaptureInternal();
+    httpd_config_t config = HTTPD_DEFAULT_CONFIG();
+    config.server_port = 80;
+    config.max_uri_handlers = 10;
+    config.stack_size = 8192;
+
+    if (httpd_start(&server, &config) != ESP_OK) {
+        server = nullptr;
+        ESP_LOGE(TAG, "Could not start local Web Admin");
+        return;
+    }
+
+    const httpd_uri_t routes[] = {
+        {.uri = "/", .method = HTTP_GET, .handler = IndexHandler, .user_ctx = nullptr},
+        {.uri = "/api/status", .method = HTTP_GET, .handler = StatusHandler, .user_ctx = nullptr},
+        {.uri = "/api/logs", .method = HTTP_GET, .handler = RuntimeLogHandler, .user_ctx = nullptr},
+        {.uri = "/api/logs/clear", .method = HTTP_POST, .handler = ClearRuntimeLogHandler, .user_ctx = nullptr},
+        {.uri = "/api/config", .method = HTTP_GET, .handler = ConfigGetHandler, .user_ctx = nullptr},
+        {.uri = "/api/config", .method = HTTP_POST, .handler = ConfigPostHandler, .user_ctx = nullptr},
+        {.uri = "/api/ota", .method = HTTP_POST, .handler = OtaUploadHandler, .user_ctx = nullptr},
+        {.uri = "/api/reboot", .method = HTTP_POST, .handler = RebootHandler, .user_ctx = nullptr},
+        {.uri = "/api/wifi-config", .method = HTTP_POST, .handler = WifiConfigHandler, .user_ctx = nullptr},
+        {.uri = "/api/factory-reset", .method = HTTP_POST, .handler = FactoryResetHandler, .user_ctx = nullptr},
+    };
+    bool ok = true;
+    for (const auto& route : routes) {
+        if (httpd_register_uri_handler(server, &route) != ESP_OK) {
+            ok = false;
+            break;
+        }
+    }
+    if (!ok) {
+        httpd_stop(server);
+        server = nullptr;
+        ESP_LOGE(TAG, "Could not register local Web Admin routes");
+        return;
+    }
+    ESP_LOGI(TAG, "Local Web Admin started on port 80");
 }
 
 void WebAdminServer::Stop() {
