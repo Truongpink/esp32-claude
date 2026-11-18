@@ -173,6 +173,7 @@
     <section class="section hidden" id="diagnosticsSection">
       <div class="section-title">🧾 Chẩn đoán Gemini Live</div>
       <div class="info" id="diagnosticsText">Đang tải dữ liệu chẩn đoán...</div>
+      <div class="info" id="diagnosticsPreviousText">Đang tải phiên Gemini trước...</div>
       <div class="info" id="diagnosticsHistoryText">Đang tải lịch sử sự kiện...</div>
       <div class="field">
         <button class="secondary-btn" id="refreshDiagnostics" type="button">↻ Cập nhật chẩn đoán</button>
@@ -490,6 +491,8 @@ function renderDiagnostics(status) {
     '\nMicrophone chunks sent: ' + Number(status.mic_chunks_sent || 0) +
     '\nResponse audio chunks: ' + Number(status.response_audio_chunks || 0) +
     '\nLast Gemini error: ' + (status.live_last_error || 'None');
+  $('diagnosticsPreviousText').textContent =
+    status.live_previous_session || 'Chưa có phiên Gemini trước đó được lưu.';
   $('diagnosticsHistoryText').textContent =
     status.live_event_history || 'Chưa có lịch sử sự kiện được lưu.';
 }
@@ -506,6 +509,7 @@ $('refreshDiagnostics').addEventListener('click', async () => {
 });
 $('copyDiagnostics').addEventListener('click', async () => {
   const text = $('diagnosticsText').textContent + '\n\n' +
+    $('diagnosticsPreviousText').textContent + '\n\n' +
     $('diagnosticsHistoryText').textContent;
   try {
     if (navigator.clipboard && navigator.clipboard.writeText) {
