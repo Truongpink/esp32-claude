@@ -420,6 +420,35 @@ def patch_audio_task_stacks() -> None:
 patch_pcm_audio_bridge()
 patch_audio_task_stacks()
 
+# Mark the first PCM frame as it crosses from the playback queue into I2S.
+def patch_first_pcm_output_diagnostics() -> None:
+    source = UPSTREAM / "main" / "audio" / "audio_service.cc"
+    replace_once(
+        source,
+        "#include <cstring>\n",
+        "#include <cstring>\n#include <freertos/task.h>\n",
+    )
+    replace_once(
+        source,
+        "        codec_->OutputData(task.pcm);\n",
+        "        static std::atomic<uint32_t> gemini_pcm_output_frames{0};\n"
+        "        const bool first_gemini_pcm_output = pcm_playback_mode_.load() &&\n"
+        "            gemini_pcm_output_frames.fetch_add(1) == 0;\n"
+        "        if (first_gemini_pcm_output) {\n"
+        "            ESP_LOGW(TAG, \"First Gemini PCM reached codec: samples=%u heap_free=%u task_stack_free=%u\",\n"
+        "                     static_cast<unsigned>(task.pcm.size()),\n"
+        "                     static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_8BIT)),\n"
+        "                     static_cast<unsigned>(uxTaskGetStackHighWaterMark(nullptr)));\n"
+        "        }\n"
+        "        codec_->OutputData(task.pcm);\n"
+        "        if (first_gemini_pcm_output) {\n"
+        "            ESP_LOGW(TAG, \"First Gemini PCM codec write returned\");\n"
+        "        }\n",
+    )
+
+
+patch_first_pcm_output_diagnostics()
+
 # Route PCM-ready notifications through the existing Application event loop.
 def patch_pcm_application_event() -> None:
     application = UPSTREAM / "main" / "application.cc"
