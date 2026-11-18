@@ -28,7 +28,9 @@ Last reviewed: 2026-11-19
 - Published output: one application image, `ChatAI_TPIOS.bin`.
 - GitHub Actions wraps downloadable artifacts in a ZIP container; the archive contains only the BIN.
 - Standalone targets the previously deployed 16 MB dual-slot layout: `ota_0` and `ota_1` are each `0x3F0000` bytes; NVS and otadata offsets match the earlier layout.
-- Web Admin OTA accepts one application-only BIN, writes only to the inactive OTA slot, validates it, and selects it for the next boot.
+- Web Admin OTA accepts a BIN or a ZIP containing exactly one application BIN; ZIP is extracted and CRC32-checked in the browser, then only the BIN is uploaded.
+- Firmware Build Number is embedded at compile time and exposed by `GET /api/firmware/status`; the admin displays the running build and reads the target build from the selected image.
+- The manual workflow reuses the latest published `build-N` number for ordinary builds. The explicit `publish_release` option computes the next number and creates the official release only after a successful build and slot-size check.
 - The standalone startup path marks a pending OTA image valid only after platform and Gemini task initialization succeed; startup failures trigger a restart when rollback is pending.
 - The old `gemini/api_key` NVS value is copied to the standalone `chatai_ai/gemini_key` namespace when the new key is absent. The old value is not erased.
 - The user confirmed the board is N16R8 (16 MB flash / 8 MB PSRAM). The physical partition table has not been independently read back; compatibility is based on the prior firmware configuration and successful OTA history.
@@ -37,7 +39,7 @@ Last reviewed: 2026-11-19
 
 - Workflow run: [44334411807](https://github.com/Truongpink/esp32-claude/actions/runs/44334411807), attempt 3, completed successfully.
 - Important limitation: that run used workflow head SHA `66e6a5f39be69e42a505476674a0e3dcce72f225`, while `main` had advanced to `1dfcf53ecc110497d374bebcff5e1b16f3d6dc82`. Do not treat the run as verification of the newer partition configuration.
-- No build or GitHub Actions run has been started for these OTA changes. Build verification requires separate explicit user permission.
+- The Build Number, BIN/ZIP Web Admin, and manual release workflow changes have not been build-tested. No GitHub Actions run was started for this work; build verification still requires separate explicit user permission.
 
 ## Hardware validation status
 
