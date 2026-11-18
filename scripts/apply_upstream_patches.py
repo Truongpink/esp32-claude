@@ -255,9 +255,9 @@ def patch_pcm_audio_bridge() -> None:
     replace_once(
         header,
         "    FixedQueue<AudioTask, MAX_PLAYBACK_TASKS_IN_QUEUE> audio_playback_queue_;\n",
-        "    FixedQueue<AudioTask, 8> audio_playback_queue_;\n"
-        "    // PCM playback queue holds eight 60 ms chunks; Opus remains limited to its original two tasks.\n"
-        "    // Four 60 ms mono PCM frames bound memory while tolerating short network stalls.\n"
+        "    FixedQueue<AudioTask, 32> audio_playback_queue_;\n"
+        "    // 32 PCM slots hold up to 1.92 seconds of 60 ms Gemini audio chunks.\n"
+        "    // The input bridge remains a short four-frame real-time queue.\n"
         "    FixedQueue<std::vector<int16_t>, 4> pcm_input_queue_;\n"
         "    std::atomic<bool> pcm_bridge_enabled_{false};\n"
         "    std::atomic<bool> pcm_playback_mode_{false};\n",
@@ -311,7 +311,7 @@ def patch_pcm_audio_bridge() -> None:
         "    }\n"
         "    std::lock_guard<std::mutex> lock(audio_queue_mutex_);\n"
         "    if (audio_playback_queue_.full()) {\n"
-        "        audio_playback_queue_.pop_front();  // Keep latency bounded for live speech.\n"
+        "        return false;  // Never silently discard already queued speech.\n"
         "    }\n"
         "    AudioTask task;\n"
         "    task.type = kAudioTaskTypeDecodeToPlaybackQueue;\n"
@@ -375,6 +375,9 @@ def patch_pcm_application_event() -> None:
         "        xEventGroupSetBits(event_group_, MAIN_EVENT_SEND_AUDIO);\n"
         "    };\n"
         "    callbacks.on_pcm_input_available = [this]() {\n"
+        "        xEventGroupSetBits(event_group_, MAIN_EVENT_PROTOCOL_PENDING);\n"
+        "    };\n"
+        "    callbacks.on_playback_drained = [this]() {\n"
         "        xEventGroupSetBits(event_group_, MAIN_EVENT_PROTOCOL_PENDING);\n"
         "    };\n",
     )
