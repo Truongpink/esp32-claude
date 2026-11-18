@@ -1,5 +1,6 @@
 #include "network_manager.h"
 
+#include <atomic>
 #include <cstring>
 
 #include <esp_event.h>
@@ -19,8 +20,8 @@ esp_netif_t* g_sta_netif = nullptr;
 esp_event_handler_instance_t g_wifi_handler{};
 esp_event_handler_instance_t g_ip_handler{};
 bool g_initialized = false;
-bool g_has_credentials = false;
-uint8_t g_reconnect_attempts = 0;
+std::atomic<bool> g_has_credentials{false};
+std::atomic<uint8_t> g_reconnect_attempts{0};
 std::atomic<bool> g_connected{false};
 
 bool LoadCredentials(std::string& ssid, std::string& password) {
@@ -41,8 +42,8 @@ bool LoadCredentials(std::string& ssid, std::string& password) {
         return false;
     }
 
-    ssid.resize(ssid_size - 1);
-    password.resize(password_size > 0 ? password_size - 1 : 0);
+    ssid.resize(ssid_size);
+    password.resize(password_size);
     const esp_err_t read_ssid =
         nvs_get_str(handle, kSsidKey, ssid.data(), &ssid_size);
     esp_err_t read_password = ESP_OK;
@@ -50,6 +51,10 @@ bool LoadCredentials(std::string& ssid, std::string& password) {
         read_password = nvs_get_str(handle, kPasswordKey, password.data(), &password_size);
     }
     nvs_close(handle);
+    if (read_ssid == ESP_OK && read_password == ESP_OK) {
+        ssid.resize(ssid_size - 1);
+        password.resize(password_size - 1);
+    }
 
     return read_ssid == ESP_OK && read_password == ESP_OK && !ssid.empty();
 }
@@ -66,7 +71,7 @@ esp_err_t SaveCredentials(const std::string& ssid, const std::string& password) 
     return result;
 }
 
-void EventHandler(void*, esp_event_base_t event_base, int32_t event_id, void*) {
+void EventHandler(void*, esp_event_base_t event_base, int32_t event_id, void* event_data) {
     if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_START) {
         if (g_has_credentials) {
             g_reconnect_attempts = 0;
@@ -127,8 +132,8 @@ esp_err_t NetworkManager::Initialize() {
 
     if (g_has_credentials) {
         wifi_config_t config{};
-        std::memcpy(config.sta.ssid, ssid.c_str(), ssid.size() + 1);
-        std::memcpy(config.sta.password, password.c_str(), password.size() + 1);
+        std::memcpy(config.sta.ssid, ssid.data(), ssid.size());
+        std::memcpy(config.sta.password, password.data(), password.size());
         config.sta.threshold.authmode =
             password.empty() ? WIFI_AUTH_OPEN : WIFI_AUTH_WPA2_PSK;
         config.sta.pmf_cfg.capable = true;
