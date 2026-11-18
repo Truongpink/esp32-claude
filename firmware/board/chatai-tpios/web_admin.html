@@ -427,14 +427,20 @@ async function loadAdmin() {
   const response = await fetch('/api/status', {cache:'no-store'});
   if (!response.ok) throw new Error('Admin API unavailable');
   const status = await response.json();
-  const configResponse = await fetch('/api/config', {cache:'no-store'});
-  if (!configResponse.ok) throw new Error('Config API unavailable');
-  const config = await configResponse.json();
+  // Cấu hình phụ trợ không được phép làm sập toàn bộ Web Admin hoặc ẩn OTA.
+  let config = {};
+  try {
+    const configResponse = await fetch('/api/config', {cache:'no-store'});
+    if (configResponse.ok) config = await configResponse.json();
+    else $('geminiResult').textContent = 'Không tải được cấu hình Gemini (HTTP ' + configResponse.status + ').';
+  } catch (error) {
+    $('geminiResult').textContent = 'Không tải được cấu hình Gemini: ' + error.message;
+  }
   otaMaxBytes = Number(status.ota_max_bytes || 0);
   $('statusDot').className = 'dot';
   if (status.panic_detected) showSection('panicSection');
   $('statusText').textContent = 'Đã kết nối · ' + (status.ip || '') + ' · ' + (status.ssid || '');
-  renderDiagnostics(status);
+  // Báo cáo tổng hợp được tải qua refreshDiagnostics() bên dưới.
   $('deviceStatus').textContent =
     'Wi-Fi: ' + (status.ssid || '—') + '\nIP: ' + (status.ip || '—') +
     '\nWeb Admin: http://' + (status.hostname || 'chatai-tpios.local') +
@@ -632,12 +638,13 @@ $('otaBtn').addEventListener('click', () => {
 (async () => {
   try {
     await loadAdmin();
-  } catch (_) {
+  } catch (error) {
+    // Chỉ API trạng thái thất bại mới rơi vào màn hình Wi-Fi; không giả mạo
+    // trạng thái AP khi một lỗi JavaScript hoặc API phụ làm hỏng quá trình tải.
     $('statusDot').className = 'dot offline';
-    $('statusText').textContent = 'Chế độ cấu hình Wi-Fi (AP)';
-    $('adminNav').classList.add('hidden');
+    $('statusText').textContent = 'Không tải được trạng thái Web Admin: ' + error.message;
     showSection('wifiSection');
-    try { await scanWifi(); } catch (error) { $('wifiResult').textContent = error.message; }
+    try { await scanWifi(); } catch (scanError) { $('wifiResult').textContent = scanError.message; }
   }
 })();
 </script>
