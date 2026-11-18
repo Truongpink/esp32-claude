@@ -30,6 +30,12 @@
   .dot.offline { background: #ef4444; animation: none; }
   @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.4} }
   .status-bar { padding: 12px 24px; background: #10121b; border-bottom: 1px solid #252839; font-size: 13px; }
+
+  .admin-nav { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:8px; padding:14px 20px 0; }
+  .nav-item { min-height:44px; padding:10px 12px; border:1px solid #30354b; border-radius:10px; background:#191c29; color:#c9cbe0; text-align:left; font-size:13px; font-weight:600; cursor:pointer; }
+  .nav-item.active { border-color:#7771ff; background:#28264a; color:#fff; }
+  .admin-nav.hidden { display:none; }
+  @media(max-width:640px) { .admin-nav { grid-template-columns:repeat(2,minmax(0,1fr)); padding:12px 14px 0; } .nav-item { font-size:12px; } }
   .body { padding: 20px; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
   .section { min-width: 0; background: #10121b; border-radius: 14px; overflow: hidden; border: 1px solid #292d40; }
   .section-title { padding: 14px 17px; font-size: 12px; font-weight: 700; letter-spacing: .35px; color: #b3adff; border-bottom: 1px solid #292d40; background: rgba(255,255,255,.018); }
@@ -119,6 +125,16 @@
     <div class="dot offline" id="statusDot"></div>
     <span id="statusText">Đang kiểm tra kết nối...</span>
   </div>
+
+
+  <nav class="admin-nav hidden" id="adminNav" aria-label="Danh mục quản trị">
+    <button class="nav-item active" type="button" data-page="home">⌂ Tổng quan</button>
+    <button class="nav-item" type="button" data-page="wifi">📶 Kết nối</button>
+    <button class="nav-item" type="button" data-page="gemini">✨ Gemini Live</button>
+    <button class="nav-item" type="button" data-page="audio">🔊 Âm thanh</button>
+    <button class="nav-item" type="button" data-page="diagnostics">🧾 Chẩn đoán & nhật ký</button>
+    <button class="nav-item" type="button" data-page="system">⚙️ Hệ thống</button>
+  </nav>
 
   <div class="body">
     <section class="section hidden" id="panicSection">
@@ -348,6 +364,28 @@ function togglePass(id) {
 }
 function showSection(id) { $(id).classList.remove('hidden'); }
 
+const adminPages = {
+  home: ['statusSection', 'otaSection'],
+  wifi: ['wifiSection'],
+  gemini: ['geminiSection'],
+  audio: ['audioSection'],
+  diagnostics: ['panicSection', 'diagnosticsSection', 'runtimeLogSection'],
+  system: ['featuresSection', 'oledSection', 'deviceActionsSection']
+};
+function showAdminPage(page) {
+  const visible = adminPages[page] || adminPages.home;
+  Object.values(adminPages).flat().forEach(id => $(id).classList.add('hidden'));
+  visible.forEach(id => $(id).classList.remove('hidden'));
+  document.querySelectorAll('.nav-item').forEach(button =>
+    button.classList.toggle('active', button.dataset.page === page));
+  $('saveWrap').classList.toggle('hidden', !['gemini', 'audio', 'system'].includes(page));
+  $('adminNav').classList.remove('hidden');
+  window.scrollTo({top:0, behavior:'smooth'});
+}
+document.querySelectorAll('.nav-item').forEach(button =>
+  button.addEventListener('click', () => showAdminPage(button.dataset.page)));
+
+
 async function scanWifi() {
   const list = $('wifiList');
   list.textContent = 'Đang quét mạng...';
@@ -434,11 +472,11 @@ async function loadAdmin() {
   showSection('statusSection'); showSection('diagnosticsSection'); showSection('runtimeLogSection'); showSection('geminiSection'); showSection('audioSection');
   try { await refreshRuntimeLog(); } catch (error) { $('runtimeLogText').value = 'Không tải được nhật ký: ' + error.message; }
   showSection('featuresSection'); showSection('oledSection'); showSection('otaSection'); showSection('deviceActionsSection');
-  $('saveWrap').classList.remove('hidden');
   if (!status.ota_enabled || !status.ota_target || status.ota_target === 'unavailable' || !status.ota_max_bytes) {
     $('otaBtn').disabled = true;
     $('otaResult').textContent = 'OTA chưa được bật hoặc thiết bị không có phân vùng OTA hợp lệ.';
   }
+  showAdminPage('home');
 }
 
 function renderDiagnostics(status) {
@@ -650,6 +688,7 @@ $('otaBtn').addEventListener('click', () => {
   } catch (_) {
     $('statusDot').className = 'dot offline';
     $('statusText').textContent = 'Chế độ cấu hình Wi-Fi (AP)';
+    $('adminNav').classList.add('hidden');
     showSection('wifiSection');
     try { await scanWifi(); } catch (error) { $('wifiResult').textContent = error.message; }
   }
