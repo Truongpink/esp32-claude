@@ -13,8 +13,10 @@
   per-boot random password and a local HTTP form at `192.168.4.1`. The AP SSID and
   password are exposed only through NetworkManager getters for the OLED UI; they
   are never written to logs or NVS. The AP stops after the station connects.
-- The OLED display of temporary setup credentials is not yet ported, so the
-  portal is implemented but not yet discoverable to end users on this scaffold.
+- A standalone SSD1306 text display uses ESP-IDF's I2C master driver directly;
+  it shows the setup AP SSID/password and `192.168.4.1`, or the station IP after
+  connection. It uses GPIO 41/42 and address 0x3C from the existing board profile.
+  These pins and the display remain unverified on the physical device.
 - No XiaoZhi source, headers, components, or cloud services are linked by the
   standalone project.
 - Existing firmware, scripts, OTA flow, and manual-only workflow are unchanged.
@@ -25,9 +27,10 @@
    initialization with NVS preservation.
 2. **Network ownership — first slice added:** native station initialization,
    persisted SSID/password, connection state, IPv4 reporting, and bounded reconnect
-   attempts. A WPA2-protected setup AP and local HTTP form are implemented; showing
-   temporary AP credentials on the OLED remains part of the hardware/UI migration.
-3. **Hardware/audio ownership:** move I2S, GPIO, buttons, OLED, PCM capture/playback,
+   attempts. A WPA2-protected setup AP, local HTTP form, and standalone SSD1306
+   status screen are implemented in the independent project.
+3. **Hardware/audio ownership:** OLED text output has a standalone first slice;
+   move I2S, GPIO, buttons, PCM capture/playback,
    and the currently required AEC path behind ChatAI-owned interfaces.
 4. **Gemini Live ownership:** move the existing wire-protocol behavior into a
    standalone client that does not inherit XiaoZhi `Protocol` or use

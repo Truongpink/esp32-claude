@@ -5,6 +5,7 @@
 #include <nvs_flash.h>
 
 #include "network_manager.h"
+#include "display_manager.h"
 
 namespace {
 constexpr char kTag[] = "ChatAI";
@@ -38,6 +39,12 @@ bool InitializePlatform() {
         return false;
     }
 
+    const esp_err_t display_result = chatai::display::Initialize();
+    if (display_result != ESP_OK) {
+        ESP_LOGW(kTag, "OLED initialization skipped: %s",
+                 esp_err_to_name(display_result));
+    }
+
     return true;
 }
 }  // namespace
@@ -50,6 +57,6 @@ extern "C" void app_main(void) {
         return;
     }
 
-    ESP_LOGI(kTag, "ESP-IDF platform and native Wi-Fi station are ready");
+    ESP_LOGI(kTag, "ESP-IDF platform, native Wi-Fi and ChatAI OLED are initialized");
     ESP_LOGI(kTag, "Standalone mode: no XiaoZhi application or cloud components");
 }
