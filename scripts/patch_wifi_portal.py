@@ -123,7 +123,47 @@ def main() -> None:
         "    receive_buffer_.reserve(receive_buffer_size_);\n"
         "    current_message_.reserve(receive_buffer_size_);\n"
         "}",
+   
+    replace_once(
+        websocket_source,
+        """        // 解码有效载荷
+        std::vector<char> payload(payload_length);
+        if (payload_length > 0) {
+            memcpy(payload.data(), buffer + buffer_offset + header_length, payload_length);
+            if (mask) {
+                for (size_t i = 0; i < payload_length; ++i) {
+                    payload[i] ^= mask_key[i % 4];
+                }
+            }
+        }
+""",
+        """        const char* payload_data = reinterpret_cast<const char*>(
+            buffer + buffer_offset + header_length);
+        std::vector<char> unmasked_payload;
+        if (mask && payload_length > 0) {
+            unmasked_payload.assign(payload_data, payload_data + payload_length);
+            for (size_t i = 0; i < payload_length; ++i) {
+                unmasked_payload[i] ^= mask_key[i % 4];
+            }
+            payload_data = unmasked_payload.data();
+        }
+""",
     )
+    replace_once(
+        websocket_source,
+        "                current_message_.insert(current_message_.end(), payload.begin(), payload.end());",
+        "                current_message_.insert(current_message_.end(), payload_data, payload_data + payload_length);",
+    )
+    replace_once(
+        websocket_source,
+        "payload.data()",
+        "payload_data",
+    )
+    replace_once(
+        websocket_source,
+        "        receive_buffer_ = receive_buffer_.substr(buffer_offset);",
+        "        receive_buffer_.erase(0, buffer_offset);",
+    ) )
     print(f"Configured Gemini WSS receive buffers and stack in {ssl_source.parents[2].name}.")
 
 
