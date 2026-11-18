@@ -11,6 +11,24 @@ def replace_once(path: Path, old: str, new: str) -> None:
 
 
 def apply(root: Path, upstream: Path) -> None:
+    # The upstream default disables wake-word detection. Explicitly enable
+    # English MultiNet 7 for the ESP32-S3 and package its model into assets.bin.
+    sdkconfig_defaults = upstream / "sdkconfig.defaults.esp32s3"
+    defaults = sdkconfig_defaults.read_text(encoding="utf-8")
+    wake_settings = {
+        "CONFIG_USE_CUSTOM_WAKE_WORD": "y",
+        "CONFIG_SR_MN_EN_MULTINET7_QUANT": "y",
+        "CONFIG_CUSTOM_WAKE_WORD": '"hey chatai"',
+        "CONFIG_CUSTOM_WAKE_WORD_DISPLAY": '"Hey ChatAI"',
+        "CONFIG_CUSTOM_WAKE_WORD_THRESHOLD": "20",
+    }
+    lines = [line for line in defaults.splitlines()
+             if not any(line.startswith(key + "=") for key in wake_settings)]
+    lines.extend(("", "# ChatAI TPIOS English MultiNet wake word", *(
+        f"{key}={value}" for key, value in wake_settings.items()
+    )))
+    sdkconfig_defaults.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
     # MultiNet command words are loaded from assets, then overridden by the
     # user's persisted phrase. The setter serializes dictionary updates with Feed().
     wake_h = upstream / "main/audio/wake_words/custom_wake_word.h"
