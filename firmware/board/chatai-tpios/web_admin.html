@@ -33,7 +33,10 @@
   .body { padding: 20px; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
   .section { min-width: 0; background: #10121b; border-radius: 14px; overflow: hidden; border: 1px solid #292d40; }
   .section-title { padding: 14px 17px; font-size: 12px; font-weight: 700; letter-spacing: .35px; color: #b3adff; border-bottom: 1px solid #292d40; background: rgba(255,255,255,.018); }
-  #wifiSection, #statusSection, #geminiSection, #otaSection { grid-column: 1 / -1; }
+  #wifiSection, #statusSection, #geminiSection, #otaSection, #panicSection { grid-column: 1 / -1; }
+  .panic-alert { padding: 16px; border: 1px solid #7f3434; border-radius: 12px; background: #291719; }
+  .panic-alert h2 { color: #ff9b9b; font-size: 15px; margin-bottom: 8px; }
+  .panic-alert p { color: #e5bfc0; font-size: 13px; line-height: 1.55; margin-bottom: 12px; }
   .field { padding: 13px 17px; }
   .field label { font-size: 13px; color: #b2b5c5; }
   .field input, .field textarea, .field select { min-height: 44px; background: #181b28; border-color: #30354b; border-radius: 10px; font-size: 16px; }
@@ -101,7 +104,7 @@
     .header { padding: 21px 18px; }
     .status-bar { padding: 12px 18px; }
     .body { grid-template-columns: minmax(0,1fr); gap: 12px; padding: 14px; }
-    #wifiSection, #statusSection, #geminiSection, #otaSection { grid-column: auto; }
+    #wifiSection, #statusSection, #geminiSection, #otaSection, #panicSection { grid-column: auto; }
     .save-wrap { padding-left: 14px; padding-right: 14px; }
   }
 </style>
@@ -118,6 +121,13 @@
   </div>
 
   <div class="body">
+    <section class="section hidden" id="panicSection">
+      <div class="panic-alert">
+        <h2>⚠️ Phát hiện lỗi PANIC ở lần khởi động trước</h2>
+        <p>Thiết bị đã khởi động lại do PANIC. Báo cáo tải xuống hiện chỉ có nguyên nhân reset; firmware chưa có phân vùng Core Dump nên chưa thể cung cấp PC hoặc backtrace.</p>
+        <button class="secondary-btn" id="downloadResetReport" type="button">Tải báo cáo reset về iPhone</button>
+      </div>
+    </section>
     <section class="section hidden" id="wifiSection">
       <div class="section-title">📶 Wi-Fi</div>
       <div class="wifi-scan">
@@ -372,6 +382,7 @@ async function loadAdmin() {
   const config = await configResponse.json();
   otaMaxBytes = Number(status.ota_max_bytes || 0);
   $('statusDot').className = 'dot';
+  if (status.panic_detected) showSection('panicSection');
   $('statusText').textContent = 'Đã kết nối · ' + (status.ip || '') + ' · ' + (status.ssid || '');
   $('deviceStatus').textContent =
     'Wi-Fi: ' + (status.ssid || '—') + '\nIP: ' + (status.ip || '—') +
@@ -403,6 +414,10 @@ async function loadAdmin() {
     $('otaResult').textContent = 'OTA chưa được bật hoặc thiết bị không có phân vùng OTA hợp lệ.';
   }
 }
+
+$('downloadResetReport').addEventListener('click', () => {
+  window.location.href = '/api/reset-report';
+});
 
 $('volume').addEventListener('input', () => { $('volumeValue').textContent = $('volume').value + '%'; });
 $('micGain').addEventListener('input', () => { $('micGainValue').textContent = $('micGain').value + ' dB'; });
