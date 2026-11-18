@@ -250,6 +250,13 @@ void GeminiLiveProtocol::ProcessPending() {
     if (turn_complete_pending_.load() && audio_service_.IsPlaybackIdle()) {
         FinishOutputTurn();
     }
+    // FinishOutputTurn() can set this flag in the same event-loop pass above.
+    if (resume_voice_processing_pending_.exchange(false) && IsAudioChannelOpened()) {
+        audio_service_.EnableVoiceProcessing(true);
+        audio_service_.EnablePcmBridge(true);
+        listening_ = true;
+        g_microphone_streaming = true;
+    }
     if (!listening_ || !IsAudioChannelOpened()) return;
     std::vector<int16_t> pcm;
     while (audio_service_.PopPcmInput(pcm)) {
