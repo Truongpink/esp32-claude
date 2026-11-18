@@ -45,9 +45,9 @@ The implementation still requires a fresh authorized build and physical-device v
 
 ## Flash layout and OTA
 
-The current defaults select ESP-IDF's 1.5 MB single-app partition layout. OTA slots are not provided and OTA is not implemented in this Standalone firmware. The repository workflow publishes only `ChatAI_TPIOS.bin`; it does not publish bootloader or partition-table files.
+The defaults select the 16 MB dual-slot partition layout used by the earlier Xiaozhi-derived ChatAI OTA firmware: `ota_0` and `ota_1` are each `0x3F0000` bytes, with `otadata` and the existing NVS offset preserved. The standalone Web Admin accepts one application-only `ChatAI_TPIOS.bin` and writes it to the inactive OTA slot. The new app confirms successful startup with ESP-IDF rollback support.
 
-A first-time USB installation requires a compatible bootloader and partition table already supplied by the installation process. Do not change flash size or partition layout without confirming the actual hardware configuration.
+The user confirmed the board variant is N16R8 (16 MB flash / 8 MB PSRAM). The exact partition table currently installed on the physical unit has not been read back; compatibility is based on the previously deployed project layout and the user's successful OTA history. Keep the existing bootloader and partition table during the application-only transition.
 
 ## Security
 
