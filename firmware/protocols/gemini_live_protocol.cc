@@ -33,6 +33,23 @@ std::atomic<bool> g_microphone_streaming{false};
 std::mutex g_diagnostics_mutex;
 std::string g_last_error;
 
+void LogMemorySnapshot(const char* stage) {
+    const auto internal_free = heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+    const auto internal_largest = heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+    const auto psram_free = heap_caps_get_free_size(MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    const auto psram_largest = heap_caps_get_largest_free_block(MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    const auto total_free = heap_caps_get_free_size(MALLOC_CAP_8BIT);
+    ESP_LOGW(TAG,
+             "MEM stage=%s internal_free=%u internal_largest=%u psram_free=%u psram_largest=%u total_8bit=%u task_stack_free=%u",
+             stage,
+             static_cast<unsigned>(internal_free),
+             static_cast<unsigned>(internal_largest),
+             static_cast<unsigned>(psram_free),
+             static_cast<unsigned>(psram_largest),
+             static_cast<unsigned>(total_free),
+             static_cast<unsigned>(uxTaskGetStackHighWaterMark(nullptr)));
+}
+
 constexpr uint32_t kDiagnosticHistoryMagic = 0x47444832;
 constexpr size_t kDiagnosticHistoryCapacity = 24;
 struct DiagnosticHistoryEvent {
@@ -319,6 +336,7 @@ GeminiLiveProtocol::GeminiLiveProtocol(AudioService& audio) : audio_service_(aud
     EnsureDiagnosticHistory();
     RecordDiagnosticEvent("Gemini protocol constructed");
     event_group_ = xEventGroupCreate();
+    LogMemorySnapshot("protocol_constructed");
 }
 GeminiLiveProtocol::~GeminiLiveProtocol() { CloseAudioChannel(false); if (event_group_) vEventGroupDelete(event_group_); }
 GeminiLiveProtocol::Diagnostics GeminiLiveProtocol::GetDiagnostics() {
@@ -381,6 +399,7 @@ bool GeminiLiveProtocol::SendSetup() {
     std::string msg = PrintJson(root); cJSON_Delete(root); return !msg.empty() && websocket_->Send(msg);
 }
 bool GeminiLiveProtocol::OpenAudioChannel() {
+    LogMemorySnapshot("open_channel_start");
     BeginPersistedGeminiSession();
     RecordDiagnosticEvent("Gemini connect requested");
     g_microphone_chunks_sent = 0;
@@ -409,6 +428,7 @@ bool GeminiLiveProtocol::OpenAudioChannel() {
     auto socket = network->CreateWebSocket(1);
     if (!socket) { Fail("Failed to create Gemini Live WebSocket"); return false; }
     websocket_ = std::shared_ptr<WebSocket>(std::move(socket));
+    LogMemorySnapshot("websocket_created");
     if (heap_caps_get_free_size(MALLOC_CAP_8BIT) < 2 * 16384 + 10000 ||
         heap_caps_get_largest_free_block(MALLOC_CAP_8BIT) < 16384) {
         ESP_LOGE(TAG, "Low heap, skip");
@@ -722,6 +742,7 @@ void GeminiLiveProtocol::HandleAudioPart(const cJSON* part) {
                  static_cast<unsigned>(uxTaskGetStackHighWaterMark(nullptr)));
     }
 
+    if (next_chunk == 1 || next_chunk % 25 == 0) LogMemorySnapshot("before_pcm_decode");
     PauseMicrophoneForResponse();
     if (!output_turn_started_) {
         output_turn_started_ = true;
@@ -763,6 +784,7 @@ void GeminiLiveProtocol::HandleAudioPart(const cJSON* part) {
     SetPersistedGeminiCounters(g_microphone_chunks_sent.load(), received);
     if (received == 1 || received % 25 == 0) {
         RecordDiagnosticEvent("Gemini response audio chunks=%lu", static_cast<unsigned long>(received));
+        LogMemorySnapshot("after_pcm_enqueue");
     }
 }
 void GeminiLiveProtocol::EmitTranscript(const char* type, const char* state, const char* text) {
@@ -795,6 +817,7 @@ void GeminiLiveProtocol::PauseMicrophoneForResponse() {
     SetPersistedGeminiState(g_session_connected.load(), false);
     RecordDiagnosticEvent("Microphone paused for Gemini response");
     audio_service_.EnablePcmBridge(false);
+    LogMemorySnapshot("microphone_paused");
 }
 
 void GeminiLiveProtocol::FinishOutputTurn() {
@@ -808,6 +831,7 @@ void GeminiLiveProtocol::FinishOutputTurn() {
         SetPersistedGeminiState(true, true);
         RecordDiagnosticEvent("Microphone streaming resumed");
     }
+    LogMemorySnapshot("output_turn_finished");
 }
 
 void GeminiLiveProtocol::Fail(const std::string& message) {
