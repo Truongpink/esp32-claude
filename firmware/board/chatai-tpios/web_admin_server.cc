@@ -339,17 +339,17 @@ esp_err_t RuntimeLogHandler(httpd_req_t* req) {
     const auto diagnostics = GeminiLiveProtocol::GetDiagnostics();
     char header[512] = {};
     std::snprintf(header, sizeof(header),
-        "ChatAI TPIOS - COMBINED DIAGNOSTICS\\n"
-        "Firmware: %s\\n"
-        "Running partition: %s\\n"
-        "Reset reason: %s\\n"
-        "PANIC detected: %s\\n\\n"
-        "GEMINI LIVE STATUS\\n"
-        "Session connected: %s\\n"
-        "Microphone streaming: %s\\n"
-        "Microphone chunks sent: %lu\\n"
-        "Response audio chunks: %lu\\n"
-        "Last Gemini error: %s\\n\\n",
+        "ChatAI TPIOS - COMBINED DIAGNOSTICS\n"
+        "Firmware: %s\n"
+        "Running partition: %s\n"
+        "Reset reason: %s\n"
+        "PANIC detected: %s\n\n"
+        "GEMINI LIVE STATUS\n"
+        "Session connected: %s\n"
+        "Microphone streaming: %s\n"
+        "Microphone chunks sent: %lu\n"
+        "Response audio chunks: %lu\n"
+        "Last Gemini error: %s\n\n",
         app ? app->version : "unknown",
         running ? running->label : "unknown",
         ResetReasonLabel(esp_reset_reason()),
@@ -364,17 +364,17 @@ esp_err_t RuntimeLogHandler(httpd_req_t* req) {
     httpd_resp_set_hdr(req, "Cache-Control", "no-store");
     httpd_resp_set_hdr(req, "Content-Disposition", "attachment; filename=chatai-diagnostics.txt");
     esp_err_t result = httpd_resp_sendstr_chunk(req, header);
-    if (result == ESP_OK) result = httpd_resp_sendstr_chunk(req, "PREVIOUS GEMINI SESSION\\n");
+    if (result == ESP_OK) result = httpd_resp_sendstr_chunk(req, "PREVIOUS GEMINI SESSION\n");
     if (result == ESP_OK) result = httpd_resp_sendstr_chunk(req,
         diagnostics.previous_session_summary.empty()
-            ? "No previous Gemini session snapshot.\\n"
+            ? "No previous Gemini session snapshot.\n"
             : diagnostics.previous_session_summary.c_str());
-    if (result == ESP_OK) result = httpd_resp_sendstr_chunk(req, "\\nGEMINI EVENT HISTORY\\n");
+    if (result == ESP_OK) result = httpd_resp_sendstr_chunk(req, "\nGEMINI EVENT HISTORY\n");
     if (result == ESP_OK) result = httpd_resp_sendstr_chunk(req,
         diagnostics.event_history.empty()
-            ? "No retained Gemini events.\\n"
+            ? "No retained Gemini events.\n"
             : diagnostics.event_history.c_str());
-    if (result == ESP_OK) result = httpd_resp_sendstr_chunk(req, "\\nSYSTEM RUNTIME LOG (latest 4 KB)\\n");
+    if (result == ESP_OK) result = httpd_resp_sendstr_chunk(req, "\nSYSTEM RUNTIME LOG (latest 4 KB)\n");
     if (result == ESP_OK && runtime_length > 0) {
         result = httpd_resp_send_chunk(req, runtime_log, runtime_length);
     }
