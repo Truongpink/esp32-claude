@@ -26,6 +26,4 @@ These are configuration/evidence notes, not a substitute for the exact board sch
 
 ## Flash and partition layout
 
-The Standalone defaults currently select ESP-IDF's 1.5 MB single-app partition layout. The physical flash size and installed partition table have not been read back from the user's board. OTA slots are not present in this layout and OTA is not implemented in the current Standalone firmware.
-
-Do not change flash size or partition layout without explicit confirmation from the actual hardware.
+Standalone now targets the 16 MB dual-slot OTA layout used by the earlier Xiaozhi-derived ChatAI firmware. It preserves NVS at 0x9000, otadata at 0xD000, ota_0 at 0x20000, and ota_1 immediately after ota_0; each app slot is 0x3F0000 bytes. The user confirmed the N16R8 board variant. The installed physical partition table has not been read back independently, so the first application-only OTA should be attempted only after confirming the running firmware reports the expected OTA target and available slot size.
