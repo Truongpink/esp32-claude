@@ -33,7 +33,7 @@
   .body { padding: 20px; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
   .section { min-width: 0; background: #10121b; border-radius: 14px; overflow: hidden; border: 1px solid #292d40; }
   .section-title { padding: 14px 17px; font-size: 12px; font-weight: 700; letter-spacing: .35px; color: #b3adff; border-bottom: 1px solid #292d40; background: rgba(255,255,255,.018); }
-  #wifiSection, #statusSection, #geminiSection, #otaSection, #panicSection { grid-column: 1 / -1; }
+  #wifiSection, #statusSection, #diagnosticsSection, #geminiSection, #otaSection, #panicSection { grid-column: 1 / -1; }
   .panic-alert { padding: 16px; border: 1px solid #7f3434; border-radius: 12px; background: #291719; }
   .panic-alert h2 { color: #ff9b9b; font-size: 15px; margin-bottom: 8px; }
   .panic-alert p { color: #e5bfc0; font-size: 13px; line-height: 1.55; margin-bottom: 12px; }
@@ -104,7 +104,7 @@
     .header { padding: 21px 18px; }
     .status-bar { padding: 12px 18px; }
     .body { grid-template-columns: minmax(0,1fr); gap: 12px; padding: 14px; }
-    #wifiSection, #statusSection, #geminiSection, #otaSection, #panicSection { grid-column: auto; }
+    #wifiSection, #statusSection, #diagnosticsSection, #geminiSection, #otaSection, #panicSection { grid-column: auto; }
     .save-wrap { padding-left: 14px; padding-right: 14px; }
   }
 </style>
@@ -152,6 +152,18 @@
     <section class="section hidden" id="statusSection">
       <div class="section-title">📡 Trạng thái thiết bị</div>
       <div class="info" id="deviceStatus">Đang tải...</div>
+    </section>
+
+    <section class="section hidden" id="diagnosticsSection">
+      <div class="section-title">🧾 Chẩn đoán Gemini Live</div>
+      <div class="info" id="diagnosticsText">Đang tải dữ liệu chẩn đoán...</div>
+      <div class="field">
+        <button class="secondary-btn" id="refreshDiagnostics" type="button">↻ Cập nhật chẩn đoán</button>
+      </div>
+      <div class="field">
+        <button class="secondary-btn" id="copyDiagnostics" type="button">📋 Sao chép chẩn đoán</button>
+      </div>
+      <div class="info">Đây là bộ đếm và trạng thái của phiên hiện tại, không phải nhật ký PANIC đầy đủ. Sau khi thiết bị khởi động lại, bộ đếm phiên có thể trở về 0.</div>
     </section>
 
     <section class="section hidden" id="geminiSection">
@@ -384,6 +396,7 @@ async function loadAdmin() {
   $('statusDot').className = 'dot';
   if (status.panic_detected) showSection('panicSection');
   $('statusText').textContent = 'Đã kết nối · ' + (status.ip || '') + ' · ' + (status.ssid || '');
+  renderDiagnostics(status);
   $('deviceStatus').textContent =
     'Wi-Fi: ' + (status.ssid || '—') + '\nIP: ' + (status.ip || '—') +
     '\nWeb Admin: http://' + (status.hostname || 'chatai-tpios.local') +
@@ -406,7 +419,7 @@ async function loadAdmin() {
     '\nSlot đang chạy: ' + (status.partition || 'unknown') +
     '\nSlot cập nhật: ' + (status.ota_target || 'không khả dụng') +
     '\nDung lượng slot: ' + (status.ota_max_bytes ? (status.ota_max_bytes / 1048576).toFixed(2) + ' MB' : '—');
-  showSection('statusSection'); showSection('geminiSection'); showSection('audioSection');
+  showSection('statusSection'); showSection('diagnosticsSection'); showSection('geminiSection'); showSection('audioSection');
   showSection('featuresSection'); showSection('oledSection'); showSection('otaSection'); showSection('deviceActionsSection');
   $('saveWrap').classList.remove('hidden');
   if (!status.ota_enabled || !status.ota_target || status.ota_target === 'unavailable' || !status.ota_max_bytes) {
@@ -415,6 +428,47 @@ async function loadAdmin() {
   }
 }
 
+function renderDiagnostics(status) {
+  $('diagnosticsText').textContent =
+    'Reset reason: ' + (status.reset_reason || 'unknown') +
+    '\nFirmware: ' + (status.version || 'unknown') +
+    '\nPartition: ' + (status.partition || 'unknown') +
+    '\nGemini session: ' + (status.live_session_connected ? 'Connected' : 'Disconnected') +
+    '\nMicrophone streaming: ' + (status.mic_streaming ? 'Yes' : 'No') +
+    '\nMicrophone chunks sent: ' + Number(status.mic_chunks_sent || 0) +
+    '\nResponse audio chunks: ' + Number(status.response_audio_chunks || 0) +
+    '\nLast Gemini error: ' + (status.live_last_error || 'None');
+}
+async function refreshDiagnostics() {
+  const response = await fetch('/api/status', {cache:'no-store'});
+  if (!response.ok) throw new Error('Không đọc được trạng thái chẩn đoán');
+  renderDiagnostics(await response.json());
+}
+$('refreshDiagnostics').addEventListener('click', async () => {
+  $('refreshDiagnostics').disabled = true;
+  try { await refreshDiagnostics(); toast('Đã cập nhật chẩn đoán'); }
+  catch (error) { toast(error.message, true); }
+  finally { $('refreshDiagnostics').disabled = false; }
+});
+$('copyDiagnostics').addEventListener('click', async () => {
+  const text = $('diagnosticsText').textContent;
+  try {
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      await navigator.clipboard.writeText(text);
+    } else {
+      const field = document.createElement('textarea');
+      field.value = text;
+      field.style.position = 'fixed';
+      field.style.opacity = '0';
+      document.body.appendChild(field);
+      field.select();
+      const copied = document.execCommand('copy');
+      field.remove();
+      if (!copied) throw new Error('Trình duyệt không hỗ trợ sao chép tự động');
+    }
+    toast('Đã sao chép chẩn đoán');
+  } catch (error) { toast(error.message, true); }
+});
 $('downloadResetReport').addEventListener('click', () => {
   window.location.href = '/api/reset-report';
 });
