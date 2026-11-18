@@ -7,6 +7,7 @@
 #include "network_manager.h"
 #include "display_manager.h"
 #include "audio_manager.h"
+#include "gemini_live_client.h"
 
 namespace {
 constexpr char kTag[] = "ChatAI";
@@ -62,6 +63,12 @@ extern "C" void app_main(void) {
     if (!InitializePlatform()) {
         ESP_LOGE(kTag, "Platform initialization stopped; no legacy fallback is loaded");
         return;
+    }
+
+    const esp_err_t gemini_result = chatai::gemini::Initialize();
+    if (gemini_result != ESP_OK) {
+        ESP_LOGW(kTag, "Gemini Live client unavailable: %s",
+                 esp_err_to_name(gemini_result));
     }
 
     ESP_LOGI(kTag, "ESP-IDF platform, native Wi-Fi and OLED startup completed");
