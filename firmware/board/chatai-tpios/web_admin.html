@@ -682,7 +682,7 @@ async function extractOtaBinFromZip(file) {
   }
   if (offset !== directory.byteLength) throw new Error('ZIP có dữ liệu thừa hoặc cấu trúc thư mục không hợp lệ.');
 
-  const excluded = /(^|\/)(bootloader|partition-table|partitions|ota_data_initial|usb-flash|merged|flash|firmware-full)\.bin$/i;
+  const excluded = /(^|\/)(bootloader|boot_app0|partition-table|partitions|ota_data_initial|usb-flash|merged|flash|firmware-full)\.bin$/i;
   const candidates = binaries.filter(entry => !excluded.test(entry.name));
   if (candidates.length !== 1) {
     throw new Error(candidates.length
