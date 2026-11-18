@@ -386,9 +386,11 @@ esp_err_t NetworkManager::Initialize() {
         if (result != ESP_OK) return result;
     }
 
-    ESP_LOGI(kTag, g_has_credentials
-        ? "Wi-Fi station initialized; saved network will be connected"
-        : "No saved Wi-Fi network; secure setup AP started");
+    if (g_has_credentials) {
+        ESP_LOGI(kTag, "Wi-Fi station initialized; saved network will be connected");
+    } else {
+        ESP_LOGI(kTag, "No saved Wi-Fi network; secure setup AP started");
+    }
     return ESP_OK;
 }
 
