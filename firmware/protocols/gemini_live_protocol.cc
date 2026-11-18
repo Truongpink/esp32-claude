@@ -173,10 +173,24 @@ std::string GetPreviousGeminiSessionSummary() {
     std::memcpy(last_error, g_diagnostic_history.previous_last_error, sizeof(last_error));
     portEXIT_CRITICAL(&g_diagnostic_history_mux);
     if (!valid) return "Chưa có phiên Gemini trước đó được lưu.";
+    const char* reset_reason = "UNKNOWN";
+    switch (static_cast<esp_reset_reason_t>(reason)) {
+        case ESP_RST_POWERON: reset_reason = "POWER ON"; break;
+        case ESP_RST_EXT: reset_reason = "EXTERNAL"; break;
+        case ESP_RST_SW: reset_reason = "SOFTWARE"; break;
+        case ESP_RST_PANIC: reset_reason = "PANIC"; break;
+        case ESP_RST_INT_WDT: reset_reason = "INT WDT"; break;
+        case ESP_RST_TASK_WDT: reset_reason = "TASK WDT"; break;
+        case ESP_RST_WDT: reset_reason = "WDT"; break;
+        case ESP_RST_DEEPSLEEP: reset_reason = "DEEPSLEEP"; break;
+        case ESP_RST_BROWNOUT: reset_reason = "BROWNOUT"; break;
+        case ESP_RST_SDIO: reset_reason = "SDIO"; break;
+        default: break;
+    }
     char summary[256] = {};
     std::snprintf(summary, sizeof(summary),
-                  "Phiên Gemini gần nhất: boot #%lu; reset reason code=%lu; mic chunks=%lu; response audio chunks=%lu; connected trước reset=%s; mic streaming trước reset=%s; lỗi cuối=%s",
-                  static_cast<unsigned long>(boot), static_cast<unsigned long>(reason),
+                  "Phiên Gemini gần nhất: boot #%lu; reset=%s; mic chunks=%lu; response audio chunks=%lu; connected trước reset=%s; mic streaming trước reset=%s; lỗi cuối=%s",
+                  static_cast<unsigned long>(boot), reset_reason,
                   static_cast<unsigned long>(mic), static_cast<unsigned long>(response),
                   connected ? "yes" : "no", streaming ? "yes" : "no",
                   last_error[0] ? last_error : "None");
