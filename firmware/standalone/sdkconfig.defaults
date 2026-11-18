@@ -1,3 +1,7 @@
 # ChatAI TPIOS standalone firmware target.
 # Keep flash size and partition layout unset until verified on the physical board.
 CONFIG_IDF_TARGET="esp32s3"
+
+# Required for Gemini Live WSS certificate verification.
+CONFIG_MBEDTLS_CERTIFICATE_BUNDLE=y
+CONFIG_MBEDTLS_DEFAULT_CERTIFICATE_BUNDLE=y
