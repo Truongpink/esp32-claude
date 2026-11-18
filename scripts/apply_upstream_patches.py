@@ -544,6 +544,22 @@ def patch_nonfatal_i2s_runtime_errors() -> None:
 
 patch_nonfatal_i2s_runtime_errors()
 
+# Use UART ELF core dumps: the current 16 MiB partition table has no reserved
+# coredump partition, and changing it would require a separate USB repartition.
+def enable_uart_core_dump() -> None:
+    defaults = UPSTREAM / "sdkconfig.defaults"
+    content = defaults.read_text(encoding="utf-8")
+    setting = "CONFIG_ESP_COREDUMP_ENABLE_TO_UART=y"
+    if setting not in content:
+        content = content.rstrip() + (
+            "\n\n# Emit an ELF core dump over the serial console after a panic.\n"
+            + setting + "\n"
+        )
+        defaults.write_text(content, encoding="utf-8")
+
+
+enable_uart_core_dump()
+
 # Add configurable MultiNet wake phrase and microphone gain support.
 from patch_voice_features import apply as apply_voice_features
 apply_voice_features(ROOT, UPSTREAM)
