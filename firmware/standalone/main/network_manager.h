@@ -11,6 +11,9 @@ public:
     static esp_err_t Connect(const std::string& ssid, const std::string& password);
     static bool IsConnected();
     static std::string GetIpAddress();
+    static bool IsProvisioningActive();
+    static std::string GetProvisioningSsid();
+    static std::string GetProvisioningPassword();
 };
 
 }  // namespace chatai::network
