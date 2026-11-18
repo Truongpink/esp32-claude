@@ -2,13 +2,19 @@ name: Build ChatAI TPIOS standalone firmware
 
 on:
   workflow_dispatch:
+    inputs:
+      publish_release:
+        description: "Phát hành bản chính thức và tăng Build Number"
+        required: true
+        type: boolean
+        default: false
 
 concurrency:
   group: chatai-tpios-standalone-build
   cancel-in-progress: false
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   build:
@@ -21,13 +27,31 @@ jobs:
         with:
           ref: main
 
+      - name: Determine official firmware Build Number
+        id: version
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PUBLISH_RELEASE: ${{ inputs.publish_release }}
+        run: |
+          set -euo pipefail
+          gh api "repos/${GITHUB_REPOSITORY}/releases?per_page=100" > /tmp/chatai-releases.json
+          latest_build="$(python3 -c 'import json,re,sys; releases=json.load(open(sys.argv[1])); nums=[int(m.group(1)) for r in releases if not r.get("draft") and not r.get("prerelease") for m in [re.fullmatch(r"build-([0-9]+)", r.get("tag_name", ""))] if m]; print(max(nums, default=0)' /tmp/chatai-releases.json)"
+          if [[ "${PUBLISH_RELEASE}" == "true" ]]; then
+            build_number=$((latest_build + 1))
+          else
+            build_number="${latest_build}"
+          fi
+          echo "build_number=${build_number}" >> "$GITHUB_OUTPUT"
+          echo "tag=build-${build_number}" >> "$GITHUB_OUTPUT"
+          echo "Firmware Build Number: #${build_number}"
+
       - name: Build standalone firmware with ESP-IDF 6.1
         uses: espressif/esp-idf-ci-action@v1
         with:
           esp_idf_version: v6.1
           target: esp32s3
           path: firmware/standalone
-          command: idf.py reconfigure && idf.py build
+          command: export CHATAI_FIRMWARE_BUILD=${{ steps.version.outputs.build_number }} && idf.py reconfigure && idf.py build
 
       - name: Verify application firmware
         shell: bash
@@ -49,3 +73,15 @@ jobs:
           path: firmware/standalone/build/ChatAI_TPIOS.bin
           if-no-files-found: error
           retention-days: 30
+
+      - name: Publish official firmware release
+        if: inputs.publish_release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BUILD_NUMBER: ${{ steps.version.outputs.build_number }}
+        run: |
+          set -euo pipefail
+          gh release create "build-${BUILD_NUMBER}" \
+            firmware/standalone/build/ChatAI_TPIOS.bin \
+            --title "ChatAI TPIOS Firmware Build #${BUILD_NUMBER}" \
+            --notes "Official ChatAI TPIOS application firmware for ESP32-S3. OTA image only; no bootloader or partition table."
