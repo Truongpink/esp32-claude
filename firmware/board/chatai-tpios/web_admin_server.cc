@@ -25,6 +25,7 @@
 #include <cctype>
 #include <cstdio>
 #include <cstdarg>
+#include <cstdlib>
 #include <esp_attr.h>
 
 extern const char index_html_start[] asm("_binary_wifi_configuration_html_start");
@@ -325,12 +326,18 @@ bool IsSameOrigin(httpd_req_t* req) {
 }
 
 esp_err_t RuntimeLogHandler(httpd_req_t* req) {
-    char snapshot[kRuntimeLogCapacity + 1] = {};
-    const size_t length = CopyRuntimeLogSnapshot(snapshot, sizeof(snapshot));
+    auto* snapshot = static_cast<char*>(std::malloc(kRuntimeLogCapacity + 1));
+    if (snapshot == nullptr) {
+        SendError(req, "503 Service Unavailable", "Not enough memory to read runtime log");
+        return ESP_OK;
+    }
+    const size_t length = CopyRuntimeLogSnapshot(snapshot, kRuntimeLogCapacity + 1);
     httpd_resp_set_type(req, "text/plain; charset=utf-8");
     httpd_resp_set_hdr(req, "Cache-Control", "no-store");
     httpd_resp_set_hdr(req, "Content-Disposition", "attachment; filename=chatai-runtime-log.txt");
-    return httpd_resp_send(req, snapshot, length);
+    const esp_err_t result = httpd_resp_send(req, snapshot, length);
+    std::free(snapshot);
+    return result;
 }
 
 esp_err_t ClearRuntimeLogHandler(httpd_req_t* req) {
