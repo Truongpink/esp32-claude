@@ -33,7 +33,7 @@
   .body { padding: 20px; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
   .section { min-width: 0; background: #10121b; border-radius: 14px; overflow: hidden; border: 1px solid #292d40; }
   .section-title { padding: 14px 17px; font-size: 12px; font-weight: 700; letter-spacing: .35px; color: #b3adff; border-bottom: 1px solid #292d40; background: rgba(255,255,255,.018); }
-  #wifiSection, #statusSection, #diagnosticsSection, #geminiSection, #otaSection, #panicSection { grid-column: 1 / -1; }
+  #wifiSection, #statusSection, #diagnosticsSection, #runtimeLogSection, #geminiSection, #otaSection, #panicSection { grid-column: 1 / -1; }
   .panic-alert { padding: 16px; border: 1px solid #7f3434; border-radius: 12px; background: #291719; }
   .panic-alert h2 { color: #ff9b9b; font-size: 15px; margin-bottom: 8px; }
   .panic-alert p { color: #e5bfc0; font-size: 13px; line-height: 1.55; margin-bottom: 12px; }
@@ -104,7 +104,7 @@
     .header { padding: 21px 18px; }
     .status-bar { padding: 12px 18px; }
     .body { grid-template-columns: minmax(0,1fr); gap: 12px; padding: 14px; }
-    #wifiSection, #statusSection, #diagnosticsSection, #geminiSection, #otaSection, #panicSection { grid-column: auto; }
+    #wifiSection, #statusSection, #diagnosticsSection, #runtimeLogSection, #geminiSection, #otaSection, #panicSection { grid-column: auto; }
     .save-wrap { padding-left: 14px; padding-right: 14px; }
   }
 </style>
@@ -164,6 +164,18 @@
         <button class="secondary-btn" id="copyDiagnostics" type="button">📋 Sao chép chẩn đoán</button>
       </div>
       <div class="info">Đây là bộ đếm và trạng thái của phiên hiện tại, không phải nhật ký PANIC đầy đủ. Sau khi thiết bị khởi động lại, bộ đếm phiên có thể trở về 0.</div>
+    </section>
+
+    <section class="section hidden" id="runtimeLogSection">
+      <div class="section-title">📜 Nhật ký hệ thống gần nhất</div>
+      <div class="info">Lưu vòng tối đa 4 KB log gần nhất và giữ lại qua lần khởi động lại bằng phần nhớ no-init. Có thể mất khi mất nguồn hoàn toàn. Nhật ký không thay thế Core Dump/backtrace.</div>
+      <div class="field">
+        <textarea id="runtimeLogText" rows="12" readonly spellcheck="false" placeholder="Đang tải nhật ký..."></textarea>
+      </div>
+      <div class="field"><button class="secondary-btn" id="refreshRuntimeLog" type="button">↻ Tải lại nhật ký</button></div>
+      <div class="field"><button class="secondary-btn" id="copyRuntimeLog" type="button">📋 Sao chép nhật ký</button></div>
+      <div class="field"><button class="secondary-btn" id="downloadRuntimeLog" type="button">⬇️ Tải nhật ký .txt</button></div>
+      <div class="field"><button class="secondary-btn" id="clearRuntimeLog" type="button">🗑️ Xóa nhật ký</button></div>
     </section>
 
     <section class="section hidden" id="geminiSection">
@@ -419,7 +431,8 @@ async function loadAdmin() {
     '\nSlot đang chạy: ' + (status.partition || 'unknown') +
     '\nSlot cập nhật: ' + (status.ota_target || 'không khả dụng') +
     '\nDung lượng slot: ' + (status.ota_max_bytes ? (status.ota_max_bytes / 1048576).toFixed(2) + ' MB' : '—');
-  showSection('statusSection'); showSection('diagnosticsSection'); showSection('geminiSection'); showSection('audioSection');
+  showSection('statusSection'); showSection('diagnosticsSection'); showSection('runtimeLogSection'); showSection('geminiSection'); showSection('audioSection');
+  try { await refreshRuntimeLog(); } catch (error) { $('runtimeLogText').value = 'Không tải được nhật ký: ' + error.message; }
   showSection('featuresSection'); showSection('oledSection'); showSection('otaSection'); showSection('deviceActionsSection');
   $('saveWrap').classList.remove('hidden');
   if (!status.ota_enabled || !status.ota_target || status.ota_target === 'unavailable' || !status.ota_max_bytes) {
@@ -468,6 +481,50 @@ $('copyDiagnostics').addEventListener('click', async () => {
     }
     toast('Đã sao chép chẩn đoán');
   } catch (error) { toast(error.message, true); }
+});
+async function refreshRuntimeLog() {
+  const response = await fetch('/api/logs', {cache:'no-store'});
+  if (!response.ok) throw new Error('HTTP ' + response.status);
+  $('runtimeLogText').value = await response.text();
+  $('runtimeLogText').scrollTop = $('runtimeLogText').scrollHeight;
+}
+$('refreshRuntimeLog').addEventListener('click', async () => {
+  $('refreshRuntimeLog').disabled = true;
+  try { await refreshRuntimeLog(); toast('Đã tải nhật ký'); }
+  catch (error) { toast('Không tải được nhật ký: ' + error.message, true); }
+  finally { $('refreshRuntimeLog').disabled = false; }
+});
+$('copyRuntimeLog').addEventListener('click', async () => {
+  const text = $('runtimeLogText').value;
+  try {
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      await navigator.clipboard.writeText(text);
+    } else {
+      const field = document.createElement('textarea');
+      field.value = text;
+      field.style.position = 'fixed';
+      field.style.opacity = '0';
+      document.body.appendChild(field);
+      field.select();
+      const copied = document.execCommand('copy');
+      field.remove();
+      if (!copied) throw new Error('Trình duyệt không hỗ trợ sao chép tự động');
+    }
+    toast('Đã sao chép nhật ký');
+  } catch (error) { toast(error.message, true); }
+});
+$('downloadRuntimeLog').addEventListener('click', () => { window.location.href = '/api/logs'; });
+$('clearRuntimeLog').addEventListener('click', async () => {
+  if (!confirm('Xóa nhật ký hệ thống đã lưu?')) return;
+  $('clearRuntimeLog').disabled = true;
+  try {
+    const response = await fetch('/api/logs/clear', {method:'POST'});
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(data.error || 'HTTP ' + response.status);
+    await refreshRuntimeLog();
+    toast('Đã xóa nhật ký');
+  } catch (error) { toast('Không xóa được nhật ký: ' + error.message, true); }
+  finally { $('clearRuntimeLog').disabled = false; }
 });
 $('downloadResetReport').addEventListener('click', () => {
   window.location.href = '/api/reset-report';
