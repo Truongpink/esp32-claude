@@ -161,7 +161,7 @@ def main() -> None:
     # control-frame payload references. Match the standalone "payload" identifier
     # only; a plain substring replacement also corrupts "unmasked_payload.data()".
     websocket_text = re.sub(
-        r"(?<![A-Za-z0-9_])payload\\.data\\(\\)",
+        r"(?<![A-Za-z0-9_])payload\.data\(\)",
         "payload_data",
         websocket_text,
     )
