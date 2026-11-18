@@ -239,7 +239,6 @@ esp_err_t StatusHandler(httpd_req_t* req) {
     cJSON_AddNumberToObject(root, "volume", audio.GetInt("volume", 70));
     const auto reset_reason = esp_reset_reason();
     cJSON_AddStringToObject(root, "reset_reason", ResetReasonLabel(reset_reason));
-    cJSON_AddBoolToObject(root, "panic_detected", reset_reason == ESP_RST_PANIC);
     const auto diagnostics = GeminiLiveProtocol::GetDiagnostics();
     cJSON_AddNumberToObject(root, "mic_chunks_sent", diagnostics.microphone_chunks_sent);
     cJSON_AddNumberToObject(root, "response_audio_chunks", diagnostics.response_audio_chunks_received);
@@ -250,35 +249,6 @@ esp_err_t StatusHandler(httpd_req_t* req) {
     cJSON_AddStringToObject(root, "live_previous_session", diagnostics.previous_session_summary.c_str());
     SendJson(req, root);
     return ESP_OK;
-}
-
-esp_err_t ResetReportHandler(httpd_req_t* req) {
-    const auto reason = esp_reset_reason();
-    const auto* app = esp_app_get_description();
-    const auto* running = esp_ota_get_running_partition();
-    char report[512] = {};
-    const int length = std::snprintf(
-        report, sizeof(report),
-        "ChatAI TPIOS - Reset report\n"
-        "Firmware: %s\n"
-        "Running partition: %s\n"
-        "Reset reason: %s\n"
-        "PANIC detected: %s\n\n"
-        "Limit: this firmware has no Core Dump partition configured. "
-        "This report contains the reset reason only; it does not contain "
-        "CPU registers, PC/LR, task stack or backtrace.\n",
-        app ? app->version : "unknown",
-        running ? running->label : "unknown",
-        ResetReasonLabel(reason),
-        reason == ESP_RST_PANIC ? "yes" : "no");
-    if (length < 0) {
-        SendError(req, "500 Internal Server Error", "Could not create reset report");
-        return ESP_OK;
-    }
-    httpd_resp_set_type(req, "text/plain; charset=utf-8");
-    httpd_resp_set_hdr(req, "Cache-Control", "no-store");
-    httpd_resp_set_hdr(req, "Content-Disposition", "attachment; filename=chatai-reset-report.txt");
-    return httpd_resp_send(req, report, std::min(static_cast<size_t>(length), sizeof(report) - 1));
 }
 
 esp_err_t ConfigGetHandler(httpd_req_t* req) {
@@ -718,7 +688,7 @@ void WebAdminServer::Start() {
     StartRuntimeLogCaptureInternal();
     httpd_config_t config = HTTPD_DEFAULT_CONFIG();
     config.server_port = 80;
-    config.max_uri_handlers = 11;
+    config.max_uri_handlers = 10;
     config.stack_size = 8192;
 
     if (httpd_start(&server, &config) != ESP_OK) {
@@ -730,7 +700,6 @@ void WebAdminServer::Start() {
     const httpd_uri_t routes[] = {
         {.uri = "/", .method = HTTP_GET, .handler = IndexHandler, .user_ctx = nullptr},
         {.uri = "/api/status", .method = HTTP_GET, .handler = StatusHandler, .user_ctx = nullptr},
-        {.uri = "/api/reset-report", .method = HTTP_GET, .handler = ResetReportHandler, .user_ctx = nullptr},
         {.uri = "/api/logs", .method = HTTP_GET, .handler = RuntimeLogHandler, .user_ctx = nullptr},
         {.uri = "/api/logs/clear", .method = HTTP_POST, .handler = ClearRuntimeLogHandler, .user_ctx = nullptr},
         {.uri = "/api/config", .method = HTTP_GET, .handler = ConfigGetHandler, .user_ctx = nullptr},
