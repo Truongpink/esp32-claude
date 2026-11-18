@@ -45,6 +45,8 @@ private:
     std::atomic<bool> output_turn_started_{false};
     std::atomic<bool> turn_complete_pending_{false};
     std::atomic<bool> resume_listening_after_playback_{false};
+    std::atomic<bool> pause_voice_processing_pending_{false};
+    std::atomic<bool> resume_voice_processing_pending_{false};
     std::string api_key_, model_, bot_name_, voice_name_, language_code_, system_instruction_, last_server_error_;
     bool SendText(const std::string& text) override;
     bool SendSetup();
