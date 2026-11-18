@@ -58,7 +58,7 @@ jobs:
           target: esp32s3
           path: xiaozhi-src
           extra_docker_args: -v ${{ github.workspace }}/.ccache:/root/.ccache -e CCACHE_DIR=/root/.ccache -e IDF_CCACHE_ENABLE=1 -e CCACHE_MAXSIZE=500M
-          command: idf.py reconfigure && python3 ../scripts/patch_wifi_portal.py && idf.py reconfigure && idf.py build
+          command: idf.py reconfigure && python3 ../scripts/patch_wifi_portal.py && idf.py reconfigure && idf.py build && ccache -s
 
       - name: Copy application image with build number
         run: sudo install -m 0644 xiaozhi-src/build/xiaozhi.bin "chatai-esp32-${{ steps.version.outputs.value }}.bin"
