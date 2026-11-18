@@ -1,0 +1,3 @@
+# ChatAI TPIOS standalone firmware target.
+# Keep flash size and partition layout unset until verified on the physical board.
+CONFIG_IDF_TARGET="esp32s3"
