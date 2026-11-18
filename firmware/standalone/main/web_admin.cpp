@@ -14,6 +14,7 @@
 #include <freertos/task.h>
 
 #include "gemini_settings.h"
+#include "firmware_info.h"
 
 namespace {
 constexpr char kTag[] = "ChatAI-Admin";
@@ -40,6 +41,9 @@ input{box-sizing:border-box;width:100%;padding:13px;border:1px solid #8888;borde
 button{padding:11px 16px;border:0;border-radius:9px;font:inherit;font-weight:600;margin:14px 8px 0 0}
 small,.muted{opacity:.72}
 #result{min-height:1.5em;margin-top:14px}
+.progress{height:8px;background:#8883;border-radius:8px;overflow:hidden;margin-top:10px}
+#otaProgress{height:100%;width:0;background:#4f8cff;transition:width .12s}
+#firmwareStatus{font-weight:650;margin:12px 0}
 </style>
 </head>
 <body>
@@ -57,10 +61,13 @@ small,.muted{opacity:.72}
 </div>
 <hr>
 <h2>Cập nhật Firmware OTA</h2>
-<p class="muted">Chọn file ChatAI_TPIOS.bin. Giữ thiết bị cắm nguồn trong suốt quá trình cập nhật.</p>
-<label for="firmware">Firmware BIN</label>
-<input id="firmware" type="file" accept=".bin,application/octet-stream">
-<button id="updateFirmware">Cài đặt firmware</button>
+<p id="firmwareStatus" role="status">Đang đọc phiên bản firmware...</p>
+<p class="muted">Hỗ trợ file BIN hoặc ZIP chứa duy nhất một firmware ứng dụng BIN. Không tắt nguồn trong quá trình cập nhật.</p>
+<label for="firmware">Firmware BIN / ZIP</label>
+<input id="firmware" type="file" accept=".bin,.zip,application/octet-stream,application/zip">
+<p id="otaFileInfo" class="muted">Chưa chọn file.</p>
+<button id="updateFirmware">Kiểm tra và cài đặt</button>
+<div class="progress" aria-label="Tiến trình tải firmware"><div id="otaProgress"></div></div>
 <p id="otaResult" role="status"></p>
 <p id="result" role="status"></p>
 </main>
@@ -74,29 +81,271 @@ const removeButton = document.getElementById("remove");
 const firmwareInput = document.getElementById("firmware");
 const updateFirmwareButton = document.getElementById("updateFirmware");
 const otaResult = document.getElementById("otaResult");
+const otaFileInfo = document.getElementById("otaFileInfo");
+const otaProgress = document.getElementById("otaProgress");
+const firmwareStatus = document.getElementById("firmwareStatus");
+let otaMaxBytes = 0;
+let currentBuildNumber = 0;
+
+function formatBytes(bytes) {
+  return (bytes / 1048576).toFixed(2) + " MB";
+}
+
+async function refreshFirmwareStatus() {
+  const response = await fetch("/api/firmware/status", {cache:"no-store"});
+  if (!response.ok) throw new Error("Không đọc được phiên bản firmware (HTTP " + response.status + ")");
+  const data = await response.json();
+  currentBuildNumber = Number(data.build_number || 0);
+  otaMaxBytes = Number(data.ota_max_bytes || 0);
+  firmwareStatus.textContent = "Firmware Build: #" + currentBuildNumber +
+    " · Slot đang chạy: " + (data.running_partition || "không rõ") +
+    " · Slot OTA: " + (data.ota_target || "không khả dụng");
+}
+
+function zipCrc32(bytes) {
+  let crc = 0xFFFFFFFF;
+  for (let i = 0; i < bytes.length; i++) {
+    crc ^= bytes[i];
+    for (let bit = 0; bit < 8; bit++) crc = (crc & 1) ? (crc >>> 1) ^ 0xEDB88320 : crc >>> 1;
+  }
+  return (crc ^ 0xFFFFFFFF) >>> 0;
+}
+
+async function readFirmwareBuild(blob) {
+  const bytes = new Uint8Array(await blob.arrayBuffer());
+  const marker = new TextEncoder().encode("CHATAI_BUILD_NUMBER=");
+  for (let i = 0; i <= bytes.length - marker.length; i++) {
+    let match = true;
+    for (let j = 0; j < marker.length; j++) {
+      if (bytes[i + j] !== marker[j]) { match = false; break; }
+    }
+    if (!match) continue;
+    let end = i + marker.length;
+    while (end < bytes.length && bytes[end] >= 48 && bytes[end] <= 57) end++;
+    if (end === i + marker.length) break;
+    const value = Number(new TextDecoder().decode(bytes.slice(i + marker.length, end)));
+    if (Number.isSafeInteger(value) && value >= 0) return value;
+  }
+  throw new Error("Không tìm thấy Build Number trong firmware. Hãy chọn BIN ChatAI TPIOS chính thức.");
+}
+
+async function extractOtaBinFromZip(file) {
+  if (typeof DecompressionStream === "undefined") {
+    throw new Error("Trình duyệt không hỗ trợ giải nén ZIP. Hãy cập nhật Safari hoặc chọn trực tiếp file BIN.");
+  }
+  const maxZipBytes = Math.min(16 * 1024 * 1024, Math.max(otaMaxBytes + 1048576, otaMaxBytes * 2));
+  if (file.size > maxZipBytes) throw new Error("File ZIP vượt giới hạn an toàn (" + formatBytes(maxZipBytes) + ").");
+
+  const tailSize = Math.min(file.size, 22 + 65535);
+  const tailStart = file.size - tailSize;
+  const tail = new DataView(await file.slice(tailStart).arrayBuffer());
+  let eocd = -1;
+  for (let i = tail.byteLength - 22; i >= 0; i--) {
+    if (tail.getUint32(i, true) === 0x06054B50 &&
+        i + 22 + tail.getUint16(i + 20, true) === tail.byteLength) { eocd = i; break; }
+  }
+  if (eocd < 0) throw new Error("ZIP không hợp lệ: không tìm thấy thư mục trung tâm.");
+
+  const disk = tail.getUint16(eocd + 4, true);
+  const centralDisk = tail.getUint16(eocd + 6, true);
+  const diskEntries = tail.getUint16(eocd + 8, true);
+  const totalEntries = tail.getUint16(eocd + 10, true);
+  const centralSize = tail.getUint32(eocd + 12, true);
+  const centralOffset = tail.getUint32(eocd + 16, true);
+  const eocdOffset = tailStart + eocd;
+  if (disk || centralDisk || diskEntries !== totalEntries || totalEntries === 0xFFFF ||
+      centralSize === 0xFFFFFFFF || centralOffset === 0xFFFFFFFF || totalEntries > 128 ||
+      centralOffset + centralSize > eocdOffset) {
+    throw new Error("ZIP nhiều phân vùng, ZIP64 hoặc cấu trúc vượt giới hạn hỗ trợ.");
+  }
+
+  const directory = new DataView(await file.slice(centralOffset, centralOffset + centralSize).arrayBuffer());
+  const decoder = new TextDecoder("utf-8", {fatal:true});
+  const binaries = [];
+  let offset = 0;
+  for (let i = 0; i < totalEntries; i++) {
+    if (offset + 46 > directory.byteLength || directory.getUint32(offset, true) !== 0x02014B50) {
+      throw new Error("ZIP lỗi: thư mục trung tâm không hợp lệ.");
+    }
+    const flags = directory.getUint16(offset + 8, true);
+    const method = directory.getUint16(offset + 10, true);
+    const crc = directory.getUint32(offset + 16, true);
+    const compressedSize = directory.getUint32(offset + 20, true);
+    const uncompressedSize = directory.getUint32(offset + 24, true);
+    const nameLength = directory.getUint16(offset + 28, true);
+    const extraLength = directory.getUint16(offset + 30, true);
+    const commentLength = directory.getUint16(offset + 32, true);
+    const startDisk = directory.getUint16(offset + 34, true);
+    const localOffset = directory.getUint32(offset + 42, true);
+    const end = offset + 46 + nameLength + extraLength + commentLength;
+    if (end > directory.byteLength || startDisk !== 0 || compressedSize === 0xFFFFFFFF ||
+        uncompressedSize === 0xFFFFFFFF || localOffset === 0xFFFFFFFF) {
+      throw new Error("ZIP lỗi hoặc dùng ZIP64 không được hỗ trợ.");
+    }
+    let name;
+    try {
+      name = decoder.decode(new Uint8Array(directory.buffer, directory.byteOffset + offset + 46, nameLength));
+    } catch (_) {
+      throw new Error("Tên file trong ZIP không phải UTF-8.");
+    }
+    if (!name || name.includes("\\") || name.startsWith("/") || /^[A-Za-z]:/.test(name) ||
+        name.split("/").some(part => part === "..") || name.includes("\0")) {
+      throw new Error("ZIP chứa đường dẫn file không an toàn.");
+    }
+    if (!name.endsWith("/") && /\.bin$/i.test(name)) {
+      if ((flags & 0x2041) !== 0) throw new Error("ZIP chứa BIN được mã hóa hoặc có cờ không an toàn.");
+      if (method !== 0 && method !== 8) throw new Error("ZIP dùng kiểu nén BIN không được hỗ trợ.");
+      binaries.push({name, flags, method, crc, compressedSize, uncompressedSize, localOffset});
+    }
+    offset = end;
+  }
+  if (offset !== directory.byteLength) throw new Error("ZIP có dữ liệu thừa hoặc thư mục không hợp lệ.");
+
+  const excluded = /(^|\/)(bootloader|boot_app0|partition-table|partitions|ota_data_initial|usb-flash|merged|flash|firmware-full)\.bin$/i;
+  const candidates = binaries.filter(entry => !excluded.test(entry.name));
+  if (candidates.length !== 1) {
+    throw new Error(candidates.length
+      ? "ZIP có nhiều file BIN. Hãy dùng ZIP chỉ chứa một firmware ứng dụng."
+      : "Không tìm thấy firmware ứng dụng BIN trong ZIP.");
+  }
+  const entry = candidates[0];
+  if (entry.uncompressedSize < 4096 || entry.uncompressedSize > otaMaxBytes ||
+      entry.compressedSize === 0 || entry.compressedSize > maxZipBytes) {
+    throw new Error("Kích thước firmware trong ZIP không hợp lệ hoặc vượt dung lượng OTA.");
+  }
+
+  const localHeader = new DataView(await file.slice(entry.localOffset, entry.localOffset + 30).arrayBuffer());
+  if (localHeader.byteLength !== 30 || localHeader.getUint32(0, true) !== 0x04034B50 ||
+      localHeader.getUint16(6, true) !== entry.flags || localHeader.getUint16(8, true) !== entry.method) {
+    throw new Error("Header firmware trong ZIP không khớp thư mục trung tâm.");
+  }
+  const localNameLength = localHeader.getUint16(26, true);
+  const localExtraLength = localHeader.getUint16(28, true);
+  const dataStart = entry.localOffset + 30 + localNameLength + localExtraLength;
+  const dataEnd = dataStart + entry.compressedSize;
+  if (dataStart < entry.localOffset || dataEnd > centralOffset || dataEnd > file.size) {
+    throw new Error("Vùng dữ liệu firmware nằm ngoài giới hạn ZIP.");
+  }
+  const localName = decoder.decode(await file.slice(entry.localOffset + 30,
+    entry.localOffset + 30 + localNameLength).arrayBuffer());
+  if (localName !== entry.name) throw new Error("Tên firmware trong header ZIP không khớp.");
+
+  otaResult.textContent = "Đang giải nén " + entry.name + "...";
+  let firmware;
+  if (entry.method === 0) {
+    if (entry.compressedSize !== entry.uncompressedSize) throw new Error("Kích thước BIN trong ZIP không khớp.");
+    firmware = file.slice(dataStart, dataEnd, "application/octet-stream");
+  } else {
+    try {
+      firmware = await new Response(file.slice(dataStart, dataEnd).stream()
+        .pipeThrough(new DecompressionStream("deflate-raw"))).blob();
+    } catch (_) {
+      throw new Error("Safari không giải nén được ZIP Deflate trên thiết bị này. Hãy chọn file BIN.");
+    }
+  }
+  if (firmware.size !== entry.uncompressedSize || firmware.size > otaMaxBytes) {
+    throw new Error("Giải nén thất bại: kích thước BIN không khớp hoặc vượt slot OTA.");
+  }
+  if (zipCrc32(new Uint8Array(await firmware.arrayBuffer())) !== entry.crc) {
+    throw new Error("CRC32 không khớp: file ZIP hoặc firmware đã bị hỏng.");
+  }
+  return {blob:firmware, name:entry.name.split("/").pop()};
+}
+
+function uploadOtaFirmware(firmware, filename) {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open("POST", "/api/ota");
+    xhr.setRequestHeader("X-ChatAI-CSRF", csrfToken);
+    xhr.setRequestHeader("Content-Type", "application/octet-stream");
+    xhr.upload.onprogress = event => {
+      if (event.lengthComputable) {
+        const percent = Math.round(event.loaded * 100 / event.total);
+        otaProgress.style.width = percent + "%";
+        otaResult.textContent = percent < 100
+          ? "Đang tải " + filename + ": " + percent + "%"
+          : "Đã truyền 100%. ESP32 đang xác thực và ghi firmware vào OTA slot...";
+      }
+    };
+    xhr.onload = () => {
+      let data = {};
+      try { data = JSON.parse(xhr.responseText || "{}"); } catch (_) {}
+      if (xhr.status >= 200 && xhr.status < 300) resolve(data);
+      else reject(new Error(data.error || ("OTA thất bại (HTTP " + xhr.status + ")")));
+    };
+    xhr.onerror = () => reject(new Error("Mất kết nối khi tải firmware. Kiểm tra thiết bị trước khi thử lại."));
+    xhr.send(firmware);
+  });
+}
+
+firmwareInput.addEventListener("change", () => {
+  const file = firmwareInput.files && firmwareInput.files[0];
+  otaFileInfo.textContent = file ? file.name + " · " + formatBytes(file.size) : "Chưa chọn file.";
+  otaProgress.style.width = "0%";
+  otaResult.textContent = "";
+});
+
+async function waitForRunningBuild(expectedBuild) {
+  otaResult.textContent = "Firmware đã được ghi. Chờ ESP32 khởi động lại và xác nhận phiên bản...";
+  await new Promise(resolve => setTimeout(resolve, 6000));
+  for (let attempt = 0; attempt < 24; attempt++) {
+    try {
+      const response = await fetch("/api/firmware/status", {cache:"no-store"});
+      if (response.ok) {
+        const data = await response.json();
+        const actualBuild = Number(data.build_number || 0);
+        firmwareStatus.textContent = "Firmware Build đang chạy: #" + actualBuild;
+        if (actualBuild === expectedBuild) {
+          otaResult.textContent = "Cập nhật thành công. Thiết bị đang chạy Firmware Build #" + actualBuild + ".";
+          return;
+        }
+        if (attempt > 5 && actualBuild !== expectedBuild) {
+          otaResult.textContent = "Thiết bị hiện vẫn chạy Build #" + actualBuild +
+            ". Firmware mới chưa được xác nhận; có thể thiết bị đã rollback.";
+          return;
+        }
+      }
+    } catch (_) {}
+    await new Promise(resolve => setTimeout(resolve, 1000));
+  }
+  otaResult.textContent = "Chưa đọc lại được phiên bản sau khởi động. Hãy tải lại trang để kiểm tra Build Number thực tế.";
+}
 
 updateFirmwareButton.addEventListener("click", async () => {
   const file = firmwareInput.files && firmwareInput.files[0];
-  if (!file) { otaResult.textContent = "Vui lòng chọn file BIN."; return; }
-  if (!file.name.toLowerCase().endsWith(".bin")) {
-    otaResult.textContent = "Chỉ chấp nhận file firmware .bin.";
-    return;
-  }
-  if (!confirm("Cài đặt firmware mới và khởi động lại ESP32?")) return;
+  if (!file) { otaResult.textContent = "Vui lòng chọn file BIN hoặc ZIP."; return; }
   updateFirmwareButton.disabled = true;
-  otaResult.textContent = "Đang tải và ghi firmware. Không tắt nguồn thiết bị...";
+  otaProgress.style.width = "0%";
   try {
-    const response = await fetch("/api/ota", {
-      method: "POST",
-      headers: {"X-ChatAI-CSRF": csrfToken},
-      body: file,
-      cache: "no-store"
-    });
-    const data = await response.json().catch(() => ({}));
-    if (!response.ok) throw new Error(data.error || ("OTA thất bại (HTTP " + response.status + ")"));
-    otaResult.textContent = data.message || "Firmware hợp lệ. ESP32 đang khởi động lại...";
+    let firmware = file;
+    let firmwareName = file.name;
+    if (/\.zip$/i.test(file.name)) {
+      otaResult.textContent = "Đang kiểm tra cấu trúc ZIP...";
+      const extracted = await extractOtaBinFromZip(file);
+      firmware = extracted.blob;
+      firmwareName = extracted.name;
+    } else if (!/\.bin$/i.test(file.name)) {
+      throw new Error("Chỉ chấp nhận file .bin hoặc .zip.");
+    }
+    if (firmware.size < 4096) throw new Error("Firmware quá nhỏ hoặc không hợp lệ.");
+    if (!otaMaxBytes) throw new Error("Không đọc được dung lượng OTA slot. Hãy tải lại trang.");
+    if (firmware.size > otaMaxBytes) throw new Error("Firmware vượt giới hạn slot OTA (" + formatBytes(otaMaxBytes) + ").");
+    otaResult.textContent = "Đang đọc Build Number trong firmware...";
+    const targetBuild = await readFirmwareBuild(firmware);
+    otaFileInfo.textContent = firmwareName + " · " + formatBytes(firmware.size) +
+      " · Firmware Build dự kiến: #" + targetBuild;
+    const confirmText = "Cài đặt " + firmwareName + " (" + formatBytes(firmware.size) +
+      ")\nBuild hiện tại: #" + currentBuildNumber + "\nBuild mục tiêu: #" + targetBuild +
+      "\nKhông tắt nguồn trong quá trình cập nhật. Tiếp tục?";
+    if (!confirm(confirmText)) return;
+
+    otaResult.textContent = "Đang tải firmware lên thiết bị...";
+    const data = await uploadOtaFirmware(firmware, firmwareName);
+    otaProgress.style.width = "100%";
+    otaResult.textContent = data.message || "ESP32 đã chấp nhận firmware.";
+    await waitForRunningBuild(targetBuild);
   } catch (error) {
-    otaResult.textContent = error.message + " Nếu thiết bị đã khởi động lại, hãy chờ rồi tải lại trang.";
+    otaResult.textContent = error.message;
     updateFirmwareButton.disabled = false;
   }
 });
@@ -108,6 +357,8 @@ async function refreshStatus() {
   statusText.textContent = data.key_configured ? "Trạng thái: API Key đã được lưu." :
     "Trạng thái: Chưa cấu hình API Key.";
   removeButton.hidden = !data.key_configured;
+  try { await refreshFirmwareStatus(); }
+  catch (error) { firmwareStatus.textContent = error.message; }
 }
 async function sendKeyRequest(method, body) {
   const options = {method, cache:"no-store", headers:{"X-ChatAI-CSRF":csrfToken}};
@@ -235,6 +486,23 @@ esp_err_t AdminPageHandler(httpd_req_t* request) {
         "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; "
         "connect-src 'self'; base-uri 'none'; frame-ancestors 'none'");
     return httpd_resp_send(request, page.c_str(), page.size());
+}
+
+esp_err_t FirmwareStatusHandler(httpd_req_t* request) {
+    const esp_partition_t* running = esp_ota_get_running_partition();
+    const esp_partition_t* target = esp_ota_get_next_update_partition(nullptr);
+    const char* running_label = running != nullptr ? running->label : "unknown";
+    const char* target_label = target != nullptr && target != running ? target->label : "unavailable";
+    const size_t target_size = target != nullptr && target != running ? target->size : 0;
+    char body[256]{};
+    std::snprintf(body, sizeof(body),
+        "{\\\"build_number\\\":%lu,\\\"build_marker\\\":\\\"%s\\\","
+        "\\\"running_partition\\\":\\\"%s\\\",\\\"ota_target\\\":\\\"%s\\\","
+        "\\\"ota_max_bytes\\\":%u}",
+        static_cast<unsigned long>(chatai::firmware::kBuildNumber),
+        chatai::firmware::kBuildMarker, running_label, target_label,
+        static_cast<unsigned>(target_size));
+    return SendJson(request, "200 OK", body);
 }
 
 esp_err_t GeminiStatusHandler(httpd_req_t* request) {
@@ -392,6 +660,11 @@ esp_err_t RegisterRoutes(httpd_handle_t server, const std::string& csrf_token) {
     admin_uri.method = HTTP_GET;
     admin_uri.handler = AdminPageHandler;
 
+    httpd_uri_t firmware_status_uri{};
+    firmware_status_uri.uri = "/api/firmware/status";
+    firmware_status_uri.method = HTTP_GET;
+    firmware_status_uri.handler = FirmwareStatusHandler;
+
     httpd_uri_t status_uri{};
     status_uri.uri = "/api/gemini/status";
     status_uri.method = HTTP_GET;
@@ -413,6 +686,7 @@ esp_err_t RegisterRoutes(httpd_handle_t server, const std::string& csrf_token) {
     ota_uri.handler = OtaUploadHandler;
 
     esp_err_t result = httpd_register_uri_handler(server, &admin_uri);
+    if (result == ESP_OK) result = httpd_register_uri_handler(server, &firmware_status_uri);
     if (result == ESP_OK) result = httpd_register_uri_handler(server, &status_uri);
     if (result == ESP_OK) result = httpd_register_uri_handler(server, &save_uri);
     if (result == ESP_OK) result = httpd_register_uri_handler(server, &delete_uri);
