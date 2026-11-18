@@ -27,8 +27,9 @@ Last reviewed: 2026-11-19
 - Trigger: `workflow_dispatch` only.
 - Published output: one application image, `ChatAI_TPIOS.bin`.
 - GitHub Actions wraps downloadable artifacts in a ZIP container; the archive contains only the BIN.
-- The current partition defaults use a 1.5 MB single-app layout. OTA is not implemented.
-- A first-time USB install requires a compatible bootloader and partition table supplied separately.
+- Standalone targets the previously deployed 16 MB dual-slot layout: `ota_0` and `ota_1` are each `0x3F0000` bytes; NVS and otadata offsets match the earlier layout.
+- Web Admin OTA accepts one application-only BIN and writes only to the inactive OTA slot.
+- The user confirmed the board is N16R8 (16 MB flash / 8 MB PSRAM). The physical partition table has not been independently read back; compatibility is based on the prior firmware configuration and successful OTA history.
 
 ## Recent build record
 
