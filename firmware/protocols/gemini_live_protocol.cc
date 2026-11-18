@@ -17,8 +17,10 @@ constexpr char kUrl[] = "wss://generativelanguage.googleapis.com/ws/google.ai.ge
 constexpr size_t kMaxMessage = 256 * 1024;
 constexpr size_t kGeminiOutputSampleRate = 24000;
 constexpr size_t kGeminiOutputChunkDurationMs = 60;
-constexpr size_t kPcmDecodeChunkSamples =
-    kGeminiOutputChunkDurationMs * kGeminiOutputSampleRate / 1000;
+constexpr size_t kPcmDecodeChunkBytes =
+    kGeminiOutputChunkDurationMs * kGeminiOutputSampleRate * sizeof(int16_t) / 1000;
+constexpr size_t kPcmDecodeChunkSamples = kPcmDecodeChunkBytes / sizeof(int16_t);
+static_assert(kPcmDecodeChunkBytes == 2880, "Gemini PCM16 chunk buffer sizing changed");
 static_assert(kPcmDecodeChunkSamples == 1440, "Gemini PCM chunk sizing changed");
 const char kB64[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 std::atomic<uint32_t> g_microphone_chunks_sent{0};
