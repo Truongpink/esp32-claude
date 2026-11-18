@@ -247,6 +247,7 @@ esp_err_t StatusHandler(httpd_req_t* req) {
     cJSON_AddBoolToObject(root, "mic_streaming", diagnostics.microphone_streaming);
     cJSON_AddStringToObject(root, "live_last_error", diagnostics.last_error.c_str());
     cJSON_AddStringToObject(root, "live_event_history", diagnostics.event_history.c_str());
+    cJSON_AddStringToObject(root, "live_previous_session", diagnostics.previous_session_summary.c_str());
     SendJson(req, root);
     return ESP_OK;
 }
@@ -665,6 +666,7 @@ esp_err_t OtaUploadHandler(httpd_req_t* req) {
 } // namespace
 
 void WebAdminServer::InitializeDiagnostics() {
+    GeminiLiveProtocol::InitializeDiagnosticHistory();
     StartRuntimeLogCaptureInternal();
 }
 
