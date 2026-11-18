@@ -17,6 +17,7 @@ public:
         bool session_connected = false;
         bool microphone_streaming = false;
         std::string last_error;
+        std::string event_history;
     };
     static Diagnostics GetDiagnostics();
     explicit GeminiLiveProtocol(AudioService& audio_service);
