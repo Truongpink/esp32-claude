@@ -64,6 +64,6 @@ extern "C" void app_main(void) {
         return;
     }
 
-    ESP_LOGI(kTag, "ESP-IDF platform, native Wi-Fi, OLED and I2S audio are initialized");
+    ESP_LOGI(kTag, "ESP-IDF platform, native Wi-Fi and OLED startup completed");
     ESP_LOGI(kTag, "Standalone mode: no XiaoZhi application or cloud components");
 }
