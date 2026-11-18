@@ -68,7 +68,7 @@ def main() -> None:
             continue
         metadata = manifest.read_text(encoding="utf-8")
         if "78/esp-ml307" in metadata or "github.com/78/esp-ml307" in metadata:
-            if re.search(r"version:\\s*3\\.8\\.\\d+", metadata):
+            if re.search(r"version:\s*3\.8\.\d+", metadata):
                 network_sources.append(source)
 
     if len(network_sources) != 1:
@@ -87,19 +87,19 @@ def main() -> None:
 
     replace_once(
         ssl_source,
-        "#include <esp_log.h>\\n",
-        "#include <esp_log.h>\\n#include <esp_heap_caps.h>\\n",
+        "#include <esp_log.h>\n",
+        "#include <esp_log.h>\n#include <esp_heap_caps.h>\n",
     )
     replace_once(
         ssl_source,
         '    BaseType_t rc = xTaskCreate([](void* arg) {',
-        '    if (heap_caps_get_free_size(MALLOC_CAP_INTERNAL) < 16384 + 10000 ||\\n'
-        '        heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL) < 16384) {\\n'
-        '        ESP_LOGE(TAG, "Low heap, skip SSL receive task");\\n'
-        '        connected_ = false;\\n'
-        '        destroy_tls();\\n'
-        '        return Fail(NetworkError::FromErrno(ENOMEM));\\n'
-        '    }\\n'
+        '    if (heap_caps_get_free_size(MALLOC_CAP_INTERNAL) < 16384 + 10000 ||\n'
+        '        heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL) < 16384) {\n'
+        '        ESP_LOGE(TAG, "Low heap, skip SSL receive task");\n'
+        '        connected_ = false;\n'
+        '        destroy_tls();\n'
+        '        return Fail(NetworkError::FromErrno(ENOMEM));\n'
+        '    }\n'
         '    BaseType_t rc = xTaskCreate([](void* arg) {',
     )
     replace_once(
@@ -114,14 +114,14 @@ def main() -> None:
     )
     replace_once(
         websocket_source,
-        "void WebSocket::SetReceiveBufferSize(size_t size) {\\n"
-        "    receive_buffer_size_ = size;\\n"
+        "void WebSocket::SetReceiveBufferSize(size_t size) {\n"
+        "    receive_buffer_size_ = size;\n"
         "}",
-        "void WebSocket::SetReceiveBufferSize(size_t size) {\\n"
-        "    if (size == 0) size = 2048;\\n"
-        "    receive_buffer_size_ = size > MAX_MESSAGE_SIZE ? MAX_MESSAGE_SIZE : size;\\n"
-        "    receive_buffer_.reserve(receive_buffer_size_);\\n"
-        "    current_message_.reserve(receive_buffer_size_);\\n"
+        "void WebSocket::SetReceiveBufferSize(size_t size) {\n"
+        "    if (size == 0) size = 2048;\n"
+        "    receive_buffer_size_ = size > MAX_MESSAGE_SIZE ? MAX_MESSAGE_SIZE : size;\n"
+        "    receive_buffer_.reserve(receive_buffer_size_);\n"
+        "    current_message_.reserve(receive_buffer_size_);\n"
         "}",
     )
     print(f"Configured Gemini WSS receive buffers and stack in {ssl_source.parents[2].name}.")
