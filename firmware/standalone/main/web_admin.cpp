@@ -1,10 +1,17 @@
 #include "web_admin.h"
 
+#include <algorithm>
 #include <cstring>
+#include <mutex>
 #include <string>
 
 #include <cJSON.h>
 #include <esp_log.h>
+#include <esp_ota_ops.h>
+#include <esp_partition.h>
+#include <esp_system.h>
+#include <freertos/FreeRTOS.h>
+#include <freertos/task.h>
 
 #include "gemini_settings.h"
 
@@ -13,6 +20,7 @@ constexpr char kTag[] = "ChatAI-Admin";
 constexpr size_t kMaxRequestBody = 512;
 constexpr size_t kMaxApiKeyLength = 256;
 std::string g_csrf_token;
+std::mutex g_ota_mutex;
 
 const char kAdminPage[] = R"html(
 <!doctype html>
@@ -47,6 +55,13 @@ small,.muted{opacity:.72}
 <button id="save">Lưu API Key</button>
 <button id="remove" hidden>Xóa API Key</button>
 </div>
+<hr>
+<h2>Cập nhật Firmware OTA</h2>
+<p class="muted">Chọn file ChatAI_TPIOS.bin. Giữ thiết bị cắm nguồn trong suốt quá trình cập nhật.</p>
+<label for="firmware">Firmware BIN</label>
+<input id="firmware" type="file" accept=".bin,application/octet-stream">
+<button id="updateFirmware">Cài đặt firmware</button>
+<p id="otaResult" role="status"></p>
 <p id="result" role="status"></p>
 </main>
 <script>
@@ -56,6 +71,35 @@ const resultText = document.getElementById("result");
 const keyInput = document.getElementById("apiKey");
 const saveButton = document.getElementById("save");
 const removeButton = document.getElementById("remove");
+const firmwareInput = document.getElementById("firmware");
+const updateFirmwareButton = document.getElementById("updateFirmware");
+const otaResult = document.getElementById("otaResult");
+
+updateFirmwareButton.addEventListener("click", async () => {
+  const file = firmwareInput.files && firmwareInput.files[0];
+  if (!file) { otaResult.textContent = "Vui lòng chọn file BIN."; return; }
+  if (!file.name.toLowerCase().endsWith(".bin")) {
+    otaResult.textContent = "Chỉ chấp nhận file firmware .bin.";
+    return;
+  }
+  if (!confirm("Cài đặt firmware mới và khởi động lại ESP32?")) return;
+  updateFirmwareButton.disabled = true;
+  otaResult.textContent = "Đang tải và ghi firmware. Không tắt nguồn thiết bị...";
+  try {
+    const response = await fetch("/api/ota", {
+      method: "POST",
+      headers: {"X-ChatAI-CSRF": csrfToken},
+      body: file,
+      cache: "no-store"
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(data.error || ("OTA thất bại (HTTP " + response.status + ")"));
+    otaResult.textContent = data.message || "Firmware hợp lệ. ESP32 đang khởi động lại...";
+  } catch (error) {
+    otaResult.textContent = error.message + " Nếu thiết bị đã khởi động lại, hãy chờ rồi tải lại trang.";
+    updateFirmwareButton.disabled = false;
+  }
+});
 
 async function refreshStatus() {
   const response = await fetch("/api/gemini/status", {cache:"no-store"});
@@ -231,6 +275,100 @@ esp_err_t GeminiKeyPostHandler(httpd_req_t* request) {
     return SendJson(request, "200 OK", "{\"message\":\"Da luu Gemini API Key.\"}");
 }
 
+esp_err_t OtaUploadHandler(httpd_req_t* request) {
+    if (!IsAuthorizedMutation(request)) {
+        return SendError(request, "403 Forbidden", "Yeu cau khong hop le");
+    }
+    if (request->content_len < 4096) {
+        return SendError(request, "400 Bad Request", "Firmware BIN rong hoac qua nho");
+    }
+
+    std::unique_lock<std::mutex> lock(g_ota_mutex, std::try_to_lock);
+    if (!lock.owns_lock()) {
+        return SendError(request, "409 Conflict", "Dang co mot qua trinh OTA khac");
+    }
+
+    const esp_partition_t* ota0 = esp_partition_find_first(
+        ESP_PARTITION_TYPE_APP, ESP_PARTITION_SUBTYPE_APP_OTA_0, "ota_0");
+    const esp_partition_t* ota1 = esp_partition_find_first(
+        ESP_PARTITION_TYPE_APP, ESP_PARTITION_SUBTYPE_APP_OTA_1, "ota_1");
+    const esp_partition_t* otadata = esp_partition_find_first(
+        ESP_PARTITION_TYPE_DATA, ESP_PARTITION_SUBTYPE_DATA_OTA, "otadata");
+    const esp_partition_t* running = esp_ota_get_running_partition();
+    const esp_partition_t* target = esp_ota_get_next_update_partition(nullptr);
+
+    if (ota0 == nullptr || ota1 == nullptr || otadata == nullptr ||
+        running == nullptr || target == nullptr || target == running ||
+        (target->subtype != ESP_PARTITION_SUBTYPE_APP_OTA_0 &&
+         target->subtype != ESP_PARTITION_SUBTYPE_APP_OTA_1)) {
+        return SendError(request, "503 Service Unavailable",
+                         "Khong tim thay phan vung OTA hai slot tuong thich");
+    }
+    if (static_cast<size_t>(request->content_len) > target->size) {
+        return SendError(request, "413 Content Too Large",
+                         "Firmware BIN lon hon phan vung OTA trong");
+    }
+
+    esp_ota_handle_t handle = 0;
+    esp_err_t result = esp_ota_begin(
+        target, static_cast<size_t>(request->content_len), &handle);
+    if (result != ESP_OK) {
+        ESP_LOGE(kTag, "esp_ota_begin failed: %s", esp_err_to_name(result));
+        return SendError(request, "500 Internal Server Error",
+                         "Khong the bat dau ghi firmware");
+    }
+
+    uint8_t buffer[1024];
+    size_t remaining = static_cast<size_t>(request->content_len);
+    size_t written = 0;
+    while (remaining > 0) {
+        const size_t wanted = std::min(remaining, sizeof(buffer));
+        const int received = httpd_req_recv(
+            request, reinterpret_cast<char*>(buffer), wanted);
+        if (received <= 0) {
+            esp_ota_abort(handle);
+            ESP_LOGE(kTag, "OTA upload interrupted after %u bytes",
+                     static_cast<unsigned>(written));
+            return SendError(request, "400 Bad Request",
+                             "Qua trinh tai firmware bi gian doan");
+        }
+
+        result = esp_ota_write(handle, buffer, static_cast<size_t>(received));
+        if (result != ESP_OK) {
+            esp_ota_abort(handle);
+            ESP_LOGE(kTag, "esp_ota_write failed: %s", esp_err_to_name(result));
+            return SendError(request, "500 Internal Server Error",
+                             "Khong the ghi firmware vao OTA slot");
+        }
+        remaining -= static_cast<size_t>(received);
+        written += static_cast<size_t>(received);
+    }
+
+    result = esp_ota_end(handle);
+    if (result != ESP_OK) {
+        ESP_LOGE(kTag, "OTA image validation failed: %s", esp_err_to_name(result));
+        return SendError(request, "400 Bad Request",
+                         "Firmware BIN khong hop le hoac khong tuong thich");
+    }
+
+    result = esp_ota_set_boot_partition(target);
+    if (result != ESP_OK) {
+        ESP_LOGE(kTag, "Could not select OTA boot partition: %s",
+                 esp_err_to_name(result));
+        return SendError(request, "500 Internal Server Error",
+                         "Khong the chon firmware moi de khoi dong");
+    }
+
+    ESP_LOGI(kTag, "OTA image accepted: %u bytes -> %s",
+             static_cast<unsigned>(written), target->label);
+    const esp_err_t response_result = SendJson(
+        request, "200 OK",
+        "{\"message\":\"Firmware da duoc xac thuc va cai dat. ESP32 dang khoi dong lai.\"}");
+    vTaskDelay(pdMS_TO_TICKS(1200));
+    esp_restart();
+    return response_result;
+}
+
 esp_err_t GeminiKeyDeleteHandler(httpd_req_t* request) {
     if (!IsAuthorizedMutation(request)) {
         return SendError(request, "403 Forbidden", "Yeu cau khong hop le");
@@ -269,10 +407,16 @@ esp_err_t RegisterRoutes(httpd_handle_t server, const std::string& csrf_token) {
     delete_uri.method = HTTP_DELETE;
     delete_uri.handler = GeminiKeyDeleteHandler;
 
+    httpd_uri_t ota_uri{};
+    ota_uri.uri = "/api/ota";
+    ota_uri.method = HTTP_POST;
+    ota_uri.handler = OtaUploadHandler;
+
     esp_err_t result = httpd_register_uri_handler(server, &admin_uri);
     if (result == ESP_OK) result = httpd_register_uri_handler(server, &status_uri);
     if (result == ESP_OK) result = httpd_register_uri_handler(server, &save_uri);
     if (result == ESP_OK) result = httpd_register_uri_handler(server, &delete_uri);
+    if (result == ESP_OK) result = httpd_register_uri_handler(server, &ota_uri);
     if (result != ESP_OK) {
         ESP_LOGE(kTag, "Could not register Web Admin routes: %s", esp_err_to_name(result));
     }
