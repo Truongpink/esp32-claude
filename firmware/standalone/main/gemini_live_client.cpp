@@ -20,7 +20,6 @@ constexpr char kTag[] = "ChatAI-Gemini";
 constexpr char kEndpoint[] =
     "wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta."
     "GenerativeService.BidiGenerateContent?key=";
-constexpr char kModel[] = "models/gemini-3.8-live";
 constexpr size_t kMaxIncomingMessage = 8192;
 constexpr uint32_t kRetryDelayMs = 5000;
 
