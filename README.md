@@ -40,7 +40,7 @@ The application image is generated at:
 
 ## Current limitations
 
-- The current partition configuration is a single-app layout; OTA is not implemented in this Standalone firmware.
+- Standalone uses the compatible 16 MB dual-slot OTA partition table and local Web Admin application-only OTA upload. The actual table installed on the physical board has not been read back independently.
 - Physical board pin mappings, microphone capture, speaker playback, and a complete Gemini Live conversation still require validation on the actual device.
 - The local Web Admin uses HTTP and the Gemini API Key is stored in NVS without NVS encryption. Use only on a trusted local network; do not expose the admin page to the Internet.
 - Do not assume flash size or hardware pin mappings beyond the configuration documented in `docs/HARDWARE.md`.
