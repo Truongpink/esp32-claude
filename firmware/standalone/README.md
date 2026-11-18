@@ -43,3 +43,6 @@ or OTA implementation. The local Web Admin currently supports Gemini API Key sto
   HTTP traffic is not encrypted, and the API Key is stored in NVS without encryption
   in the current partition configuration. Do not expose the device admin page to
   untrusted networks.
+  The Origin/CSRF checks mitigate cross-site browser requests; they are not user
+  authentication. Any client already able to reach the device on the local network
+  can open the page and manage the key. A login gate is not part of this first slice.
