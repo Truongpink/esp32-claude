@@ -5,6 +5,7 @@
 
 namespace chatai::settings {
 
+esp_err_t MigrateLegacyGeminiApiKey();
 bool HasGeminiApiKey();
 std::string GetGeminiApiKey();
 esp_err_t SaveGeminiApiKey(const std::string& api_key);
