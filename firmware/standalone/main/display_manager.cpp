@@ -1,9 +1,11 @@
 #include "display_manager.h"
 #include <array>
 #include <cctype>
-#include <cstdio>
+#include <cstddef>
+#include <cstdint>
 #include <cstring>
 #include <string>
+#include <driver/gpio.h>
 #include <driver/i2c_master.h>
 #include <esp_log.h>
 #include <freertos/FreeRTOS.h>
@@ -110,7 +112,7 @@ void RenderStatus() {
         DrawText(0, 16, "WIFI CONNECTED");
         DrawText(0, 32, "IP:" +
             chatai::network::NetworkManager::GetIpAddress());
-        DrawText(0, 48, "WEB ADMIN READY");
+        DrawText(0, 48, "NETWORK READY");
     } else {
         DrawText(0, 16, "WIFI CONNECTING");
         DrawText(0, 32, "PLEASE WAIT");
