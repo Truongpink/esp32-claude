@@ -23,7 +23,7 @@ The AFE bridge supplies signed PCM16 mono at 16 kHz. Each bounded frame is Base6
 
 For each received JSON server message:
 
-1. The WebSocket callback copies the frame into a fixed three-slot ring (64 KiB per slot; the large protocol object is allocated from PSRAM by the ESP32-S3 malloc configuration) and signals the application protocol event; it does not parse JSON, decode Base64, allocate PCM vectors or wait for playback.
+1. The WebSocket callback copies each complete, reassembled message into a fixed three-slot ring (64 KiB per slot; the large protocol object is allocated from PSRAM by the ESP32-S3 malloc configuration) and signals the application protocol event; it does not parse JSON, decode Base64, allocate PCM vectors or wait for playback.
 2. The application protocol task parses `serverContent.modelTurn.parts[]`; a message can contain more than one part.
 3. For every `inlineData` audio part, require PCM at 24 kHz.
 4. Base64-decode signed PCM16 little-endian into 60 ms chunks: `24,000 * 60 / 1,000 = 1,440` samples (2,880 PCM bytes).
