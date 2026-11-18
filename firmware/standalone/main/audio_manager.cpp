@@ -64,7 +64,7 @@ esp_err_t ConfigureSpeaker() {
     i2s_std_config_t standard_config = {
         .clk_cfg = I2S_STD_CLK_DEFAULT_CONFIG(kSpeakerSampleRate),
         .slot_cfg = I2S_STD_PHILIPS_SLOT_DEFAULT_CONFIG(
-            I2S_DATA_BIT_WIDTH_16BIT, I2S_SLOT_MODE_MONO),
+            I2S_DATA_BIT_WIDTH_32BIT, I2S_SLOT_MODE_MONO),
         .gpio_cfg = {
             .mclk = I2S_GPIO_UNUSED,
             .bclk = kSpeakerBclk,
@@ -236,25 +236,40 @@ esp_err_t WriteSpeakerPcm16(const int16_t* samples, size_t sample_count,
         return ESP_ERR_INVALID_STATE;
     }
 
-    size_t bytes_written = 0;
-    const esp_err_t err = i2s_channel_write(
-        s_speaker_tx, samples, sample_count * sizeof(int16_t),
-        &bytes_written, timeout_ms);
-    *samples_written = bytes_written / sizeof(int16_t);
-
-    if (*samples_written > 0) {
-        SpeakerReferenceCallback callback = nullptr;
-        void* context = nullptr;
-        {
-            std::lock_guard<std::mutex> lock(s_reference_mutex);
-            callback = s_reference_callback;
-            context = s_reference_context;
+    std::array<int32_t, kReadChunkSamples> tx_samples{};
+    while (*samples_written < sample_count) {
+        const size_t chunk = std::min(kReadChunkSamples, sample_count - *samples_written);
+        for (size_t i = 0; i < chunk; ++i) {
+            tx_samples[i] = static_cast<int32_t>(
+                static_cast<int64_t>(samples[*samples_written + i]) * 65536);
         }
-        if (callback != nullptr) {
-            callback(samples, *samples_written, context);
+
+        size_t bytes_written = 0;
+        const esp_err_t err = i2s_channel_write(
+            s_speaker_tx, tx_samples.data(), chunk * sizeof(int32_t),
+            &bytes_written, timeout_ms);
+        const size_t written = bytes_written / sizeof(int32_t);
+        if (written > 0) {
+            SpeakerReferenceCallback callback = nullptr;
+            void* context = nullptr;
+            {
+                std::lock_guard<std::mutex> lock(s_reference_mutex);
+                callback = s_reference_callback;
+                context = s_reference_context;
+            }
+            if (callback != nullptr) {
+                callback(samples + *samples_written, written, context);
+            }
+            *samples_written += written;
+        }
+        if (err != ESP_OK) {
+            return err;
+        }
+        if (written == 0) {
+            return ESP_ERR_TIMEOUT;
         }
     }
-    return err;
+    return ESP_OK;
 }
 
 void SetSpeakerReferenceCallback(SpeakerReferenceCallback callback, void* context) {
