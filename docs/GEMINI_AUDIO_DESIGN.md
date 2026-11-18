@@ -99,7 +99,7 @@ Direct-device API-key mode is for bring-up only: use a current Gemini authorizat
 
 ## Crash capture for first Gemini response audio
 
-The first received 24 kHz PCM chunk now logs the encoded payload length, free/largest heap, task stack high-water mark, and each PCM enqueue result. These checkpoints distinguish JSON/Base64 decode, playback-queue enqueue, and subsequent audio-task execution without logging audio or credentials.
+The first six WebSocket callback frames log frame size, free/largest heap and callback-task stack. The first received 24 kHz PCM chunk logs encoded payload length, free/largest heap, application-task stack high-water mark, and each PCM enqueue result. The first PCM frame entering the speaker codec logs output-task stack/heap before and after the codec write. These checkpoints distinguish WebSocket receive, JSON/Base64 decode, playback-queue enqueue, and I2S output without logging audio or credentials.
 
 The build overlay enables `CONFIG_ESP_COREDUMP_ENABLE_TO_UART=y`. ESP-IDF 6.1 selects ELF core-dump format for this mode. This project currently uses a custom 16 MiB table with two 0x3F0000 OTA slots and an 8 MiB assets partition extending to the end of flash; it has no reserved coredump partition. Therefore flash core dumps are intentionally not enabled by this OTA-only change: adding a coredump partition requires a separately planned USB flash-layout update, not an application OTA.
 
