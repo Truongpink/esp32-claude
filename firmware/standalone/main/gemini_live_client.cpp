@@ -98,7 +98,7 @@ void QueueServerAudio(const cJSON* inline_data) {
     const cJSON* mime = cJSON_GetObjectItemCaseSensitive(inline_data, "mimeType");
     const cJSON* data = cJSON_GetObjectItemCaseSensitive(inline_data, "data");
     if (!cJSON_IsString(mime) || !cJSON_IsString(data) ||
-        std::strncmp(mime->valuestring, "audio/pcm", 9) != 0 ||
+        std::strncmp(mime->valuestring, "audio/pcm;rate=24000", 20) != 0 ||
         data->valuestring == nullptr || g_audio_queue == nullptr) {
         return;
     }
