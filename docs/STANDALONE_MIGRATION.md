@@ -5,18 +5,22 @@
 - Existing production path: the repository's manual workflow downloads pinned
   XiaoZhi v2.6.0 and applies ChatAI patches before building.
 - New independent project: `firmware/standalone/`.
-- The new project currently initializes NVS, ESP-NETIF, and the default ESP event
-  loop using ESP-IDF APIs only.
+- The standalone project initializes NVS, ESP-NETIF, the default ESP event loop,
+  and a ChatAI-owned native ESP-IDF Wi-Fi station manager.
+- Wi-Fi credentials are stored in the `chatai_net` NVS namespace. The new manager
+  does not erase NVS or log credentials.
 - No XiaoZhi source, headers, components, or cloud services are linked by the
   standalone project.
 - Existing firmware, scripts, OTA flow, and manual-only workflow are unchanged.
 
 ## Migration sequence
 
-1. **Platform foundation — started:** create the independent ESP-IDF project and
-   initialize core platform services without erasing NVS on errors.
-2. **Network ownership:** implement ChatAI Wi-Fi station/AP management with native
-   ESP-IDF Wi-Fi, event handling, and persisted configuration.
+1. **Platform foundation — started:** independent ESP-IDF project and core platform
+   initialization with NVS preservation.
+2. **Network ownership — first slice added:** native station initialization,
+   persisted SSID/password, connection state, IPv4 reporting, and bounded reconnect
+   attempts. AP provisioning and migration of credentials from the old provisioning
+   component remain to be implemented.
 3. **Hardware/audio ownership:** move I2S, GPIO, buttons, OLED, PCM capture/playback,
    and the currently required AEC path behind ChatAI-owned interfaces.
 4. **Gemini Live ownership:** move the existing wire-protocol behavior into a
@@ -32,7 +36,7 @@
 - Work on `main` only; never create another branch.
 - Do not run GitHub Actions, CI, firmware builds, or flash operations without
   separate explicit user permission.
-- Do not change the existing workflow as part of this scaffold.
+- Do not change the existing workflow as part of this migration.
 - Do not erase NVS automatically; preserve existing user configuration.
 - Do not change the partition table or assume flash geometry before reading the
   actual device partition table.
