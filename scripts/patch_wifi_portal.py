@@ -114,16 +114,16 @@ def main() -> None:
     )
     replace_once(
         websocket_source,
-        "void WebSocket::SetReceiveBufferSize(size_t size) {\n"
-        "    receive_buffer_size_ = size;\n"
-        "}",
-        "void WebSocket::SetReceiveBufferSize(size_t size) {\n"
-        "    if (size == 0) size = 2048;\n"
-        "    receive_buffer_size_ = size > MAX_MESSAGE_SIZE ? MAX_MESSAGE_SIZE : size;\n"
-        "    receive_buffer_.reserve(receive_buffer_size_);\n"
-        "    current_message_.reserve(receive_buffer_size_);\n"
-        "}",
-   
+        """void WebSocket::SetReceiveBufferSize(size_t size) {
+    receive_buffer_size_ = size;
+}""",
+        """void WebSocket::SetReceiveBufferSize(size_t size) {
+    if (size == 0) size = 2048;
+    receive_buffer_size_ = size > MAX_MESSAGE_SIZE ? MAX_MESSAGE_SIZE : size;
+    receive_buffer_.reserve(receive_buffer_size_);
+    current_message_.reserve(receive_buffer_size_);
+}""",
+    )
     replace_once(
         websocket_source,
         """        // 解码有效载荷
@@ -154,16 +154,15 @@ def main() -> None:
         "                current_message_.insert(current_message_.end(), payload.begin(), payload.end());",
         "                current_message_.insert(current_message_.end(), payload_data, payload_data + payload_length);",
     )
-    replace_once(
-        websocket_source,
-        "payload.data()",
-        "payload_data",
-    )
+    websocket_text = websocket_source.read_text(encoding="utf-8")
+    if websocket_text.count("payload.data()") != 3:
+        raise SystemExit("Expected three WebSocket control-frame payload references; no files were changed.")
+    websocket_source.write_text(websocket_text.replace("payload.data()", "payload_data"), encoding="utf-8")
     replace_once(
         websocket_source,
         "        receive_buffer_ = receive_buffer_.substr(buffer_offset);",
         "        receive_buffer_.erase(0, buffer_offset);",
-    ) )
+    )
     print(f"Configured Gemini WSS receive buffers and stack in {ssl_source.parents[2].name}.")
 
 
