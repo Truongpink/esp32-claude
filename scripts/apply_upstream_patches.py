@@ -366,7 +366,24 @@ def patch_pcm_audio_bridge() -> None:
         "        audio_testing_queue_.clear();\n",
     )
 
+def patch_audio_task_stacks() -> None:
+    source = UPSTREAM / "main" / "audio" / "audio_service.cc"
+    replacements = (
+        ('"audio_input", 2048 * 3, this, 8, &audio_input_task_handle_, 0);',
+         '"audio_input", 16384, this, 8, &audio_input_task_handle_, 0);'),
+        ('"audio_output", 2048 * 2, this, 4, &audio_output_task_handle_);',
+         '"audio_output", 16384, this, 4, &audio_output_task_handle_);'),
+        ('"audio_input", 2048 * 2, this, 8, &audio_input_task_handle_);',
+         '"audio_input", 16384, this, 8, &audio_input_task_handle_);'),
+        ('"audio_output", 2048, this, 4, &audio_output_task_handle_);',
+         '"audio_output", 16384, this, 4, &audio_output_task_handle_);'),
+    )
+    for old, new in replacements:
+        replace_once(source, old, new)
+
+
 patch_pcm_audio_bridge()
+patch_audio_task_stacks()
 
 # Route PCM-ready notifications through the existing Application event loop.
 def patch_pcm_application_event() -> None:
