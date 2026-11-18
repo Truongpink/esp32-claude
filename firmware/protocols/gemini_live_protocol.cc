@@ -238,13 +238,6 @@ void GeminiLiveProtocol::ProcessPending() {
     if (pause_voice_processing_pending_.exchange(false)) {
         audio_service_.EnableVoiceProcessing(false);
     }
-    if (resume_voice_processing_pending_.exchange(false) && IsAudioChannelOpened()) {
-        audio_service_.EnableVoiceProcessing(true);
-        audio_service_.EnablePcmBridge(true);
-        listening_ = true;
-        g_microphone_streaming = true;
-    }
-
     // Gemini turnComplete means generation ended, not that the speaker finished.
     // Finish the UI turn only after AudioService confirms the output path is drained.
     if (turn_complete_pending_.load() && audio_service_.IsPlaybackIdle()) {
