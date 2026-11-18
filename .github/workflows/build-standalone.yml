@@ -1,0 +1,50 @@
+name: Build ChatAI TPIOS standalone firmware
+
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: chatai-tpios-standalone-build
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: ESP32-S3 standalone firmware
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - name: Build standalone firmware with ESP-IDF 6.1
+        uses: espressif/esp-idf-ci-action@v1
+        with:
+          esp_idf_version: v6.1
+          target: esp32s3
+          path: firmware/standalone
+          command: idf.py reconfigure && idf.py build
+
+      - name: Verify build outputs
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -s firmware/standalone/build/ChatAI_TPIOS.bin
+          test -s firmware/standalone/build/bootloader/bootloader.bin
+          test -s firmware/standalone/build/partition_table/partition-table.bin
+          echo "Standalone build outputs are present."
+
+      - name: Upload standalone firmware binaries
+        uses: actions/upload-artifact@v4
+        with:
+          name: chatai-tpios-standalone-esp32s3
+          path: |
+            firmware/standalone/build/ChatAI_TPIOS.bin
+            firmware/standalone/build/bootloader/bootloader.bin
+            firmware/standalone/build/partition_table/partition-table.bin
+          if-no-files-found: error
+          retention-days: 30
