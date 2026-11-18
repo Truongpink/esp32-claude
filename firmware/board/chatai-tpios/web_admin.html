@@ -39,10 +39,7 @@
   .body { padding: 20px; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
   .section { min-width: 0; background: #10121b; border-radius: 14px; overflow: hidden; border: 1px solid #292d40; }
   .section-title { padding: 14px 17px; font-size: 12px; font-weight: 700; letter-spacing: .35px; color: #b3adff; border-bottom: 1px solid #292d40; background: rgba(255,255,255,.018); }
-  #wifiSection, #statusSection, #diagnosticsSection, #geminiSection, #otaSection, #panicSection { grid-column: 1 / -1; }
-  .panic-alert { padding: 16px; border: 1px solid #7f3434; border-radius: 12px; background: #291719; }
-  .panic-alert h2 { color: #ff9b9b; font-size: 15px; margin-bottom: 8px; }
-  .panic-alert p { color: #e5bfc0; font-size: 13px; line-height: 1.55; margin-bottom: 12px; }
+  #wifiSection, #statusSection, #diagnosticsSection, #geminiSection, #otaSection { grid-column: 1 / -1; }
   .field { padding: 13px 17px; }
   .field label { font-size: 13px; color: #b2b5c5; }
   .field input, .field textarea, .field select { min-height: 44px; background: #181b28; border-color: #30354b; border-radius: 10px; font-size: 16px; }
@@ -110,7 +107,7 @@
     .header { padding: 21px 18px; }
     .status-bar { padding: 12px 18px; }
     .body { grid-template-columns: minmax(0,1fr); gap: 12px; padding: 14px; }
-    #wifiSection, #statusSection, #diagnosticsSection, #geminiSection, #otaSection, #panicSection { grid-column: auto; }
+    #wifiSection, #statusSection, #diagnosticsSection, #geminiSection, #otaSection { grid-column: auto; }
     .save-wrap { padding-left: 14px; padding-right: 14px; }
   }
 </style>
@@ -138,13 +135,6 @@
   </nav>
 
   <div class="body">
-    <section class="section hidden" id="panicSection">
-      <div class="panic-alert">
-        <h2>⚠️ Phát hiện lỗi PANIC ở lần khởi động trước</h2>
-        <p>Thiết bị đã khởi động lại do PANIC. Báo cáo tải xuống hiện chỉ có nguyên nhân reset; firmware chưa có phân vùng Core Dump nên chưa thể cung cấp PC hoặc backtrace.</p>
-        <button class="secondary-btn" id="downloadResetReport" type="button">Tải báo cáo reset về iPhone</button>
-      </div>
-    </section>
     <section class="section hidden" id="wifiSection">
       <div class="section-title">📶 Wi-Fi</div>
       <div class="wifi-scan">
@@ -305,9 +295,9 @@
         <div class="info" id="otaInfo">Đang kiểm tra phân vùng...</div>
       </div>
       <div class="field">
-        <label for="firmwareFile">Chọn firmware OTA (.bin)</label>
-        <input id="firmwareFile" type="file" accept=".bin,application/octet-stream">
-        <p class="hint">Chọn file chatai-esp32-N.bin (application-only). Không chọn file USB-FLASH vì file đó chứa bootloader và partition table.</p>
+        <label for="firmwareFile">Chọn firmware OTA (.bin hoặc .zip)</label>
+        <input id="firmwareFile" type="file" accept=".bin,.zip,application/octet-stream,application/zip">
+        <p class="hint">Có thể chọn trực tiếp file ZIP của bản build. Web Admin tự tìm và giải nén đúng một firmware ứng dụng .bin; không chọn bootloader, partition table hoặc USB-FLASH.</p>
       </div>
       <div class="field">
         <button class="save-btn" id="otaBtn" type="button">Cài đặt firmware</button>
@@ -359,7 +349,7 @@ const adminPages = {
   wifi: ['deviceActionsSection'],
   gemini: ['geminiSection'],
   audio: ['audioSection'],
-  diagnostics: ['panicSection', 'diagnosticsSection'],
+  diagnostics: ['diagnosticsSection'],
   system: ['featuresSection', 'oledSection']
 };
 function showAdminPage(page) {
@@ -440,7 +430,6 @@ async function loadAdmin() {
   }
   otaMaxBytes = Number(status.ota_max_bytes || 0);
   $('statusDot').className = 'dot';
-  if (status.panic_detected) showSection('panicSection');
   $('statusText').textContent = 'Đã kết nối · ' + (status.ip || '') + ' · ' + (status.ssid || '');
   // Báo cáo tổng hợp được tải qua refreshDiagnostics() bên dưới.
   $('deviceStatus').textContent =
@@ -518,9 +507,6 @@ $('clearRuntimeLog').addEventListener('click', async () => {
     toast('Đã xóa nhật ký hệ thống');
   } catch (error) { toast('Không xóa được nhật ký: ' + error.message, true); }
   finally { $('clearRuntimeLog').disabled = false; }
-});
-$('downloadResetReport').addEventListener('click', () => {
-  window.location.href = '/api/reset-report';
 });
 
 $('volume').addEventListener('input', () => { $('volumeValue').textContent = $('volume').value + '%'; });
@@ -600,41 +586,209 @@ $('rebootBtn').addEventListener('click', () =>
 $('factoryResetBtn').addEventListener('click', () =>
   postDeviceAction('/api/factory-reset', 'Khôi phục cài đặt gốc? Wi-Fi, API key và cấu hình đã lưu sẽ bị xóa.'));
 
-$('otaBtn').addEventListener('click', () => {
+$('firmwareFile').addEventListener('change', () => {
   const file = $('firmwareFile').files[0];
-  if (!file) { $('otaResult').textContent = 'Vui lòng chọn file OTA .bin.'; return; }
-  if (!file.name.toLowerCase().endsWith('.bin')) { $('otaResult').textContent = 'Chỉ chấp nhận file .bin.'; return; }
-  if (otaMaxBytes > 0 && file.size > otaMaxBytes) { $('otaResult').textContent = 'File vượt quá dung lượng slot OTA (' + (otaMaxBytes / 1048576).toFixed(2) + ' MB).'; return; }
-  if (!confirm('Cập nhật firmware từ file ' + file.name + '? Không tắt nguồn trong quá trình cập nhật.')) return;
-  const xhr = new XMLHttpRequest();
+  if (file) $('otaResult').textContent = 'Đã chọn: ' + file.name;
+});
+
+function zipCrc32(bytes) {
+  let crc = 0xFFFFFFFF;
+  for (let i = 0; i < bytes.length; i++) {
+    crc ^= bytes[i];
+    for (let bit = 0; bit < 8; bit++) {
+      crc = (crc & 1) ? (crc >>> 1) ^ 0xEDB88320 : crc >>> 1;
+    }
+  }
+  return (crc ^ 0xFFFFFFFF) >>> 0;
+}
+
+async function extractOtaBinFromZip(file) {
+  if (typeof DecompressionStream === 'undefined') {
+    throw new Error('Trình duyệt này không hỗ trợ giải nén ZIP trực tiếp. Hãy dùng Safari/iOS phiên bản mới.');
+  }
+  const maxZipBytes = Math.min(16 * 1024 * 1024, Math.max(otaMaxBytes + 1048576, otaMaxBytes * 2));
+  if (file.size > maxZipBytes) throw new Error('File ZIP vượt giới hạn an toàn (' + (maxZipBytes / 1048576).toFixed(1) + ' MB).');
+
+  const tailSize = Math.min(file.size, 22 + 65535);
+  const tailStart = file.size - tailSize;
+  const tail = new DataView(await file.slice(tailStart).arrayBuffer());
+  let eocd = -1;
+  for (let i = tail.byteLength - 22; i >= 0; i--) {
+    if (tail.getUint32(i, true) === 0x06054B50 &&
+        i + 22 + tail.getUint16(i + 20, true) === tail.byteLength) {
+      eocd = i;
+      break;
+    }
+  }
+  if (eocd < 0) throw new Error('ZIP không hợp lệ: không tìm thấy thư mục trung tâm.');
+
+  const disk = tail.getUint16(eocd + 4, true);
+  const centralDisk = tail.getUint16(eocd + 6, true);
+  const diskEntries = tail.getUint16(eocd + 8, true);
+  const totalEntries = tail.getUint16(eocd + 10, true);
+  const centralSize = tail.getUint32(eocd + 12, true);
+  const centralOffset = tail.getUint32(eocd + 16, true);
+  const eocdOffset = tailStart + eocd;
+  if (disk || centralDisk || diskEntries !== totalEntries ||
+      totalEntries === 0xFFFF || centralSize === 0xFFFFFFFF ||
+      centralOffset === 0xFFFFFFFF || totalEntries > 128 ||
+      centralOffset + centralSize > eocdOffset) {
+    throw new Error('ZIP dùng nhiều phân vùng, ZIP64 hoặc cấu trúc vượt giới hạn hỗ trợ.');
+  }
+
+  const directory = new DataView(await file.slice(centralOffset, centralOffset + centralSize).arrayBuffer());
+  const decoder = new TextDecoder('utf-8', {fatal:true});
+  const binaries = [];
+  let offset = 0;
+  for (let i = 0; i < totalEntries; i++) {
+    if (offset + 46 > directory.byteLength || directory.getUint32(offset, true) !== 0x02014B50) {
+      throw new Error('ZIP lỗi: mục trong thư mục trung tâm không hợp lệ.');
+    }
+    const flags = directory.getUint16(offset + 8, true);
+    const method = directory.getUint16(offset + 10, true);
+    const crc = directory.getUint32(offset + 16, true);
+    const compressedSize = directory.getUint32(offset + 20, true);
+    const uncompressedSize = directory.getUint32(offset + 24, true);
+    const nameLength = directory.getUint16(offset + 28, true);
+    const extraLength = directory.getUint16(offset + 30, true);
+    const commentLength = directory.getUint16(offset + 32, true);
+    const startDisk = directory.getUint16(offset + 34, true);
+    const localOffset = directory.getUint32(offset + 42, true);
+    const end = offset + 46 + nameLength + extraLength + commentLength;
+    if (end > directory.byteLength || startDisk !== 0 ||
+        compressedSize === 0xFFFFFFFF || uncompressedSize === 0xFFFFFFFF ||
+        localOffset === 0xFFFFFFFF) {
+      throw new Error('ZIP lỗi hoặc dùng ZIP64 không được hỗ trợ.');
+    }
+
+    let name;
+    try {
+      name = decoder.decode(new Uint8Array(directory.buffer, directory.byteOffset + offset + 46, nameLength));
+    } catch (_) {
+      throw new Error('ZIP có tên file không phải UTF-8; không thể xác định firmware an toàn.');
+    }
+    if (!name || name.includes('\\') || name.startsWith('/') || /^[A-Za-z]:/.test(name) ||
+        name.split('/').some(part => part === '..') || name.includes('\0')) {
+      throw new Error('ZIP chứa đường dẫn file không an toàn.');
+    }
+
+    const isDirectory = name.endsWith('/');
+    if (!isDirectory && /\.bin$/i.test(name)) {
+      if ((flags & 0x2041) !== 0) throw new Error('ZIP chứa file BIN được mã hóa hoặc dùng cờ nén không an toàn.');
+      if (method !== 0 && method !== 8) throw new Error('ZIP dùng kiểu nén BIN không được hỗ trợ.');
+      if (uncompressedSize < 4096 || uncompressedSize > otaMaxBytes ||
+          compressedSize > maxZipBytes || compressedSize === 0) {
+        throw new Error('Kích thước firmware BIN trong ZIP không hợp lệ hoặc vượt dung lượng OTA.');
+      }
+      binaries.push({name, flags, method, crc, compressedSize, uncompressedSize, localOffset});
+    }
+    offset = end;
+  }
+  if (offset !== directory.byteLength) throw new Error('ZIP có dữ liệu thừa hoặc cấu trúc thư mục không hợp lệ.');
+
+  const excluded = /(^|\/)(bootloader|partition-table|partitions|ota_data_initial|usb-flash|merged)\.bin$/i;
+  const preferred = binaries.filter(entry =>
+    /^chatai-esp32-[^/]+\.bin$/i.test(entry.name) ||
+    /(^|\/)xiaozhi\.bin$/i.test(entry.name) ||
+    /(^|\/)app\.bin$/i.test(entry.name));
+  const candidates = preferred.length ? preferred : binaries.filter(entry => !excluded.test(entry.name));
+  if (candidates.length !== 1) {
+    throw new Error(candidates.length
+      ? 'ZIP có nhiều file BIN có thể là firmware ứng dụng. Hãy dùng ZIP chỉ chứa một file firmware.'
+      : 'Không tìm thấy firmware ứng dụng .bin hợp lệ trong ZIP.');
+  }
+
+  const entry = candidates[0];
+  const localHeader = new DataView(await file.slice(entry.localOffset, entry.localOffset + 30).arrayBuffer());
+  if (localHeader.byteLength !== 30 || localHeader.getUint32(0, true) !== 0x04034B50 ||
+      localHeader.getUint16(6, true) !== entry.flags ||
+      localHeader.getUint16(8, true) !== entry.method) {
+    throw new Error('ZIP lỗi: header của firmware không khớp thư mục trung tâm.');
+  }
+  const localNameLength = localHeader.getUint16(26, true);
+  const localExtraLength = localHeader.getUint16(28, true);
+  const dataStart = entry.localOffset + 30 + localNameLength + localExtraLength;
+  const dataEnd = dataStart + entry.compressedSize;
+  if (dataStart < entry.localOffset || dataEnd > centralOffset || dataEnd > file.size) {
+    throw new Error('ZIP lỗi: vùng dữ liệu firmware nằm ngoài giới hạn file.');
+  }
+  const localName = decoder.decode(await file.slice(entry.localOffset + 30, entry.localOffset + 30 + localNameLength).arrayBuffer());
+  if (localName !== entry.name) throw new Error('ZIP lỗi: tên firmware trong header không khớp.');
+
+  $('otaResult').textContent = 'Đang giải nén firmware ' + entry.name + '...';
+  let firmware;
+  if (entry.method === 0) {
+    if (entry.compressedSize !== entry.uncompressedSize) throw new Error('ZIP lỗi: kích thước file lưu trữ không khớp.');
+    firmware = file.slice(dataStart, dataEnd, 'application/octet-stream');
+  } else {
+    const compressed = file.slice(dataStart, dataEnd);
+    const stream = compressed.stream().pipeThrough(new DecompressionStream('deflate-raw'));
+    firmware = await new Response(stream).blob();
+  }
+  if (firmware.size !== entry.uncompressedSize || firmware.size > otaMaxBytes) {
+    throw new Error('Giải nén thất bại: kích thước BIN không khớp hoặc vượt phân vùng OTA.');
+  }
+  const checksum = zipCrc32(new Uint8Array(await firmware.arrayBuffer()));
+  if (checksum !== entry.crc) throw new Error('ZIP lỗi: kiểm tra CRC32 của firmware không khớp.');
+  return {blob: firmware, name: entry.name.split('/').pop()};
+}
+
+function uploadOtaFirmware(firmware, filename) {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open('POST', '/api/ota');
+    xhr.setRequestHeader('Content-Type', 'application/octet-stream');
+    xhr.upload.onprogress = event => {
+      if (event.lengthComputable) {
+        const percent = Math.round(event.loaded * 100 / event.total);
+        $('otaProgress').style.width = percent + '%';
+        $('otaResult').textContent = 'Đang truyền ' + filename + ': ' + percent + '%';
+      }
+    };
+    xhr.onload = () => {
+      let data = {};
+      try { data = JSON.parse(xhr.responseText || '{}'); } catch (_) {}
+      if (xhr.status >= 200 && xhr.status < 300) resolve(data);
+      else reject(new Error(data.error || ('Cập nhật thất bại (HTTP ' + xhr.status + ')')));
+    };
+    xhr.onerror = () => reject(new Error('Mất kết nối khi tải firmware. Hãy kiểm tra lại thiết bị trước khi thử lại.'));
+    xhr.send(firmware);
+  });
+}
+
+$('otaBtn').addEventListener('click', async () => {
+  const file = $('firmwareFile').files[0];
+  if (!file) { $('otaResult').textContent = 'Vui lòng chọn file OTA .bin hoặc .zip.'; return; }
   $('otaBtn').disabled = true;
-  $('otaResult').textContent = 'Đang tải firmware lên thiết bị...';
-  $('otaProgress').style.width = '0%';
-  xhr.open('POST', '/api/ota');
-  xhr.setRequestHeader('Content-Type', 'application/octet-stream');
-  xhr.upload.onprogress = event => {
-    if (event.lengthComputable) {
-      const percent = Math.round(event.loaded * 100 / event.total);
-      $('otaProgress').style.width = percent + '%';
-      $('otaResult').textContent = 'Đang truyền firmware: ' + percent + '%';
+  let updateAccepted = false;
+  try {
+    let firmware = file;
+    let firmwareName = file.name;
+    if (file.name.toLowerCase().endsWith('.zip')) {
+      $('otaResult').textContent = 'Đang kiểm tra cấu trúc ZIP...';
+      const extracted = await extractOtaBinFromZip(file);
+      firmware = extracted.blob;
+      firmwareName = extracted.name;
+      $('otaResult').textContent = 'Đã giải nén ' + firmwareName + ' (' + (firmware.size / 1048576).toFixed(2) + ' MB).';
+    } else if (!file.name.toLowerCase().endsWith('.bin')) {
+      throw new Error('Chỉ chấp nhận file .bin hoặc .zip.');
     }
-  };
-  xhr.onload = () => {
-    let data = {};
-    try { data = JSON.parse(xhr.responseText); } catch (_) {}
-    if (xhr.status >= 200 && xhr.status < 300) {
-      $('otaProgress').style.width = '100%';
-      $('otaResult').textContent = data.message || 'Firmware đã được ghi. Thiết bị đang khởi động lại...';
-    } else {
-      $('otaResult').textContent = data.error || ('Cập nhật thất bại (HTTP ' + xhr.status + ')');
-      $('otaBtn').disabled = false;
+    if (firmware.size < 4096) throw new Error('Firmware quá nhỏ hoặc file không hợp lệ.');
+    if (otaMaxBytes > 0 && firmware.size > otaMaxBytes) {
+      throw new Error('Firmware vượt dung lượng slot OTA (' + (otaMaxBytes / 1048576).toFixed(2) + ' MB).');
     }
-  };
-  xhr.onerror = () => {
-    $('otaResult').textContent = 'Mất kết nối khi tải firmware. Hãy kiểm tra lại thiết bị trước khi thử lại.';
-    $('otaBtn').disabled = false;
-  };
-  xhr.send(file);
+    if (!confirm('Cập nhật firmware từ ' + firmwareName + '? Không tắt nguồn trong quá trình cập nhật.')) return;
+    $('otaProgress').style.width = '0%';
+    $('otaResult').textContent = 'Đang tải firmware lên thiết bị...';
+    const data = await uploadOtaFirmware(firmware, firmwareName);
+    $('otaProgress').style.width = '100%';
+    $('otaResult').textContent = data.message || 'Firmware đã được ghi. Thiết bị đang khởi động lại...';
+    updateAccepted = true;
+  } catch (error) {
+    $('otaResult').textContent = error.message;
+  } finally {
+    if (!updateAccepted) $('otaBtn').disabled = false;
+  }
 });
 
 (async () => {
