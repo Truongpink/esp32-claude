@@ -274,7 +274,7 @@ esp_err_t StartProvisioning() {
     }
 
     char ssid[33]{};
-    std::snprintf(ssid, sizeof(ssid), "ChatAI-%02X%02X%02X", mac[3], mac[4], mac[5]);
+    std::snprintf(ssid, sizeof(ssid), "ChatAI-TPIOS-%02X%02X%02X", mac[3], mac[4], mac[5]);
     g_provisioning_ssid = ssid;
 
     wifi_config_t ap_config{};
@@ -381,9 +381,14 @@ esp_err_t NetworkManager::Initialize() {
         if (result != ESP_OK) return result;
     }
 
-    result = esp_wifi_start();
-    if (result != ESP_OK) return result;
+    // Mark the manager ready before starting Wi-Fi: STA events may arrive
+    // immediately from esp_wifi_start(), and must be able to start fallback AP.
     g_initialized = true;
+    result = esp_wifi_start();
+    if (result != ESP_OK) {
+        g_initialized = false;
+        return result;
+    }
 
     char token[17]{};
     std::snprintf(token, sizeof(token), "%08lx%08lx",
@@ -391,13 +396,15 @@ esp_err_t NetworkManager::Initialize() {
                   static_cast<unsigned long>(esp_random()));
     g_form_token = token;
 
-    result = StartHttpServer();
-    if (result != ESP_OK) return result;
-
+    // Start the setup AP before the HTTP server so a server startup
+    // failure cannot silently leave a first-boot device without its Wi-Fi AP.
     if (!g_has_credentials) {
         result = StartProvisioning();
         if (result != ESP_OK) return result;
     }
+
+    result = StartHttpServer();
+    if (result != ESP_OK) return result;
 
     if (g_has_credentials) {
         ESP_LOGI(kTag, "Wi-Fi station initialized; saved network will be connected");
