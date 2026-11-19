@@ -1,12 +1,12 @@
 #include "display_manager.h"
 
+#include <algorithm>
 #include <array>
 #include <atomic>
-#include <cctype>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
-#include <string>
+#include <string_view>
 
 #include <driver/gpio.h>
 #include <driver/i2c_master.h>
@@ -17,6 +17,7 @@
 #include "gemini_live_client.h"
 #include "gemini_settings.h"
 #include "network_manager.h"
+#include "vietnamese_font.h"
 
 namespace {
 constexpr char kTag[] = "ChatAI-OLED";
@@ -34,61 +35,56 @@ std::atomic<bool> g_audio_ready{false};
 TickType_t g_boot_screen_until = 0;
 std::array<uint8_t, kWidth * kPages> g_frame{};
 
-std::array<uint8_t, 5> Glyph(char value) {
-    switch (static_cast<char>(std::toupper(static_cast<unsigned char>(value)))) {
-        case 'A': return {0x7E,0x11,0x11,0x11,0x7E};
-        case 'B': return {0x7F,0x49,0x49,0x49,0x36};
-        case 'C': return {0x3E,0x41,0x41,0x41,0x22};
-        case 'D': return {0x7F,0x41,0x41,0x22,0x1C};
-        case 'E': return {0x7F,0x49,0x49,0x49,0x41};
-        case 'F': return {0x7F,0x09,0x09,0x09,0x01};
-        case 'G': return {0x3E,0x41,0x49,0x49,0x7A};
-        case 'H': return {0x7F,0x08,0x08,0x08,0x7F};
-        case 'I': return {0x00,0x41,0x7F,0x41,0x00};
-        case 'J': return {0x20,0x40,0x41,0x3F,0x01};
-        case 'K': return {0x7F,0x08,0x14,0x22,0x41};
-        case 'L': return {0x7F,0x40,0x40,0x40,0x40};
-        case 'M': return {0x7F,0x02,0x0C,0x02,0x7F};
-        case 'N': return {0x7F,0x04,0x08,0x10,0x7F};
-        case 'O': return {0x3E,0x41,0x41,0x41,0x3E};
-        case 'P': return {0x7F,0x09,0x09,0x09,0x06};
-        case 'Q': return {0x3E,0x41,0x51,0x21,0x5E};
-        case 'R': return {0x7F,0x09,0x19,0x29,0x46};
-        case 'S': return {0x46,0x49,0x49,0x49,0x31};
-        case 'T': return {0x01,0x01,0x7F,0x01,0x01};
-        case 'U': return {0x3F,0x40,0x40,0x40,0x3F};
-        case 'V': return {0x1F,0x20,0x40,0x20,0x1F};
-        case 'W': return {0x3F,0x40,0x38,0x40,0x3F};
-        case 'X': return {0x63,0x14,0x08,0x14,0x63};
-        case 'Y': return {0x07,0x08,0x70,0x08,0x07};
-        case 'Z': return {0x61,0x51,0x49,0x45,0x43};
-        case '0': return {0x3E,0x51,0x49,0x45,0x3E};
-        case '1': return {0x00,0x42,0x7F,0x40,0x00};
-        case '2': return {0x62,0x51,0x49,0x49,0x46};
-        case '3': return {0x22,0x41,0x49,0x49,0x36};
-        case '4': return {0x18,0x14,0x12,0x7F,0x10};
-        case '5': return {0x2F,0x49,0x49,0x49,0x31};
-        case '6': return {0x3E,0x49,0x49,0x49,0x32};
-        case '7': return {0x01,0x71,0x09,0x05,0x03};
-        case '8': return {0x36,0x49,0x49,0x49,0x36};
-        case '9': return {0x26,0x49,0x49,0x45,0x3E};
-        case ':': return {0x00,0x36,0x36,0x00,0x00};
-        case '.': return {0x00,0x60,0x60,0x00,0x00};
-        case '-': return {0x08,0x08,0x08,0x08,0x08};
-        case '/': return {0x20,0x10,0x08,0x04,0x02};
-        default: return {0x00,0x00,0x00,0x00,0x00};
+uint32_t DecodeUtf8(std::string_view text, size_t& offset) {
+    const auto first = static_cast<uint8_t>(text[offset++]);
+    if (first < 0x80) return first;
+    if ((first & 0xE0) == 0xC0 && offset < text.size()) {
+        const auto second = static_cast<uint8_t>(text[offset++]);
+        return ((first & 0x1F) << 6) | (second & 0x3F);
     }
+    if ((first & 0xF0) == 0xE0 && offset + 1 < text.size()) {
+        const auto second = static_cast<uint8_t>(text[offset++]);
+        const auto third = static_cast<uint8_t>(text[offset++]);
+        return ((first & 0x0F) << 12) | ((second & 0x3F) << 6) | (third & 0x3F);
+    }
+    if ((first & 0xF8) == 0xF0 && offset + 2 < text.size()) {
+        const auto second = static_cast<uint8_t>(text[offset++]);
+        const auto third = static_cast<uint8_t>(text[offset++]);
+        const auto fourth = static_cast<uint8_t>(text[offset++]);
+        return ((first & 0x07) << 18) | ((second & 0x3F) << 12) |
+               ((third & 0x3F) << 6) | (fourth & 0x3F);
+    }
+    return '?';
 }
 
-void DrawText(size_t x, size_t y, const std::string& text) {
-    if (y >= 64) return;
-    for (char value : text) {
-        if (x + 5 >= kWidth) break;
-        const auto glyph = Glyph(value);
-        for (size_t column = 0; column < glyph.size(); ++column) {
-            g_frame[(y / 8) * kWidth + x + column] = glyph[column];
+const chatai::display::Glyph8x10* FindGlyph(uint32_t codepoint) {
+    const auto begin = std::begin(chatai::display::kVietnameseFont);
+    const auto end = std::end(chatai::display::kVietnameseFont);
+    const auto found = std::lower_bound(
+        begin, end, codepoint,
+        [](const chatai::display::Glyph8x10& glyph, uint32_t value) {
+            return glyph.codepoint < value;
+        });
+    return found != end && found->codepoint == codepoint ? found : nullptr;
+}
+
+void DrawText(size_t x, size_t y, std::string_view text) {
+    size_t offset = 0;
+    while (offset < text.size() && x + 8 <= kWidth && y + 10 <= 64) {
+        const uint32_t codepoint = DecodeUtf8(text, offset);
+        const auto* glyph = FindGlyph(codepoint);
+        if (glyph != nullptr) {
+            for (size_t row = 0; row < 10; ++row) {
+                for (size_t column = 0; column < 8; ++column) {
+                    if ((glyph->rows[row] & (1U << (7 - column))) == 0) continue;
+                    const size_t pixel_x = x + column;
+                    const size_t pixel_y = y + row;
+                    g_frame[(pixel_y / 8) * kWidth + pixel_x] |=
+                        static_cast<uint8_t>(1U << (pixel_y % 8));
+                }
+            }
         }
-        x += 6;
+        x += 8;
     }
 }
 
@@ -110,44 +106,30 @@ esp_err_t FlushFrame() {
 
 void RenderStatus() {
     g_frame.fill(0);
+    DrawText(8, 8, "ChatAI TPIOS");
 
     if (static_cast<int32_t>(g_boot_screen_until - xTaskGetTickCount()) > 0) {
-        DrawText(28, 16, "CHATAI");
-        DrawText(34, 40, "TPIOS");
+        DrawText(8, 30, "Đang khởi động");
     } else if (chatai::network::NetworkManager::IsProvisioningActive()) {
-        DrawText(0, 0, "CHATAI TPIOS");
-        DrawText(0, 16, "WIFI SETUP");
-        DrawText(0, 24, "SSID:" +
-            chatai::network::NetworkManager::GetProvisioningSsid());
-        DrawText(0, 40, "OPEN WIFI");
-        DrawText(0, 52, "192.168.4.1");
+        DrawText(8, 26,
+            chatai::network::NetworkManager::HasSavedCredentials()
+                ? "Mất kết nối mạng" : "Chưa có Wi-Fi");
+        DrawText(8, 44, "Mở 192.168.4.1");
     } else if (!chatai::network::NetworkManager::IsConnected()) {
-        DrawText(0, 0, "CHATAI TPIOS");
-        DrawText(0, 24, "WIFI CONNECTING");
-        DrawText(0, 40, "PLEASE WAIT");
+        DrawText(8, 30, "Kết nối Wi-Fi");
+    } else if (!chatai::settings::HasGeminiApiKey()) {
+        DrawText(8, 26, "Thiếu Gemini Key");
+        DrawText(8, 44, "Mở chatai.local");
+    } else if (!g_audio_ready.load()) {
+        DrawText(8, 30, "Lỗi âm thanh");
+    } else if (chatai::gemini::HasError()) {
+        DrawText(8, 30, "Lỗi Gemini");
+    } else if (!chatai::gemini::IsReady()) {
+        DrawText(8, 30, "Kết nối Gemini");
+    } else if (chatai::gemini::IsSpeaking()) {
+        DrawText(8, 30, "Đang trả lời");
     } else {
-        DrawText(0, 0, "CHATAI TPIOS");
-        DrawText(0, 16, "WIFI CONNECTED");
-
-        if (!chatai::settings::HasGeminiApiKey()) {
-            DrawText(0, 32, "SET GEMINI API KEY");
-            DrawText(0, 48, "CHATAI.LOCAL");
-        } else if (!g_audio_ready.load()) {
-            DrawText(0, 32, "AUDIO ERROR");
-            DrawText(0, 48, "CHECK I2S");
-        } else if (chatai::gemini::HasError()) {
-            DrawText(0, 32, "GEMINI ERROR");
-            DrawText(0, 48, "RECONNECTING");
-        } else if (!chatai::gemini::IsReady()) {
-            DrawText(0, 32, "GEMINI CONNECT");
-            DrawText(0, 48, "PLEASE WAIT");
-        } else if (chatai::gemini::IsSpeaking()) {
-            DrawText(0, 32, "GEMINI SPEAKING");
-            DrawText(0, 48, "CHAT ACTIVE");
-        } else {
-            DrawText(0, 32, "CHAT READY");
-            DrawText(0, 48, "LISTENING");
-        }
+        DrawText(8, 30, "Đang lắng nghe");
     }
 
     const esp_err_t result = FlushFrame();
@@ -187,6 +169,7 @@ esp_err_t Initialize() {
     result = i2c_master_bus_add_device(g_bus, &device_config, &g_display);
     if (result != ESP_OK) return result;
 
+    // The current board configuration uses the SSD1306 command sequence.
     const uint8_t initialization[] = {
         0x00, 0xAE, 0xD5, 0x80, 0xA8, 0x3F, 0xD3, 0x00,
         0x40, 0x8D, 0x14, 0x20, 0x02, 0xA1, 0xC8, 0xDA,
@@ -201,7 +184,7 @@ esp_err_t Initialize() {
         g_initialized = false;
         return ESP_ERR_NO_MEM;
     }
-    ESP_LOGI(kTag, "Standalone SSD1306 initialized on SDA=%d SCL=%d", kSdaPin, kSclPin);
+    ESP_LOGI(kTag, "Vietnamese OLED initialized on SDA=%d SCL=%d", kSdaPin, kSclPin);
     return ESP_OK;
 }
 
