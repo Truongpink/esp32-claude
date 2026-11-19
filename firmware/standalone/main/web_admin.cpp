@@ -17,7 +17,6 @@
 #include "gemini_settings.h"
 #include "gemini_live_client.h"
 #include "display_manager.h"
-#include "gemini_live_client.h"
 #include "network_manager.h"
 #include "firmware_info.h"
 
@@ -622,7 +621,7 @@ esp_err_t GeminiKeyPostHandler(httpd_req_t* request) {
         return SendError(request, "500 Internal Server Error", "Không thể lưu API Key vào NVS");
     }
     chatai::gemini::RequestReconnect();
-    chatai::display::Notify("WEB ADMIN", "Đã lưu Gemini Key");
+    chatai::display::Notify("WEB ADMIN", "Đã lưu API Key");
     return SendJson(request, "200 OK", "{\"message\":\"Đã lưu Gemini API Key.\"}");
 }
 
@@ -739,7 +738,7 @@ esp_err_t GeminiKeyDeleteHandler(httpd_req_t* request) {
         return SendError(request, "500 Internal Server Error", "Không thể xóa API Key khỏi NVS");
     }
     chatai::gemini::RequestReconnect();
-    chatai::display::Notify("WEB ADMIN", "Đã xóa Gemini Key");
+    chatai::display::Notify("WEB ADMIN", "Đã xóa API Key");
     return SendJson(request, "200 OK", "{\"message\":\"Đã xóa Gemini API Key.\"}");
 }
 }  // namespace
