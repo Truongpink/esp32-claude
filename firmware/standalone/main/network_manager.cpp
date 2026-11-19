@@ -266,7 +266,7 @@ void DnsServerTask(void* argument) {
         socklen_t client_length = sizeof(client);
         const int received = recvfrom(socket_fd, query, sizeof(query), 0,
                                       reinterpret_cast<sockaddr*>(&client), &client_length);
-        if (received < 17) continue;
+        if (received < 17 || !g_provisioning_started.load()) continue;
         size_t question_end = 12;
         bool valid_name = false;
         while (question_end < static_cast<size_t>(received)) {
