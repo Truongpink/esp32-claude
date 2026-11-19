@@ -197,7 +197,7 @@ esp_err_t RootHandler(httpd_req_t* request) {
 
 esp_err_t WifiPostHandler(httpd_req_t* request) {
     if (request->content_len == 0 || request->content_len > kMaxFormLength) {
-        httpd_resp_send_err(request, HTTPD_400_BAD_REQUEST, "Invalid form size");
+        httpd_resp_send_err(request, HTTPD_400_BAD_REQUEST, "Kích thước biểu mẫu không hợp lệ");
         return ESP_FAIL;
     }
 
@@ -207,14 +207,14 @@ esp_err_t WifiPostHandler(httpd_req_t* request) {
         const int count = httpd_req_recv(
             request, body.data() + received, body.size() - received);
         if (count <= 0) {
-            httpd_resp_send_err(request, HTTPD_400_BAD_REQUEST, "Incomplete form");
+            httpd_resp_send_err(request, HTTPD_400_BAD_REQUEST, "Dữ liệu biểu mẫu chưa đầy đủ");
             return ESP_FAIL;
         }
         received += static_cast<size_t>(count);
     }
 
     if (ConnectFromForm(body) != ESP_OK) {
-        httpd_resp_send_err(request, HTTPD_400_BAD_REQUEST, "Invalid Wi-Fi settings");
+        httpd_resp_send_err(request, HTTPD_400_BAD_REQUEST, "Thông tin Wi-Fi không hợp lệ");
         return ESP_FAIL;
     }
 
