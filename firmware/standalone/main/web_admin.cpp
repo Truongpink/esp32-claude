@@ -66,7 +66,7 @@ small,.muted{opacity:.72}
 <p class="muted">Hỗ trợ file BIN hoặc ZIP chứa duy nhất một firmware ứng dụng BIN. Không tắt nguồn trong quá trình cập nhật.</p>
 <label for="firmware">Firmware BIN / ZIP</label>
 <input id="firmware" type="file" accept=".bin,.zip,application/octet-stream,application/zip">
-<p id="otaFileInfo" class="muted">Chưa chọn file.</p>
+<p id="otaFileInfo" class="muted">Chưa chọn tệp.</p>
 <button id="updateFirmware">Kiểm tra và cài đặt</button>
 <div class="progress" aria-label="Tiến trình tải firmware"><div id="otaProgress"></div></div>
 <p id="otaResult" role="status"></p>
@@ -98,9 +98,9 @@ async function refreshFirmwareStatus() {
   const data = await response.json();
   currentBuildNumber = Number(data.build_number || 0);
   otaMaxBytes = Number(data.ota_max_bytes || 0);
-  firmwareStatus.textContent = "Firmware Build: #" + currentBuildNumber +
-    " · Slot đang chạy: " + (data.running_partition || "không rõ") +
-    " · Slot OTA: " + (data.ota_target || "không khả dụng");
+  firmwareStatus.textContent = "Bản dựng firmware: #" + currentBuildNumber +
+    " · Phân vùng đang chạy: " + (data.running_partition || "không rõ") +
+    " · Phân vùng OTA: " + (data.ota_target || "không khả dụng");
 }
 
 function zipCrc32(bytes) {
@@ -117,7 +117,7 @@ async function readFirmwareBuild(blob) {
   if (bytes.length < 64 || bytes[0] !== 0xE9 ||
       bytes[32] !== 0x32 || bytes[33] !== 0x54 ||
       bytes[34] !== 0xCD || bytes[35] !== 0xAB) {
-    throw new Error("File không có cấu trúc ESP-IDF application hợp lệ.");
+    throw new Error("Tệp không có cấu trúc ứng dụng ESP-IDF hợp lệ.");
   }
   const marker = new TextEncoder().encode("CHATAI_BUILD_NUMBER=");
   for (let i = 0; i <= bytes.length - marker.length; i++) {
@@ -132,15 +132,15 @@ async function readFirmwareBuild(blob) {
     const value = Number(new TextDecoder().decode(bytes.slice(i + marker.length, end)));
     if (Number.isSafeInteger(value) && value >= 0) return value;
   }
-  throw new Error("Không tìm thấy Build Number trong firmware. Hãy chọn BIN ChatAI TPIOS chính thức.");
+  throw new Error("Không tìm thấy số bản dựng trong firmware. Hãy chọn tệp BIN chính thức của ChatAI TPIOS.");
 }
 
 async function extractOtaBinFromZip(file) {
   if (typeof DecompressionStream === "undefined") {
-    throw new Error("Trình duyệt không hỗ trợ giải nén ZIP. Hãy cập nhật Safari hoặc chọn trực tiếp file BIN.");
+    throw new Error("Trình duyệt không hỗ trợ giải nén ZIP. Hãy cập nhật Safari hoặc chọn trực tiếp tệp BIN.");
   }
   const maxZipBytes = Math.min(16 * 1024 * 1024, Math.max(otaMaxBytes + 1048576, otaMaxBytes * 2));
-  if (file.size > maxZipBytes) throw new Error("File ZIP vượt giới hạn an toàn (" + formatBytes(maxZipBytes) + ").");
+  if (file.size > maxZipBytes) throw new Error("Tệp ZIP vượt giới hạn an toàn (" + formatBytes(maxZipBytes) + ").");
 
   const tailSize = Math.min(file.size, 22 + 65535);
   const tailStart = file.size - tailSize;
@@ -150,7 +150,7 @@ async function extractOtaBinFromZip(file) {
     if (tail.getUint32(i, true) === 0x06054B50 &&
         i + 22 + tail.getUint16(i + 20, true) === tail.byteLength) { eocd = i; break; }
   }
-  if (eocd < 0) throw new Error("ZIP không hợp lệ: không tìm thấy thư mục trung tâm.");
+  if (eocd < 0) throw new Error("Tệp ZIP không hợp lệ: không tìm thấy thư mục trung tâm.");
 
   const disk = tail.getUint16(eocd + 4, true);
   const centralDisk = tail.getUint16(eocd + 6, true);
@@ -162,7 +162,7 @@ async function extractOtaBinFromZip(file) {
   if (disk || centralDisk || diskEntries !== totalEntries || totalEntries === 0xFFFF ||
       centralSize === 0xFFFFFFFF || centralOffset === 0xFFFFFFFF || totalEntries > 128 ||
       centralOffset + centralSize > eocdOffset) {
-    throw new Error("ZIP nhiều phân vùng, ZIP64 hoặc cấu trúc vượt giới hạn hỗ trợ.");
+    throw new Error("Tệp ZIP nhiều phân vùng, dùng ZIP64 hoặc có cấu trúc vượt giới hạn hỗ trợ.");
   }
 
   const directory = new DataView(await file.slice(centralOffset, centralOffset + centralSize).arrayBuffer());
@@ -171,7 +171,7 @@ async function extractOtaBinFromZip(file) {
   let offset = 0;
   for (let i = 0; i < totalEntries; i++) {
     if (offset + 46 > directory.byteLength || directory.getUint32(offset, true) !== 0x02014B50) {
-      throw new Error("ZIP lỗi: thư mục trung tâm không hợp lệ.");
+      throw new Error("Tệp ZIP bị lỗi: thư mục trung tâm không hợp lệ.");
     }
     const flags = directory.getUint16(offset + 8, true);
     const method = directory.getUint16(offset + 10, true);
@@ -186,33 +186,33 @@ async function extractOtaBinFromZip(file) {
     const end = offset + 46 + nameLength + extraLength + commentLength;
     if (end > directory.byteLength || startDisk !== 0 || compressedSize === 0xFFFFFFFF ||
         uncompressedSize === 0xFFFFFFFF || localOffset === 0xFFFFFFFF) {
-      throw new Error("ZIP lỗi hoặc dùng ZIP64 không được hỗ trợ.");
+      throw new Error("Tệp ZIP bị lỗi hoặc dùng ZIP64 không được hỗ trợ.");
     }
     let name;
     try {
       name = decoder.decode(new Uint8Array(directory.buffer, directory.byteOffset + offset + 46, nameLength));
     } catch (_) {
-      throw new Error("Tên file trong ZIP không phải UTF-8.");
+      throw new Error("Tên tệp trong ZIP không phải UTF-8.");
     }
     if (!name || name.includes("\\") || name.startsWith("/") || /^[A-Za-z]:/.test(name) ||
         name.split("/").some(part => part === "..") || name.includes("\0")) {
-      throw new Error("ZIP chứa đường dẫn file không an toàn.");
+      throw new Error("Tệp ZIP chứa đường dẫn không an toàn.");
     }
     if (!name.endsWith("/") && /\.bin$/i.test(name)) {
-      if ((flags & 0x2041) !== 0) throw new Error("ZIP chứa BIN được mã hóa hoặc có cờ không an toàn.");
-      if (method !== 0 && method !== 8) throw new Error("ZIP dùng kiểu nén BIN không được hỗ trợ.");
+      if ((flags & 0x2041) !== 0) throw new Error("Tệp ZIP chứa BIN được mã hóa hoặc có cờ không an toàn.");
+      if (method !== 0 && method !== 8) throw new Error("Tệp ZIP dùng kiểu nén BIN không được hỗ trợ.");
       binaries.push({name, flags, method, crc, compressedSize, uncompressedSize, localOffset});
     }
     offset = end;
   }
-  if (offset !== directory.byteLength) throw new Error("ZIP có dữ liệu thừa hoặc thư mục không hợp lệ.");
+  if (offset !== directory.byteLength) throw new Error("Tệp ZIP có dữ liệu thừa hoặc thư mục không hợp lệ.");
 
   const excluded = /(^|\/)(bootloader|boot_app0|partition-table|partitions|ota_data_initial|usb-flash|merged|flash|firmware-full)\.bin$/i;
   const candidates = binaries.filter(entry => !excluded.test(entry.name));
   if (candidates.length !== 1) {
     throw new Error(candidates.length
-      ? "ZIP có nhiều file BIN. Hãy dùng ZIP chỉ chứa một firmware ứng dụng."
-      : "Không tìm thấy firmware ứng dụng BIN trong ZIP.");
+      ? "Tệp ZIP có nhiều BIN. Hãy dùng ZIP chỉ chứa một firmware ứng dụng."
+      : "Không tìm thấy firmware ứng dụng BIN trong tệp ZIP.");
   }
   const entry = candidates[0];
   if (entry.uncompressedSize < 4096 || entry.uncompressedSize > otaMaxBytes ||
@@ -223,18 +223,18 @@ async function extractOtaBinFromZip(file) {
   const localHeader = new DataView(await file.slice(entry.localOffset, entry.localOffset + 30).arrayBuffer());
   if (localHeader.byteLength !== 30 || localHeader.getUint32(0, true) !== 0x04034B50 ||
       localHeader.getUint16(6, true) !== entry.flags || localHeader.getUint16(8, true) !== entry.method) {
-    throw new Error("Header firmware trong ZIP không khớp thư mục trung tâm.");
+    throw new Error("Phần đầu firmware trong ZIP không khớp với thư mục trung tâm.");
   }
   const localNameLength = localHeader.getUint16(26, true);
   const localExtraLength = localHeader.getUint16(28, true);
   const dataStart = entry.localOffset + 30 + localNameLength + localExtraLength;
   const dataEnd = dataStart + entry.compressedSize;
   if (dataStart < entry.localOffset || dataEnd > centralOffset || dataEnd > file.size) {
-    throw new Error("Vùng dữ liệu firmware nằm ngoài giới hạn ZIP.");
+    throw new Error("Vùng dữ liệu firmware nằm ngoài giới hạn của tệp ZIP.");
   }
   const localName = decoder.decode(await file.slice(entry.localOffset + 30,
     entry.localOffset + 30 + localNameLength).arrayBuffer());
-  if (localName !== entry.name) throw new Error("Tên firmware trong header ZIP không khớp.");
+  if (localName !== entry.name) throw new Error("Tên firmware trong phần đầu ZIP không khớp.");
 
   otaResult.textContent = "Đang giải nén " + entry.name + "...";
   let firmware;
@@ -246,14 +246,14 @@ async function extractOtaBinFromZip(file) {
       firmware = await new Response(file.slice(dataStart, dataEnd).stream()
         .pipeThrough(new DecompressionStream("deflate-raw"))).blob();
     } catch (_) {
-      throw new Error("Safari không giải nén được ZIP Deflate trên thiết bị này. Hãy chọn file BIN.");
+      throw new Error("Safari không giải nén được ZIP Deflate trên thiết bị này. Hãy chọn tệp BIN.");
     }
   }
   if (firmware.size !== entry.uncompressedSize || firmware.size > otaMaxBytes) {
-    throw new Error("Giải nén thất bại: kích thước BIN không khớp hoặc vượt slot OTA.");
+    throw new Error("Giải nén thất bại: kích thước BIN không khớp hoặc vượt phân vùng OTA.");
   }
   if (zipCrc32(new Uint8Array(await firmware.arrayBuffer())) !== entry.crc) {
-    throw new Error("CRC32 không khớp: file ZIP hoặc firmware đã bị hỏng.");
+    throw new Error("CRC32 không khớp: tệp ZIP hoặc firmware đã bị hỏng.");
   }
   return {blob:firmware, name:entry.name.split("/").pop()};
 }
@@ -269,8 +269,8 @@ function uploadOtaFirmware(firmware, filename) {
         const percent = Math.round(event.loaded * 100 / event.total);
         otaProgress.style.width = percent + "%";
         otaResult.textContent = percent < 100
-          ? "Đang tải " + filename + ": " + percent + "%"
-          : "Đã truyền 100%. ESP32 đang xác thực và ghi firmware vào OTA slot...";
+          ? "Đang tải lên " + filename + ": " + percent + "%"
+          : "Đã tải lên 100%. ESP32 đang xác thực và ghi firmware vào phân vùng OTA...";
       }
     };
     xhr.onload = () => {
@@ -286,7 +286,7 @@ function uploadOtaFirmware(firmware, filename) {
 
 firmwareInput.addEventListener("change", () => {
   const file = firmwareInput.files && firmwareInput.files[0];
-  otaFileInfo.textContent = file ? file.name + " · " + formatBytes(file.size) : "Chưa chọn file.";
+  otaFileInfo.textContent = file ? file.name + " · " + formatBytes(file.size) : "Chưa chọn tệp.";
   otaProgress.style.width = "0%";
   otaResult.textContent = "";
 });
@@ -345,7 +345,7 @@ updateFirmwareButton.addEventListener("click", async () => {
       "\nKhông tắt nguồn trong quá trình cập nhật. Tiếp tục?";
     if (!confirm(confirmText)) { updateFirmwareButton.disabled = false; return; }
 
-    otaResult.textContent = "Đang tải firmware lên thiết bị...";
+    otaResult.textContent = "Đang tải lên firmware lên thiết bị...";
     const data = await uploadOtaFirmware(firmware, firmwareName);
     otaProgress.style.width = "100%";
     otaResult.textContent = data.message || "ESP32 đã chấp nhận firmware.";
@@ -520,18 +520,18 @@ esp_err_t GeminiStatusHandler(httpd_req_t* request) {
 
 esp_err_t GeminiKeyPostHandler(httpd_req_t* request) {
     if (!IsAuthorizedMutation(request)) {
-        return SendError(request, "403 Forbidden", "Yeu cau khong hop le");
+        return SendError(request, "403 Forbidden", "Yêu cầu không hợp lệ");
     }
 
     std::string body;
     if (!ReadBody(request, body)) {
-        return SendError(request, "400 Bad Request", "Du lieu gui len khong hop le");
+        return SendError(request, "400 Bad Request", "Dữ liệu gửi lên không hợp lệ");
     }
 
     cJSON* root = cJSON_ParseWithLength(body.c_str(), body.size());
     if (!cJSON_IsObject(root)) {
         if (root != nullptr) cJSON_Delete(root);
-        return SendError(request, "400 Bad Request", "JSON khong hop le");
+        return SendError(request, "400 Bad Request", "JSON không hợp lệ");
     }
 
     const cJSON* key = cJSON_GetObjectItemCaseSensitive(root, "api_key");
@@ -539,22 +539,22 @@ esp_err_t GeminiKeyPostHandler(httpd_req_t* request) {
     const std::string api_key = valid ? key->valuestring : "";
     cJSON_Delete(root);
     if (!valid) {
-        return SendError(request, "400 Bad Request", "Gemini API Key khong hop le");
+        return SendError(request, "400 Bad Request", "Gemini API Key không hợp lệ");
     }
 
     const esp_err_t result = chatai::settings::SaveGeminiApiKey(api_key);
     if (result != ESP_OK) {
-        return SendError(request, "500 Internal Server Error", "Khong the luu API Key vao NVS");
+        return SendError(request, "500 Internal Server Error", "Không thể lưu API Key vào NVS");
     }
-    return SendJson(request, "200 OK", "{\"message\":\"Da luu Gemini API Key.\"}");
+    return SendJson(request, "200 OK", "{\"message\":\"Đã lưu Gemini API Key.\"}");
 }
 
 esp_err_t OtaUploadHandler(httpd_req_t* request) {
     if (!IsAuthorizedMutation(request)) {
-        return SendError(request, "403 Forbidden", "Yeu cau khong hop le");
+        return SendError(request, "403 Forbidden", "Yêu cầu không hợp lệ");
     }
     if (request->content_len < 4096) {
-        return SendError(request, "400 Bad Request", "Firmware BIN rong hoac qua nho");
+        return SendError(request, "400 Bad Request", "Firmware BIN rỗng hoặc quá nhỏ");
     }
 
     std::unique_lock<std::mutex> lock(g_ota_mutex, std::try_to_lock);
@@ -576,11 +576,11 @@ esp_err_t OtaUploadHandler(httpd_req_t* request) {
         (target->subtype != ESP_PARTITION_SUBTYPE_APP_OTA_0 &&
          target->subtype != ESP_PARTITION_SUBTYPE_APP_OTA_1)) {
         return SendError(request, "503 Service Unavailable",
-                         "Khong tim thay phan vung OTA hai slot tuong thich");
+                         "Không tìm thấy hai phân vùng OTA tương thích");
     }
     if (static_cast<size_t>(request->content_len) > target->size) {
         return SendError(request, "413 Content Too Large",
-                         "Firmware BIN lon hon phan vung OTA trong");
+                         "Firmware BIN lớn hơn phân vùng OTA còn trống");
     }
 
     esp_ota_handle_t handle = 0;
@@ -589,7 +589,7 @@ esp_err_t OtaUploadHandler(httpd_req_t* request) {
     if (result != ESP_OK) {
         ESP_LOGE(kTag, "esp_ota_begin failed: %s", esp_err_to_name(result));
         return SendError(request, "500 Internal Server Error",
-                         "Khong the bat dau ghi firmware");
+                         "Không thể bắt đầu ghi firmware");
     }
 
     uint8_t buffer[1024];
@@ -604,7 +604,7 @@ esp_err_t OtaUploadHandler(httpd_req_t* request) {
             ESP_LOGE(kTag, "OTA upload interrupted after %u bytes",
                      static_cast<unsigned>(written));
             return SendError(request, "400 Bad Request",
-                             "Qua trinh tai firmware bi gian doan");
+                             "Quá trình tải firmware bị gián đoạn");
         }
 
         result = esp_ota_write(handle, buffer, static_cast<size_t>(received));
@@ -612,7 +612,7 @@ esp_err_t OtaUploadHandler(httpd_req_t* request) {
             esp_ota_abort(handle);
             ESP_LOGE(kTag, "esp_ota_write failed: %s", esp_err_to_name(result));
             return SendError(request, "500 Internal Server Error",
-                             "Khong the ghi firmware vao OTA slot");
+                             "Không thể ghi firmware vào phân vùng OTA");
         }
         remaining -= static_cast<size_t>(received);
         written += static_cast<size_t>(received);
@@ -622,7 +622,7 @@ esp_err_t OtaUploadHandler(httpd_req_t* request) {
     if (result != ESP_OK) {
         ESP_LOGE(kTag, "OTA image validation failed: %s", esp_err_to_name(result));
         return SendError(request, "400 Bad Request",
-                         "Firmware BIN khong hop le hoac khong tuong thich");
+                         "Firmware BIN không hợp lệ hoặc không tương thích");
     }
 
     result = esp_ota_set_boot_partition(target);
@@ -630,14 +630,14 @@ esp_err_t OtaUploadHandler(httpd_req_t* request) {
         ESP_LOGE(kTag, "Could not select OTA boot partition: %s",
                  esp_err_to_name(result));
         return SendError(request, "500 Internal Server Error",
-                         "Khong the chon firmware moi de khoi dong");
+                         "Không thể chọn firmware mới để khởi động");
     }
 
     ESP_LOGI(kTag, "OTA image accepted: %u bytes -> %s",
              static_cast<unsigned>(written), target->label);
     const esp_err_t response_result = SendJson(
         request, "200 OK",
-        "{\"message\":\"Firmware da duoc xac thuc va cai dat. ESP32 dang khoi dong lai.\"}");
+        "{\"message\":\"Firmware đã được xác thực và cài đặt. ESP32 đang khởi động lại.\"}");
     vTaskDelay(pdMS_TO_TICKS(1200));
     esp_restart();
     return response_result;
@@ -645,13 +645,13 @@ esp_err_t OtaUploadHandler(httpd_req_t* request) {
 
 esp_err_t GeminiKeyDeleteHandler(httpd_req_t* request) {
     if (!IsAuthorizedMutation(request)) {
-        return SendError(request, "403 Forbidden", "Yeu cau khong hop le");
+        return SendError(request, "403 Forbidden", "Yêu cầu không hợp lệ");
     }
     const esp_err_t result = chatai::settings::DeleteGeminiApiKey();
     if (result != ESP_OK) {
-        return SendError(request, "500 Internal Server Error", "Khong the xoa API Key khoi NVS");
+        return SendError(request, "500 Internal Server Error", "Không thể xóa API Key khỏi NVS");
     }
-    return SendJson(request, "200 OK", "{\"message\":\"Da xoa Gemini API Key.\"}");
+    return SendJson(request, "200 OK", "{\"message\":\"Đã xóa Gemini API Key.\"}");
 }
 }  // namespace
 
