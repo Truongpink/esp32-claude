@@ -15,6 +15,7 @@
 #include <freertos/task.h>
 
 #include "gemini_settings.h"
+#include "gemini_live_client.h"
 #include "network_manager.h"
 #include "firmware_info.h"
 
@@ -53,6 +54,7 @@ small,.muted{opacity:.72}
 <h1>ChatAI TPIOS</h1>
 <p class="muted">Cấu hình Gemini Live trên thiết bị.</p>
 <p id="status">Đang kiểm tra trạng thái...</p>
+<p id="deviceStatus" role="status">Đang kiểm tra Wi-Fi, Internet và Gemini Live...</p>
 <label for="apiKey">Gemini API Key</label>
 <input id="apiKey" type="password" maxlength="256" autocomplete="new-password"
        autocapitalize="off" spellcheck="false" placeholder="Nhập API Key mới">
@@ -76,6 +78,7 @@ small,.muted{opacity:.72}
 <script>
 const csrfToken = "__CSRF_TOKEN__";
 const statusText = document.getElementById("status");
+const deviceStatus = document.getElementById("deviceStatus");
 const resultText = document.getElementById("result");
 const keyInput = document.getElementById("apiKey");
 const saveButton = document.getElementById("save");
@@ -358,6 +361,22 @@ updateFirmwareButton.addEventListener("click", async () => {
   }
 });
 
+async function refreshDeviceStatus() {
+  const response = await fetch("/api/device/status", {cache:"no-store"});
+  if (!response.ok) throw new Error("Không đọc được trạng thái thiết bị (HTTP " + response.status + ")");
+  const data = await response.json();
+  let state;
+  if (!data.wifi_connected) state = "Wi-Fi: Chưa kết nối";
+  else if (!data.internet_available) state = "Wi-Fi: Đã kết nối · Internet: Chưa xác nhận";
+  else if (!data.key_configured) state = "Internet: Đã thông · Gemini: Chưa cấu hình API Key";
+  else if (data.gemini_ready) state = "Gemini Live: Đã sẵn sàng (đã nhận setupComplete)";
+  else if (data.gemini_error) state = "Gemini Live: Lỗi kết nối hoặc xác thực; đang chờ thử lại";
+  else state = "Gemini Live: Đang kết nối, chờ setupComplete";
+  deviceStatus.textContent = state +
+    (data.ip ? " · IP: " + data.ip : "") +
+    (data.gateway ? " · Gateway: " + data.gateway : "");
+}
+
 async function refreshStatus() {
   const response = await fetch("/api/gemini/status", {cache:"no-store"});
   if (!response.ok) throw new Error("Không đọc được trạng thái (HTTP " + response.status + ")");
@@ -365,6 +384,8 @@ async function refreshStatus() {
   statusText.textContent = data.key_configured ? "Trạng thái: API Key đã được lưu." :
     "Trạng thái: Chưa cấu hình API Key.";
   removeButton.hidden = !data.key_configured;
+  try { await refreshDeviceStatus(); }
+  catch (error) { deviceStatus.textContent = error.message; }
   try { await refreshFirmwareStatus(); }
   catch (error) { firmwareStatus.textContent = error.message; }
 }
@@ -406,6 +427,9 @@ removeButton.addEventListener("click", async () => {
   } finally { removeButton.disabled = false; }
 });
 refreshStatus().catch(error => { statusText.textContent = error.message; });
+setInterval(() => {
+  refreshDeviceStatus().catch(error => { deviceStatus.textContent = error.message; });
+}, 5000);
 </script>
 </body>
 </html>
@@ -512,6 +536,30 @@ esp_err_t FirmwareStatusHandler(httpd_req_t* request) {
         static_cast<unsigned>(target_size));
     return SendJson(request, "200 OK", body);
 }
+esp_err_t DeviceStatusHandler(httpd_req_t* request) {
+    const bool wifi_connected = chatai::network::NetworkManager::IsConnected();
+    const bool internet_available = chatai::network::NetworkManager::IsInternetAvailable();
+    const bool key_configured = chatai::settings::HasGeminiApiKey();
+    const bool gemini_ready = chatai::gemini::IsReady();
+    const bool gemini_error = chatai::gemini::HasError();
+    const std::string ip = chatai::network::NetworkManager::GetIpAddress();
+    const std::string gateway = chatai::network::NetworkManager::GetGatewayAddress();
+
+    char body[384]{};
+    std::snprintf(body, sizeof(body),
+        "{\\"wifi_connected\\":%s,\\"internet_available\\":%s,"
+        "\\"key_configured\\":%s,\\"gemini_ready\\":%s,"
+        "\\"gemini_error\\":%s,\\"ip\\":\\"%s\\",\\"gateway\\":\\"%s\\"}",
+        wifi_connected ? "true" : "false",
+        internet_available ? "true" : "false",
+        key_configured ? "true" : "false",
+        gemini_ready ? "true" : "false",
+        gemini_error ? "true" : "false",
+        ip.c_str(), gateway.c_str());
+    return SendJson(request, "200 OK", body);
+}
+
+
 esp_err_t GeminiStatusHandler(httpd_req_t* request) {
     const char* status = chatai::settings::HasGeminiApiKey()
         ? "{\"key_configured\":true}"
@@ -686,6 +734,11 @@ esp_err_t RegisterRoutes(httpd_handle_t server, const std::string& csrf_token) {
     status_uri.method = HTTP_GET;
     status_uri.handler = GeminiStatusHandler;
 
+    httpd_uri_t device_status_uri{};
+    device_status_uri.uri = "/api/device/status";
+    device_status_uri.method = HTTP_GET;
+    device_status_uri.handler = DeviceStatusHandler;
+
     httpd_uri_t save_uri{};
     save_uri.uri = "/api/gemini/key";
     save_uri.method = HTTP_POST;
@@ -704,6 +757,7 @@ esp_err_t RegisterRoutes(httpd_handle_t server, const std::string& csrf_token) {
     esp_err_t result = httpd_register_uri_handler(server, &admin_uri);
     if (result == ESP_OK) result = httpd_register_uri_handler(server, &firmware_status_uri);
     if (result == ESP_OK) result = httpd_register_uri_handler(server, &status_uri);
+    if (result == ESP_OK) result = httpd_register_uri_handler(server, &device_status_uri);
     if (result == ESP_OK) result = httpd_register_uri_handler(server, &save_uri);
     if (result == ESP_OK) result = httpd_register_uri_handler(server, &delete_uri);
     if (result == ESP_OK) result = httpd_register_uri_handler(server, &ota_uri);

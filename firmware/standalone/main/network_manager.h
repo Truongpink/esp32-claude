@@ -11,7 +11,9 @@ public:
     static esp_err_t Initialize();
     static esp_err_t Connect(const std::string& ssid, const std::string& password);
     static bool IsConnected();
+    static bool IsInternetAvailable();
     static std::string GetIpAddress();
+    static std::string GetGatewayAddress();
     static bool IsProvisioningActive();
     static bool HasSavedCredentials();
     static std::string GetProvisioningSsid();

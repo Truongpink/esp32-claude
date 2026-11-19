@@ -6,6 +6,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <ctime>
 #include <mutex>
 #include <string>
 
@@ -13,6 +14,7 @@
 #include <esp_crt_bundle.h>
 #include <esp_event.h>
 #include <esp_log.h>
+#include <esp_netif_sntp.h>
 #include <esp_websocket_client.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/queue.h>
@@ -43,7 +45,10 @@ struct AudioChunk {
 std::atomic<bool> g_ready{false};
 std::atomic<bool> g_speaking{false};
 std::atomic<bool> g_error{false};
+std::atomic<bool> g_waiting_setup{false};
+std::atomic<uint32_t> g_setup_started_tick{0};
 std::atomic<bool> g_task_started{false};
+bool g_sntp_initialized = false;
 std::atomic<uint32_t> g_audio_epoch{0};
 esp_websocket_client_handle_t g_client = nullptr;
 QueueHandle_t g_audio_queue = nullptr;
@@ -69,6 +74,39 @@ std::string UrlEncode(const std::string& value) {
         }
     }
     return encoded;
+}
+
+bool EnsureSystemTime() {
+    constexpr std::time_t kMinimumValidTime = 1700000000;
+    if (std::time(nullptr) >= kMinimumValidTime) return true;
+
+    if (!g_sntp_initialized) {
+        esp_sntp_config_t config = ESP_NETIF_SNTP_DEFAULT_CONFIG("pool.ntp.org");
+        config.start = false;
+        const esp_err_t result = esp_netif_sntp_init(&config);
+        if (result != ESP_OK) {
+            ESP_LOGE(kTag, "Could not initialize SNTP: %s", esp_err_to_name(result));
+            return false;
+        }
+        g_sntp_initialized = true;
+    }
+
+    const esp_err_t start_result = esp_netif_sntp_start();
+    if (start_result != ESP_OK) {
+        ESP_LOGW(kTag, "Could not start SNTP: %s", esp_err_to_name(start_result));
+        return false;
+    }
+
+    const esp_err_t sync_result =
+        esp_netif_sntp_sync_wait(pdMS_TO_TICKS(10000));
+    if (sync_result != ESP_OK && std::time(nullptr) < kMinimumValidTime) {
+        ESP_LOGW(kTag, "Waiting for system time synchronization before Gemini TLS: %s",
+                 esp_err_to_name(sync_result));
+        return false;
+    }
+
+    ESP_LOGI(kTag, "System time synchronized; Gemini TLS certificate validation can proceed");
+    return true;
 }
 
 const char kSetupMessage[] =
@@ -144,6 +182,7 @@ void HandleServerMessage(const std::string& message) {
 
     const cJSON* setup_complete = cJSON_GetObjectItemCaseSensitive(root, "setupComplete");
     if (cJSON_IsObject(setup_complete)) {
+        g_waiting_setup.store(false);
         g_ready.store(true);
         g_error.store(false);
         ESP_LOGI(kTag, "Gemini Live setupComplete; audio session is ready");
@@ -178,6 +217,7 @@ void HandleServerMessage(const std::string& message) {
     }
 
     if (cJSON_GetObjectItemCaseSensitive(root, "error") != nullptr) {
+        g_waiting_setup.store(false);
         g_ready.store(false);
         g_speaking.store(false);
         g_error.store(true);
@@ -193,6 +233,8 @@ void WebSocketEventHandler(void*, esp_event_base_t, int32_t event_id, void* even
     switch (event_id) {
         case WEBSOCKET_EVENT_CONNECTED: {
             g_ready.store(false);
+            g_waiting_setup.store(true);
+            g_setup_started_tick.store(static_cast<uint32_t>(xTaskGetTickCount()));
             g_speaking.store(false);
             g_error.store(false);
             g_incoming_message.clear();
@@ -238,6 +280,7 @@ void WebSocketEventHandler(void*, esp_event_base_t, int32_t event_id, void* even
             break;
 
         case WEBSOCKET_EVENT_ERROR:
+            g_waiting_setup.store(false);
             g_ready.store(false);
             g_speaking.store(false);
             g_error.store(true);
@@ -256,6 +299,7 @@ void WebSocketEventHandler(void*, esp_event_base_t, int32_t event_id, void* even
             break;
 
         case WEBSOCKET_EVENT_DISCONNECTED:
+            g_waiting_setup.store(false);
             g_ready.store(false);
             g_speaking.store(false);
             g_error.store(true);
@@ -265,6 +309,7 @@ void WebSocketEventHandler(void*, esp_event_base_t, int32_t event_id, void* even
             break;
 
         case WEBSOCKET_EVENT_CLOSED:
+            g_waiting_setup.store(false);
             g_ready.store(false);
             g_speaking.store(false);
             g_error.store(true);
@@ -287,8 +332,9 @@ void MicrophoneWorker(void*) {
     bool microphone_error_reported = false;
 
     while (true) {
-        if (!g_ready.load() || g_client == nullptr ||
-            !esp_websocket_client_is_connected(g_client)) {
+        if (!g_ready.load() ||
+            !chatai::network::NetworkManager::IsInternetAvailable() ||
+            g_client == nullptr || !esp_websocket_client_is_connected(g_client)) {
             if (microphone_enabled) {
                 chatai::audio::EnableMicrophone(false);
                 microphone_enabled = false;
@@ -405,11 +451,22 @@ void SpeakerWorker(void*) {
 void GeminiWorker(void*) {
     while (true) {
         if (g_client != nullptr) {
-            vTaskDelay(pdMS_TO_TICKS(2000));
+            if (g_waiting_setup.load()) {
+                const uint32_t elapsed = static_cast<uint32_t>(xTaskGetTickCount()) -
+                                          g_setup_started_tick.load();
+                if (elapsed > pdMS_TO_TICKS(20000) &&
+                    g_waiting_setup.exchange(false)) {
+                    g_ready.store(false);
+                    g_error.store(true);
+                    ESP_LOGE(kTag, "Gemini Live did not send setupComplete within 20 seconds");
+                    esp_websocket_client_close(g_client, pdMS_TO_TICKS(1000));
+                }
+            }
+            vTaskDelay(pdMS_TO_TICKS(1000));
             continue;
         }
 
-        if (!chatai::network::NetworkManager::IsConnected()) {
+        if (!chatai::network::NetworkManager::IsInternetAvailable()) {
             vTaskDelay(pdMS_TO_TICKS(1000));
             continue;
         }
@@ -425,6 +482,12 @@ void GeminiWorker(void*) {
         }
 
         g_missing_key_reported = false;
+        if (!EnsureSystemTime()) {
+            std::fill(api_key.begin(), api_key.end(), '\0');
+            vTaskDelay(pdMS_TO_TICKS(kRetryDelayMs));
+            continue;
+        }
+
         std::string uri = std::string(kEndpoint) + UrlEncode(api_key);
         std::fill(api_key.begin(), api_key.end(), '\0');
         api_key.clear();

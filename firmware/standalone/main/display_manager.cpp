@@ -118,6 +118,8 @@ void RenderStatus() {
         DrawText(8, 44, "Mở 192.168.4.1");
     } else if (!chatai::network::NetworkManager::IsConnected()) {
         DrawText(0, 30, "Kết nối Wi-Fi");
+    } else if (!chatai::network::NetworkManager::IsInternetAvailable()) {
+        DrawText(8, 30, "Kiểm tra Internet");
     } else if (!chatai::settings::HasGeminiApiKey()) {
         DrawText(0, 26, "Thiếu Gemini Key");
         DrawText(8, 44, "Mở chatai.local");
@@ -130,7 +132,7 @@ void RenderStatus() {
     } else if (chatai::gemini::IsSpeaking()) {
         DrawText(8, 30, "Đang trả lời");
     } else {
-        DrawText(8, 30, "Đang lắng nghe");
+        DrawText(0, 30, "Gemini sẵn sàng");
     }
 
     const esp_err_t result = FlushFrame();

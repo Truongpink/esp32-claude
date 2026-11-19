@@ -3,7 +3,9 @@
 #include "firmware_info.h"
 
 #include <atomic>
+#include <cerrno>
 #include <cstdint>
+#include <fcntl.h>
 #include <initializer_list>
 #include <cstdio>
 #include <cstring>
@@ -14,6 +16,7 @@
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
 #include <lwip/inet.h>
+#include <lwip/netdb.h>
 #include <lwip/sockets.h>
 #include <sys/time.h>
 
@@ -53,10 +56,89 @@ bool g_initialized = false;
 std::atomic<bool> g_has_credentials{false};
 std::atomic<uint8_t> g_reconnect_attempts{0};
 std::atomic<bool> g_connected{false};
+std::atomic<bool> g_internet_available{false};
 std::atomic<bool> g_provisioning_started{false};
 std::string g_provisioning_ssid;
 std::string g_form_token;
 bool g_dns_started = false;
+
+bool ProbeGeminiInternet() {
+    if (g_sta_netif == nullptr) return false;
+
+    esp_netif_ip_info_t ip_info{};
+    if (esp_netif_get_ip_info(g_sta_netif, &ip_info) != ESP_OK ||
+        ip_info.ip.addr == 0 || ip_info.gw.addr == 0) {
+        return false;
+    }
+
+    addrinfo hints{};
+    hints.ai_family = AF_INET;
+    hints.ai_socktype = SOCK_STREAM;
+    addrinfo* addresses = nullptr;
+    const int lookup_result = getaddrinfo(
+        "generativelanguage.googleapis.com", "443", &hints, &addresses);
+    if (lookup_result != 0 || addresses == nullptr) return false;
+
+    bool reachable = false;
+    for (addrinfo* address = addresses; address != nullptr && !reachable;
+         address = address->ai_next) {
+        const int socket_fd = socket(address->ai_family, address->ai_socktype,
+                                     address->ai_protocol);
+        if (socket_fd < 0) continue;
+
+        const int flags = fcntl(socket_fd, F_GETFL, 0);
+        if (flags < 0 || fcntl(socket_fd, F_SETFL, flags | O_NONBLOCK) < 0) {
+            close(socket_fd);
+            continue;
+        }
+
+        const int connect_result = connect(
+            socket_fd, address->ai_addr, address->ai_addrlen);
+        if (connect_result == 0) {
+            reachable = true;
+        } else if (errno == EINPROGRESS) {
+            fd_set write_set;
+            FD_ZERO(&write_set);
+            FD_SET(socket_fd, &write_set);
+            timeval timeout{};
+            timeout.tv_sec = 4;
+            const int selected = select(
+                socket_fd + 1, nullptr, &write_set, nullptr, &timeout);
+            if (selected > 0) {
+                int socket_error = 0;
+                socklen_t error_length = sizeof(socket_error);
+                reachable = getsockopt(
+                    socket_fd, SOL_SOCKET, SO_ERROR,
+                    &socket_error, &error_length) == 0 && socket_error == 0;
+            }
+        }
+        close(socket_fd);
+    }
+
+    freeaddrinfo(addresses);
+    return reachable;
+}
+
+void InternetCheckTask(void*) {
+    while (true) {
+        if (!g_connected.load()) {
+            g_internet_available.store(false);
+            vTaskDelay(pdMS_TO_TICKS(1000));
+            continue;
+        }
+
+        const bool available = ProbeGeminiInternet();
+        const bool previous = g_internet_available.exchange(available);
+        if (available != previous) {
+            if (available) {
+                ESP_LOGI(kTag, "Internet verified: Gemini DNS resolved and TCP port 443 reachable");
+            } else {
+                ESP_LOGW(kTag, "Internet unavailable: Gemini DNS or TCP port 443 check failed");
+            }
+        }
+        vTaskDelay(pdMS_TO_TICKS(available ? 10000 : 5000));
+    }
+}
 
 esp_err_t SaveCredentials(const std::string& ssid, const std::string& password);
 
@@ -447,7 +529,7 @@ esp_err_t WifiPostHandler(httpd_req_t* request) {
 esp_err_t StartHttpServer() {
     if (g_http_server != nullptr) return ESP_OK;
     httpd_config_t config = HTTPD_DEFAULT_CONFIG();
-    config.max_uri_handlers = 10;
+    config.max_uri_handlers = 12;
     config.lru_purge_enable = true;
     config.uri_match_fn = httpd_uri_match_wildcard;
     esp_err_t result = httpd_start(&g_http_server, &config);
@@ -548,6 +630,7 @@ void EventHandler(void*, esp_event_base_t event_base, int32_t event_id, void* ev
 
     if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_DISCONNECTED) {
         g_connected.store(false);
+        g_internet_available.store(false);
         if (g_has_credentials && g_reconnect_attempts < kMaxReconnectAttempts) {
             ++g_reconnect_attempts;
             ESP_LOGW(kTag, "Wi-Fi disconnected; reconnect attempt %u/%u",
@@ -570,9 +653,18 @@ void EventHandler(void*, esp_event_base_t event_base, int32_t event_id, void* ev
     if (event_base == IP_EVENT && event_id == IP_EVENT_STA_GOT_IP) {
         const auto* event = static_cast<const ip_event_got_ip_t*>(event_data);
         g_reconnect_attempts = 0;
+        g_internet_available.store(false);
         g_connected.store(true);
-        ESP_LOGI(kTag, "Connected; IPv4 address: " IPSTR, IP2STR(&event->ip_info.ip));
+        ESP_LOGI(kTag, "Wi-Fi received IPv4: " IPSTR " gateway: " IPSTR,
+                 IP2STR(&event->ip_info.ip), IP2STR(&event->ip_info.gw));
         if (g_provisioning_started.load()) StopProvisioning();
+        return;
+    }
+
+    if (event_base == IP_EVENT && event_id == IP_EVENT_STA_LOST_IP) {
+        g_connected.store(false);
+        g_internet_available.store(false);
+        ESP_LOGW(kTag, "Wi-Fi station lost its IPv4 address");
     }
 }
 }  // namespace
@@ -604,7 +696,7 @@ esp_err_t NetworkManager::Initialize() {
         WIFI_EVENT, ESP_EVENT_ANY_ID, &EventHandler, nullptr, &g_wifi_handler);
     if (result != ESP_OK) return result;
     result = esp_event_handler_instance_register(
-        IP_EVENT, IP_EVENT_STA_GOT_IP, &EventHandler, nullptr, &g_ip_handler);
+        IP_EVENT, ESP_EVENT_ANY_ID, &EventHandler, nullptr, &g_ip_handler);
     if (result != ESP_OK) return result;
 
     result = esp_wifi_set_mode(WIFI_MODE_STA);
@@ -647,6 +739,11 @@ esp_err_t NetworkManager::Initialize() {
     result = StartHttpServer();
     if (result != ESP_OK) return result;
 
+    if (xTaskCreate(InternetCheckTask, "chatai_netcheck", 4096,
+                    nullptr, 4, nullptr) != pdPASS) {
+        return ESP_ERR_NO_MEM;
+    }
+
     if (g_has_credentials) {
         ESP_LOGI(kTag, "Wi-Fi station initialized; saved network will be connected");
     } else {
@@ -680,11 +777,16 @@ esp_err_t NetworkManager::Connect(
     g_has_credentials.store(true);
     g_reconnect_attempts = 0;
     g_connected.store(false);
+    g_internet_available.store(false);
     return esp_wifi_connect();
 }
 
 bool NetworkManager::IsConnected() {
     return g_connected.load();
+}
+
+bool NetworkManager::IsInternetAvailable() {
+    return g_internet_available.load();
 }
 
 std::string NetworkManager::GetIpAddress() {
@@ -693,6 +795,16 @@ std::string NetworkManager::GetIpAddress() {
     if (esp_netif_get_ip_info(g_sta_netif, &ip_info) != ESP_OK) return {};
     char address[16]{};
     std::snprintf(address, sizeof(address), IPSTR, IP2STR(&ip_info.ip));
+    return address;
+}
+
+std::string NetworkManager::GetGatewayAddress() {
+    if (!g_connected.load() || g_sta_netif == nullptr) return {};
+    esp_netif_ip_info_t ip_info{};
+    if (esp_netif_get_ip_info(g_sta_netif, &ip_info) != ESP_OK ||
+        ip_info.gw.addr == 0) return {};
+    char address[16]{};
+    std::snprintf(address, sizeof(address), IPSTR, IP2STR(&ip_info.gw));
     return address;
 }
 
