@@ -195,6 +195,7 @@ void HandleServerMessage(const std::string& message) {
     cJSON* root = cJSON_ParseWithLength(message.c_str(), message.size());
     if (root == nullptr) {
         ESP_LOGW(kTag, "Gemini sent an invalid JSON message");
+        chatai::diagnostics::Add("GEMINI_PROTOCOL", "FAIL", "invalid JSON response");
         return;
     }
 
@@ -360,6 +361,10 @@ void WebSocketEventHandler(void*, esp_event_base_t, int32_t event_id, void* even
                                   event->error_handle.esp_ws_handshake_status_code);
                     chatai::diagnostics::Add("WS_HANDSHAKE", "FAIL", detail);
                 }
+                char socket_detail[80]{};
+                std::snprintf(socket_detail, sizeof(socket_detail), "socket_errno=%d",
+                              event->error_handle.esp_transport_sock_errno);
+                chatai::diagnostics::Add("WS_SOCKET", "FAIL", socket_detail);
                 ESP_LOGE(kTag,
                          "WebSocket error: tls=%s tls_stack=%d cert_flags=0x%x "
                          "http_status=%d socket_errno=%d",
@@ -370,6 +375,7 @@ void WebSocketEventHandler(void*, esp_event_base_t, int32_t event_id, void* even
                          event->error_handle.esp_transport_sock_errno);
             } else {
                 ESP_LOGE(kTag, "Gemini Live WebSocket transport error");
+                chatai::diagnostics::Add("WS", "FAIL", "transport event had no diagnostic data");
             }
             break;
 
