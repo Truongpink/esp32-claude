@@ -79,6 +79,8 @@ std::atomic<uint32_t> g_last_tls_cert_flags{0};
 std::atomic<uint32_t> g_tls_suppressed_count{0};
 std::atomic<uint32_t> g_tls_failure_started_tick{0};
 std::atomic<uint32_t> g_tls_last_summary_tick{0};
+std::atomic<uint32_t> g_client_generation{0};
+std::mutex g_event_mutex;
 esp_websocket_client_handle_t g_client = nullptr;
 QueueHandle_t g_audio_queue = nullptr;
 std::string g_incoming_message;
@@ -369,7 +371,12 @@ void HandleServerMessage(const std::string& message) {
     cJSON_Delete(root);
 }
 
-void WebSocketEventHandler(void*, esp_event_base_t, int32_t event_id, void* event_data) {
+void WebSocketEventHandler(void* handler_arg, esp_event_base_t, int32_t event_id, void* event_data) {
+    const uint32_t callback_generation =
+        static_cast<uint32_t>(reinterpret_cast<uintptr_t>(handler_arg));
+    std::lock_guard<std::mutex> event_lock(g_event_mutex);
+    if (callback_generation != g_client_generation.load()) return;
+
     auto* event = static_cast<esp_websocket_event_data_t*>(event_data);
 
     switch (event_id) {
@@ -755,9 +762,13 @@ void GeminiWorker(void*) {
         if (client != nullptr) {
             const bool connection_failed = g_client_failed.exchange(false);
             if (manual_restart || connection_failed) {
+                g_client_generation.fetch_add(1);
                 {
                     std::lock_guard<std::mutex> lock(g_send_mutex);
                     if (g_client == client) g_client = nullptr;
+                }
+                {
+                    std::lock_guard<std::mutex> event_lock(g_event_mutex);
                 }
                 const esp_err_t stop_result = esp_websocket_client_stop(client);
                 esp_websocket_client_destroy(client);
@@ -863,12 +874,14 @@ void GeminiWorker(void*) {
 
         g_client_failed.store(false);
         g_connection_failure_reported.store(false);
+        const uint32_t generation = g_client_generation.fetch_add(1) + 1;
         {
             std::lock_guard<std::mutex> lock(g_send_mutex);
             g_client = new_client;
         }
         esp_err_t result = esp_websocket_register_events(
-            new_client, WEBSOCKET_EVENT_ANY, WebSocketEventHandler, nullptr);
+            new_client, WEBSOCKET_EVENT_ANY, WebSocketEventHandler,
+            reinterpret_cast<void*>(static_cast<uintptr_t>(generation)));
         if (result == ESP_OK) result = esp_websocket_client_start(new_client);
 
         if (result != ESP_OK) {
@@ -876,9 +889,13 @@ void GeminiWorker(void*) {
             ESP_LOGE(kTag, "Could not start Gemini Live WebSocket: %s",
                      esp_err_to_name(result));
             chatai::diagnostics::Add("WS", "FAIL", esp_err_to_name(result));
+            g_client_generation.fetch_add(1);
             {
                 std::lock_guard<std::mutex> lock(g_send_mutex);
                 if (g_client == new_client) g_client = nullptr;
+            }
+            {
+                std::lock_guard<std::mutex> event_lock(g_event_mutex);
             }
             esp_websocket_client_destroy(new_client);
             schedule_retry();
