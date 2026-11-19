@@ -5,8 +5,9 @@ This document describes the standalone ESP32-S3 client's direct Gemini Live conn
 ## Connection and setup
 
 - Use the Gemini Developer API WSS endpoint:
-  `wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent`
+  `wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1alpha.GenerativeService.BidiGenerateContent`
 - Authenticate with the API Key stored in NVS. Never log the full credential-bearing URL or API Key.
+- Gemini 3.8 Live uses the documented v1alpha WebSocket endpoint.
 - Request audio responses and Vietnamese output in the setup message.
 - Wait for `setupComplete` before sending microphone audio.
 - The configured model is sent as `models/<model-id>`.

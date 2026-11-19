@@ -1,0 +1,146 @@
+#include "button_manager.h"
+
+#include <algorithm>
+#include <atomic>
+#include <cstdio>
+
+#include <driver/gpio.h>
+#include <esp_log.h>
+#include <freertos/FreeRTOS.h>
+#include <freertos/task.h>
+
+#include "audio_manager.h"
+#include "display_manager.h"
+#include "gemini_live_client.h"
+
+namespace chatai::buttons {
+namespace {
+constexpr char kTag[] = "ChatAI-Buttons";
+constexpr gpio_num_t kBootPin = GPIO_NUM_0;
+constexpr gpio_num_t kTouchPin = GPIO_NUM_43;
+constexpr gpio_num_t kVolumeUpPin = GPIO_NUM_40;
+constexpr gpio_num_t kVolumeDownPin = GPIO_NUM_39;
+constexpr TickType_t kDebounceTicks = pdMS_TO_TICKS(35);
+constexpr TickType_t kPollTicks = pdMS_TO_TICKS(10);
+constexpr TickType_t kVolumeRepeatTicks = pdMS_TO_TICKS(250);
+
+struct ButtonState {
+    gpio_num_t pin;
+    bool active_high;
+    bool candidate_pressed = false;
+    bool stable_pressed = false;
+    TickType_t candidate_since = 0;
+    TickType_t next_repeat = 0;
+};
+
+ButtonState g_boot{kBootPin, false};
+ButtonState g_touch{kTouchPin, true};
+ButtonState g_volume_up{kVolumeUpPin, false};
+ButtonState g_volume_down{kVolumeDownPin, false};
+std::atomic<bool> g_initialized{false};
+
+bool ConfigureButton(ButtonState& button) {
+    gpio_config_t config{};
+    config.pin_bit_mask = 1ULL << button.pin;
+    config.mode = GPIO_MODE_INPUT;
+    config.pull_up_en = button.active_high ? GPIO_PULLUP_DISABLE : GPIO_PULLUP_ENABLE;
+    config.pull_down_en = button.active_high ? GPIO_PULLDOWN_ENABLE : GPIO_PULLDOWN_DISABLE;
+    config.intr_type = GPIO_INTR_DISABLE;
+    const esp_err_t result = gpio_config(&config);
+    if (result != ESP_OK) {
+        ESP_LOGE(kTag, "GPIO %d setup failed: %s", button.pin, esp_err_to_name(result));
+        return false;
+    }
+    const bool pressed = gpio_get_level(button.pin) == (button.active_high ? 1 : 0);
+    button.candidate_pressed = pressed;
+    button.stable_pressed = pressed;
+    return true;
+}
+
+bool UpdateButton(ButtonState& button, TickType_t now) {
+    const bool raw_pressed = gpio_get_level(button.pin) == (button.active_high ? 1 : 0);
+    if (raw_pressed != button.candidate_pressed) {
+        button.candidate_pressed = raw_pressed;
+        button.candidate_since = now;
+    }
+    if (button.candidate_pressed != button.stable_pressed &&
+        now - button.candidate_since >= kDebounceTicks) {
+        button.stable_pressed = button.candidate_pressed;
+        return true;
+    }
+    return false;
+}
+
+void AdjustVolume(int delta) {
+    const int volume = std::clamp(chatai::audio::GetOutputVolume() + delta, 0, 100);
+    chatai::audio::SetOutputVolume(volume);
+    char message[24]{};
+    std::snprintf(message, sizeof(message), "Âm lượng %d%%", volume);
+    chatai::display::Notify("ÂM LƯỢNG", message, 1200);
+    ESP_LOGI(kTag, "Output volume: %d%%", volume);
+}
+
+void ButtonTask(void*) {
+    while (true) {
+        const TickType_t now = xTaskGetTickCount();
+
+        if (UpdateButton(g_boot, now) && !g_boot.stable_pressed) {
+            const bool enabled = !chatai::gemini::IsChatEnabled();
+            chatai::gemini::SetChatEnabled(enabled);
+            chatai::display::Notify("CHAT AI", enabled ? "Đã bật nghe liên tục" : "Đã tắt nghe");
+            ESP_LOGI(kTag, "Chat listening %s", enabled ? "enabled" : "disabled");
+        }
+
+        if (UpdateButton(g_touch, now)) {
+            chatai::gemini::SetPushToTalk(g_touch.stable_pressed);
+            chatai::display::Notify("CHAT AI",
+                g_touch.stable_pressed ? "Đang nghe" :
+                (chatai::gemini::IsChatEnabled() ? "Nghe liên tục" : "Đã ngừng nghe"));
+        }
+
+        if (UpdateButton(g_volume_up, now)) {
+            if (g_volume_up.stable_pressed) {
+                AdjustVolume(10);
+                g_volume_up.next_repeat = now + pdMS_TO_TICKS(450);
+            }
+        } else if (g_volume_up.stable_pressed &&
+                   static_cast<int32_t>(now - g_volume_up.next_repeat) >= 0) {
+            AdjustVolume(10);
+            g_volume_up.next_repeat = now + kVolumeRepeatTicks;
+        }
+
+        if (UpdateButton(g_volume_down, now)) {
+            if (g_volume_down.stable_pressed) {
+                AdjustVolume(-10);
+                g_volume_down.next_repeat = now + pdMS_TO_TICKS(450);
+            }
+        } else if (g_volume_down.stable_pressed &&
+                   static_cast<int32_t>(now - g_volume_down.next_repeat) >= 0) {
+            AdjustVolume(-10);
+            g_volume_down.next_repeat = now + kVolumeRepeatTicks;
+        }
+
+        vTaskDelay(kPollTicks);
+    }
+}
+}  // namespace
+
+esp_err_t Initialize() {
+    bool expected = false;
+    if (!g_initialized.compare_exchange_strong(expected, true)) return ESP_OK;
+
+    if (!ConfigureButton(g_boot) || !ConfigureButton(g_touch) ||
+        !ConfigureButton(g_volume_up) || !ConfigureButton(g_volume_down)) {
+        g_initialized.store(false);
+        return ESP_FAIL;
+    }
+
+    if (xTaskCreate(ButtonTask, "chatai_buttons", 3072, nullptr, 4, nullptr) != pdPASS) {
+        g_initialized.store(false);
+        return ESP_ERR_NO_MEM;
+    }
+
+    ESP_LOGI(kTag, "Buttons ready: BOOT=GPIO0, PTT=GPIO43, VOL+=GPIO40, VOL-=GPIO39");
+    return ESP_OK;
+}
+}  // namespace chatai::buttons

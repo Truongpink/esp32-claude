@@ -1,6 +1,7 @@
 #include "network_manager.h"
 #include "web_admin.h"
 #include "firmware_info.h"
+#include "display_manager.h"
 
 #include <atomic>
 #include <cerrno>
@@ -577,6 +578,7 @@ esp_err_t WifiPostHandler(httpd_req_t* request) {
         return ESP_FAIL;
     }
 
+    chatai::display::Notify("WI-FI", "Đang kết nối mạng");
     httpd_resp_set_type(request, "text/html; charset=utf-8");
     return httpd_resp_sendstr(request,
         "<!doctype html><html lang=\"vi\"><meta charset=\"utf-8\">"
@@ -717,6 +719,7 @@ void EventHandler(void*, esp_event_base_t event_base, int32_t event_id, void* ev
         ESP_LOGI(kTag, "Wi-Fi received IPv4: " IPSTR " gateway: " IPSTR,
                  IP2STR(&event->ip_info.ip), IP2STR(&event->ip_info.gw));
         if (g_provisioning_started.load()) StopProvisioning();
+        chatai::display::Notify("WI-FI", "Đã kết nối mạng");
         return;
     }
 

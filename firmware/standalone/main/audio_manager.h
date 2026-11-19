@@ -18,6 +18,8 @@ esp_err_t ReadMicrophonePcm16(int16_t* destination, size_t requested_samples,
                               size_t* samples_read, uint32_t timeout_ms = 100);
 esp_err_t WriteSpeakerPcm16(const int16_t* samples, size_t sample_count,
                             size_t* samples_written, uint32_t timeout_ms = 100);
+void SetOutputVolume(int volume_percent);
+int GetOutputVolume();
 
 // Supplies the exact 24 kHz PCM sent to the speaker to a future AEC/reference adapter.
 // The callback runs synchronously in the caller's task context.

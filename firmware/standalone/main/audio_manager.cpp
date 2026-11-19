@@ -33,6 +33,7 @@ i2s_chan_handle_t s_mic_rx = nullptr;
 i2s_chan_handle_t s_speaker_tx = nullptr;
 std::atomic<bool> s_mic_enabled{false};
 std::atomic<bool> s_speaker_enabled{false};
+std::atomic<int> s_output_volume{100};
 std::mutex s_state_mutex;
 std::mutex s_mic_io_mutex;
 std::mutex s_speaker_io_mutex;
@@ -251,8 +252,9 @@ esp_err_t WriteSpeakerPcm16(const int16_t* samples, size_t sample_count,
     while (*samples_written < sample_count) {
         const size_t chunk = std::min(kReadChunkSamples, sample_count - *samples_written);
         for (size_t i = 0; i < chunk; ++i) {
-            tx_samples[i] = static_cast<int32_t>(
-                static_cast<int64_t>(samples[*samples_written + i]) * 65536);
+            const int scaled = static_cast<int>(
+                static_cast<int64_t>(samples[*samples_written + i]) * s_output_volume.load() / 100);
+            tx_samples[i] = static_cast<int32_t>(static_cast<int64_t>(scaled) * 65536);
         }
 
         size_t bytes_written = 0;
@@ -283,6 +285,14 @@ esp_err_t WriteSpeakerPcm16(const int16_t* samples, size_t sample_count,
         }
     }
     return ESP_OK;
+}
+
+void SetOutputVolume(int volume_percent) {
+    s_output_volume.store(std::clamp(volume_percent, 0, 100));
+}
+
+int GetOutputVolume() {
+    return s_output_volume.load();
 }
 
 void SetSpeakerReferenceCallback(SpeakerReferenceCallback callback, void* context) {

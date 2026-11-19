@@ -14,6 +14,7 @@
 #include "gemini_live_client.h"
 #include "gemini_settings.h"
 #include "firmware_info.h"
+#include "button_manager.h"
 
 namespace {
 constexpr char kTag[] = "ChatAI";
@@ -139,6 +140,11 @@ extern "C" void app_main(void) {
         ESP_LOGE(kTag, "Platform initialization failed");
         RestartIfOtaImageIsPending();
         return;
+    }
+
+    const esp_err_t buttons_result = chatai::buttons::Initialize();
+    if (buttons_result != ESP_OK) {
+        ESP_LOGW(kTag, "Hardware button initialization failed: %s", esp_err_to_name(buttons_result));
     }
 
     const esp_err_t gemini_result = chatai::gemini::Initialize();

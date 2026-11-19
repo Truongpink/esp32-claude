@@ -16,6 +16,8 @@
 
 #include "gemini_settings.h"
 #include "gemini_live_client.h"
+#include "display_manager.h"
+#include "gemini_live_client.h"
 #include "network_manager.h"
 #include "firmware_info.h"
 
@@ -619,6 +621,8 @@ esp_err_t GeminiKeyPostHandler(httpd_req_t* request) {
     if (result != ESP_OK) {
         return SendError(request, "500 Internal Server Error", "Không thể lưu API Key vào NVS");
     }
+    chatai::gemini::RequestReconnect();
+    chatai::display::Notify("WEB ADMIN", "Đã lưu Gemini Key");
     return SendJson(request, "200 OK", "{\"message\":\"Đã lưu Gemini API Key.\"}");
 }
 
@@ -717,6 +721,7 @@ esp_err_t OtaUploadHandler(httpd_req_t* request) {
 
     ESP_LOGI(kTag, "OTA image accepted: %u bytes -> %s",
              static_cast<unsigned>(written), target->label);
+    chatai::display::Notify("WEB ADMIN", "Đang cập nhật Firmware", 5000);
     const esp_err_t response_result = SendJson(
         request, "200 OK",
         "{\"message\":\"Firmware đã được xác thực và cài đặt. ESP32 đang khởi động lại.\"}");
@@ -733,6 +738,8 @@ esp_err_t GeminiKeyDeleteHandler(httpd_req_t* request) {
     if (result != ESP_OK) {
         return SendError(request, "500 Internal Server Error", "Không thể xóa API Key khỏi NVS");
     }
+    chatai::gemini::RequestReconnect();
+    chatai::display::Notify("WEB ADMIN", "Đã xóa Gemini Key");
     return SendJson(request, "200 OK", "{\"message\":\"Đã xóa Gemini API Key.\"}");
 }
 }  // namespace

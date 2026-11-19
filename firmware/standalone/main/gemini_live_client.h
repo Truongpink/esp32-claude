@@ -8,5 +8,10 @@ esp_err_t Initialize();
 bool IsReady();
 bool IsSpeaking();
 bool HasError();
+void SetChatEnabled(bool enabled);
+bool IsChatEnabled();
+void SetPushToTalk(bool pressed);
+bool IsListening();
+void RequestReconnect();
 
 }  // namespace chatai::gemini

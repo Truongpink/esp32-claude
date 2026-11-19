@@ -13,10 +13,14 @@
 | OLED SDA / SCL | GPIO 41 / GPIO 42 | Configured; physical revision still needs confirmation |
 | Speaker I²S DOUT / BCLK / WS | GPIO 7 / GPIO 15 / GPIO 16 | Reported board mapping; verify on the exact PCB |
 | Speaker amplifier enable | GPIO 17, HIGH | Reported board mapping; verify on the exact PCB |
+| BOOT button | GPIO 0, active LOW | XH-S3E-AI V1.0 board profile |
+| Touch / chatbot PTT | GPIO 43, active HIGH | XH-S3E-AI V1.0 board profile |
+| Volume Up | GPIO 40, active LOW | XH-S3E-AI V1.0 board profile |
+| Volume Down | GPIO 39, active LOW | XH-S3E-AI V1.0 board profile |
 | Microphone I²S BCLK / WS / DIN | GPIO 5 / GPIO 4 / GPIO 6 | Provisional; not verified on the user's unit |
 | ESP32-S3 target | esp32s3 | Build target |
 
-These are configuration/evidence notes, not a substitute for the exact board schematic or an electrical test. Do not describe the microphone path as working until capture has been verified on the actual board.
+Button assignments follow the XH-S3E-AI V1.0 board-support profile from the Xiaozhi project; they have not been electrically probed on the user's physical unit. These are configuration/evidence notes, not a substitute for the exact board schematic or an electrical test. Do not describe the microphone path as working until capture has been verified on the actual board.
 
 ## Audio format
 

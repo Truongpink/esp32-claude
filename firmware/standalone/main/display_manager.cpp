@@ -6,7 +6,9 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <cstdio>
 #include <iterator>
+#include <mutex>
 #include <string_view>
 
 #include <driver/gpio.h>
@@ -33,6 +35,10 @@ i2c_master_bus_handle_t g_bus = nullptr;
 i2c_master_dev_handle_t g_display = nullptr;
 bool g_initialized = false;
 std::atomic<bool> g_audio_ready{false};
+std::mutex g_notification_mutex;
+char g_notification_title[24]{};
+char g_notification_message[24]{};
+TickType_t g_notification_until = 0;
 TickType_t g_boot_screen_until = 0;
 std::array<uint8_t, kWidth * kPages> g_frame{};
 
@@ -109,8 +115,24 @@ void RenderStatus() {
     g_frame.fill(0);
     DrawText(8, 8, "ChatAI TPIOS");
 
-    if (static_cast<int32_t>(g_boot_screen_until - xTaskGetTickCount()) > 0) {
+    const TickType_t now = xTaskGetTickCount();
+    char notification_title[sizeof(g_notification_title)]{};
+    char notification_message[sizeof(g_notification_message)]{};
+    bool show_notification = false;
+    {
+        std::lock_guard<std::mutex> lock(g_notification_mutex);
+        show_notification = static_cast<int32_t>(g_notification_until - now) > 0;
+        if (show_notification) {
+            std::snprintf(notification_title, sizeof(notification_title), "%s", g_notification_title);
+            std::snprintf(notification_message, sizeof(notification_message), "%s", g_notification_message);
+        }
+    }
+
+    if (static_cast<int32_t>(g_boot_screen_until - now) > 0) {
         DrawText(8, 30, "Đang khởi động");
+    } else if (show_notification) {
+        DrawText(0, 26, notification_title);
+        DrawText(0, 40, notification_message);
     } else if (chatai::network::NetworkManager::IsProvisioningActive()) {
         DrawText(0, 26,
             chatai::network::NetworkManager::HasSavedCredentials()
@@ -131,6 +153,8 @@ void RenderStatus() {
         DrawText(8, 30, "Kết nối Gemini");
     } else if (chatai::gemini::IsSpeaking()) {
         DrawText(8, 30, "Đang trả lời");
+    } else if (chatai::gemini::IsListening()) {
+        DrawText(8, 30, "Đang nghe");
     } else {
         DrawText(0, 30, "Gemini sẵn sàng");
     }
@@ -199,6 +223,15 @@ esp_err_t Initialize() {
 
 void SetAudioReady(bool ready) {
     g_audio_ready.store(ready);
+}
+
+void Notify(const char* title, const char* message, uint32_t duration_ms) {
+    std::lock_guard<std::mutex> lock(g_notification_mutex);
+    std::snprintf(g_notification_title, sizeof(g_notification_title), "%s",
+                  title != nullptr ? title : "ChatAI");
+    std::snprintf(g_notification_message, sizeof(g_notification_message), "%s",
+                  message != nullptr ? message : "");
+    g_notification_until = xTaskGetTickCount() + pdMS_TO_TICKS(duration_ms);
 }
 
 }  // namespace chatai::display

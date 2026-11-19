@@ -28,7 +28,7 @@
 namespace {
 constexpr char kTag[] = "ChatAI-Gemini";
 constexpr char kEndpoint[] =
-    "wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta."
+    "wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1alpha."
     "GenerativeService.BidiGenerateContent?key=";
 constexpr size_t kMaxIncomingMessage = 8192;
 constexpr size_t kMaxOutputSamples = 2048;
@@ -48,6 +48,9 @@ std::atomic<bool> g_error{false};
 std::atomic<bool> g_waiting_setup{false};
 std::atomic<uint32_t> g_setup_started_tick{0};
 std::atomic<bool> g_task_started{false};
+std::atomic<bool> g_chat_enabled{false};
+std::atomic<bool> g_push_to_talk{false};
+std::atomic<bool> g_restart_requested{false};
 bool g_sntp_initialized = false;
 std::atomic<uint32_t> g_audio_epoch{0};
 esp_websocket_client_handle_t g_client = nullptr;
@@ -56,6 +59,10 @@ std::string g_incoming_message;
 bool g_receiving_text = false;
 bool g_missing_key_reported = false;
 std::mutex g_send_mutex;
+
+bool ShouldListen() {
+    return g_chat_enabled.load() || g_push_to_talk.load();
+}
 
 std::string UrlEncode(const std::string& value) {
     constexpr char kHex[] = "0123456789ABCDEF";
@@ -346,16 +353,28 @@ void MicrophoneWorker(void*) {
     char message[1200]{};
     bool microphone_enabled = false;
     bool microphone_error_reported = false;
+    bool audio_stream_active = false;
 
     while (true) {
-        if (!g_ready.load() ||
-            !chatai::network::NetworkManager::IsInternetAvailable() ||
-            g_client == nullptr || !esp_websocket_client_is_connected(g_client)) {
+        const bool transport_ready = g_ready.load() &&
+            chatai::network::NetworkManager::IsInternetAvailable() &&
+            g_client != nullptr && esp_websocket_client_is_connected(g_client);
+        if (!transport_ready || !ShouldListen()) {
+            if (audio_stream_active && transport_ready) {
+                static constexpr char kAudioStreamEnd[] =
+                    "{\"realtimeInput\":{\"audioStreamEnd\":true}}";
+                std::lock_guard<std::mutex> lock(g_send_mutex);
+                if (g_client != nullptr && esp_websocket_client_is_connected(g_client)) {
+                    esp_websocket_client_send_text(g_client, kAudioStreamEnd,
+                        sizeof(kAudioStreamEnd) - 1, pdMS_TO_TICKS(1000));
+                }
+            }
+            audio_stream_active = false;
             if (microphone_enabled) {
                 chatai::audio::EnableMicrophone(false);
                 microphone_enabled = false;
             }
-            vTaskDelay(pdMS_TO_TICKS(100));
+            vTaskDelay(pdMS_TO_TICKS(50));
             continue;
         }
 
@@ -412,7 +431,11 @@ void MicrophoneWorker(void*) {
             esp_websocket_client_is_connected(g_client)) {
             const int sent = esp_websocket_client_send_text(
                 g_client, message, message_size, pdMS_TO_TICKS(1000));
-            if (sent != message_size) ESP_LOGW(kTag, "Microphone audio send was incomplete");
+            if (sent != message_size) {
+                ESP_LOGW(kTag, "Microphone audio send was incomplete");
+            } else {
+                audio_stream_active = true;
+            }
         }
     }
 }
@@ -467,6 +490,23 @@ void SpeakerWorker(void*) {
 void GeminiWorker(void*) {
     while (true) {
         if (g_client != nullptr) {
+            if (g_restart_requested.exchange(false)) {
+                esp_websocket_client_handle_t old_client = g_client;
+                const esp_err_t stop_result = esp_websocket_client_stop(old_client);
+                g_client = nullptr;
+                esp_websocket_client_destroy(old_client);
+                g_ready.store(false);
+                g_waiting_setup.store(false);
+                g_speaking.store(false);
+                g_error.store(false);
+                g_audio_epoch.fetch_add(1);
+                ClearAudioQueue();
+                ESP_LOGI(kTag, "Gemini Live client restarted to apply updated credentials");
+                if (stop_result != ESP_OK) {
+                    ESP_LOGW(kTag, "Gemini client stop returned: %s", esp_err_to_name(stop_result));
+                }
+                continue;
+            }
             if (g_waiting_setup.load()) {
                 const uint32_t elapsed = static_cast<uint32_t>(xTaskGetTickCount()) -
                                           g_setup_started_tick.load();
@@ -590,6 +630,18 @@ bool IsSpeaking() {
 
 bool HasError() {
     return g_error.load();
+}
+
+void SetChatEnabled(bool enabled) { g_chat_enabled.store(enabled); }
+bool IsChatEnabled() { return g_chat_enabled.load(); }
+void SetPushToTalk(bool pressed) { g_push_to_talk.store(pressed); }
+bool IsListening() { return ShouldListen(); }
+
+void RequestReconnect() {
+    if (g_client != nullptr) g_restart_requested.store(true);
+    g_ready.store(false);
+    g_audio_epoch.fetch_add(1);
+    ClearAudioQueue();
 }
 
 }  // namespace chatai::gemini
