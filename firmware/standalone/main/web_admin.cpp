@@ -142,7 +142,16 @@ async function refreshDiagnostics() {
 copyDiagnosticButton.addEventListener("click", async () => {
   try {
     await refreshDiagnostics();
-    await navigator.clipboard.writeText(diagnosticLog.textContent);
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      await navigator.clipboard.writeText(diagnosticLog.textContent);
+    } else {
+      const temp = document.createElement("textarea");
+      temp.value = diagnosticLog.textContent;
+      temp.style.position = "fixed"; temp.style.opacity = "0";
+      document.body.appendChild(temp); temp.select();
+      if (!document.execCommand("copy")) throw new Error("Trình duyệt từ chối sao chép");
+      temp.remove();
+    }
     diagnosticResult.textContent = "Đã sao chép log.";
   } catch (error) { diagnosticResult.textContent = "Không sao chép được: " + error.message; }
 });
