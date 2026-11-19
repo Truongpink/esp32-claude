@@ -7,7 +7,7 @@ The Standalone firmware provides a local Web Admin for configuring the Gemini AP
 - After the device joins the same home Wi-Fi network as the phone or computer, open `http://chatai.local/` or `http://chatai.local/admin`.
 - The `.local` address is provided by mDNS; a fixed DHCP address is not required.
 - If the router or client network blocks mDNS multicast, use the device's current LAN IP as a fallback.
-- During Wi-Fi provisioning, connect to the device's setup access point and open `http://192.168.4.1/`.
+- During Wi-Fi provisioning, connect to the open setup access point `ChatAI-TPIOS-XXXXXX` and open `http://192.168.4.1/`. Captive DNS redirects HTTP connectivity checks to the setup page.
 
 ## Gemini API Key controls
 
