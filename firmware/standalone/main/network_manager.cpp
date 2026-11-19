@@ -136,7 +136,8 @@ esp_err_t EraseCredentialNamespace(const char* name_space) {
         for (const char* key : {ssid_key.c_str(), password_key.c_str()}) {
             result = nvs_erase_key(handle, key);
             if (result == ESP_OK) changed = true;
-            else if (result != ESP_ERR_NVS_NOT_FOUND) {
+            else if (result == ESP_ERR_NVS_NOT_FOUND) result = ESP_OK;
+            else {
                 nvs_close(handle);
                 return result;
             }
@@ -145,7 +146,8 @@ esp_err_t EraseCredentialNamespace(const char* name_space) {
     if (std::strcmp(name_space, kNvsNamespace) == 0) {
         result = nvs_erase_key(handle, kFirmwareBuildKey);
         if (result == ESP_OK) changed = true;
-        else if (result != ESP_ERR_NVS_NOT_FOUND) {
+        else if (result == ESP_ERR_NVS_NOT_FOUND) result = ESP_OK;
+        else {
             nvs_close(handle);
             return result;
         }
