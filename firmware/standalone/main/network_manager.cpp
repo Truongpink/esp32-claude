@@ -394,10 +394,21 @@ esp_err_t StartDnsServer() {
     if (g_dns_started) return ESP_OK;
     const int socket_fd = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
     if (socket_fd < 0) return ESP_FAIL;
+    // Bind captive DNS only to the SoftAP address. Binding INADDR_ANY also
+    // captures DNS traffic from the station interface and can poison the
+    // ESP32's own lookups (including Gemini's Google endpoint).
+    esp_netif_ip_info_t ap_ip_info{};
+    if (g_ap_netif == nullptr ||
+        esp_netif_get_ip_info(g_ap_netif, &ap_ip_info) != ESP_OK ||
+        ap_ip_info.ip.addr == 0) {
+        close(socket_fd);
+        return ESP_FAIL;
+    }
+
     sockaddr_in address{};
     address.sin_family = AF_INET;
     address.sin_port = htons(53);
-    address.sin_addr.s_addr = htonl(INADDR_ANY);
+    address.sin_addr.s_addr = ap_ip_info.ip.addr;
     if (bind(socket_fd, reinterpret_cast<sockaddr*>(&address), sizeof(address)) != 0) {
         close(socket_fd);
         return ESP_FAIL;
