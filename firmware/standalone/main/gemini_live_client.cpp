@@ -216,12 +216,28 @@ void HandleServerMessage(const std::string& message) {
         }
     }
 
-    if (cJSON_GetObjectItemCaseSensitive(root, "error") != nullptr) {
+    const cJSON* error = cJSON_GetObjectItemCaseSensitive(root, "error");
+    if (error != nullptr) {
         g_waiting_setup.store(false);
         g_ready.store(false);
         g_speaking.store(false);
         g_error.store(true);
-        ESP_LOGE(kTag, "Gemini rejected or terminated the Live session");
+
+        const cJSON* status = cJSON_IsObject(error)
+            ? cJSON_GetObjectItemCaseSensitive(error, "status") : nullptr;
+        const cJSON* message_text = cJSON_IsObject(error)
+            ? cJSON_GetObjectItemCaseSensitive(error, "message") : nullptr;
+        if (cJSON_IsString(status) && cJSON_IsString(message_text)) {
+            const int status_length = static_cast<int>(
+                std::min<size_t>(std::strlen(status->valuestring), 64));
+            const int message_length = static_cast<int>(
+                std::min<size_t>(std::strlen(message_text->valuestring), 160));
+            ESP_LOGE(kTag, "Gemini API error: status=%.*s message=%.*s",
+                     status_length, status->valuestring,
+                     message_length, message_text->valuestring);
+        } else {
+            ESP_LOGE(kTag, "Gemini rejected or terminated the Live session");
+        }
     }
 
     cJSON_Delete(root);
