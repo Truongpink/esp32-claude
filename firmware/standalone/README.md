@@ -22,6 +22,7 @@ The application image is generated at `build/ChatAI_TPIOS.bin` (relative to this
 ## Firmware scope
 
 - Native ESP-IDF initialization, Wi-Fi provisioning, reconnect handling, and NVS settings.
+- Wi-Fi setup AP with captive DNS, automatic network scanning, and SSID selection. Each successful OTA installation clears only saved Wi-Fi credentials (including legacy Xiaozhi entries); the Gemini API Key and other NVS settings are preserved.
 - SSD1306 OLED status display.
 - Native I2S microphone and speaker PCM interfaces.
 - Direct Gemini Live WebSocket connection over WSS/TLS.
