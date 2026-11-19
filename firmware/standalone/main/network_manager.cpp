@@ -452,6 +452,10 @@ bool NetworkManager::IsProvisioningActive() {
     return g_provisioning_started.load();
 }
 
+bool NetworkManager::HasSavedCredentials() {
+    return g_has_credentials.load();
+}
+
 std::string NetworkManager::GetProvisioningSsid() {
     return g_provisioning_ssid;
 }
