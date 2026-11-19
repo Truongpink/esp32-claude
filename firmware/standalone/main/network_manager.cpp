@@ -33,6 +33,14 @@ constexpr char kNvsNamespace[] = "chatai_net";
 constexpr char kSsidKey[] = "ssid";
 constexpr char kPasswordKey[] = "password";
 constexpr char kFirmwareBuildKey[] = "fw_build";
+
+std::string CurrentFirmwareBuildId() {
+    char id[64]{};
+    std::snprintf(id, sizeof(id), "%lu-%s-%s",
+                  static_cast<unsigned long>(chatai::firmware::kBuildNumber),
+                  __DATE__, __TIME__);
+    return id;
+}
 constexpr uint8_t kMaxReconnectAttempts = 5;
 constexpr size_t kMaxFormLength = 256;
 
@@ -92,10 +100,17 @@ bool LoadCredentials(std::string& ssid, std::string& password) {
         return false;
     }
 
-    uint32_t saved_build = UINT32_MAX;
-    const esp_err_t marker_result = nvs_get_u32(handle, kFirmwareBuildKey, &saved_build);
+    size_t build_id_size = 0;
+    esp_err_t marker_result = nvs_get_str(handle, kFirmwareBuildKey, nullptr, &build_id_size);
+    std::string saved_build_id;
+    if (marker_result == ESP_OK && build_id_size > 1 && build_id_size <= 64) {
+        saved_build_id.resize(build_id_size);
+        marker_result = nvs_get_str(handle, kFirmwareBuildKey, saved_build_id.data(),
+                                    &build_id_size);
+        if (marker_result == ESP_OK) saved_build_id.resize(build_id_size - 1);
+    }
     nvs_close(handle);
-    if (marker_result != ESP_OK || saved_build != chatai::firmware::kBuildNumber) {
+    if (marker_result != ESP_OK || saved_build_id != CurrentFirmwareBuildId()) {
         EraseCredentialNamespace(kNvsNamespace);
         EraseCredentialNamespace("wifi");
         ESP_LOGI(kTag, "Firmware build changed; saved Wi-Fi credentials require setup again");
@@ -147,7 +162,8 @@ esp_err_t SaveCredentials(const std::string& ssid, const std::string& password) 
     result = nvs_set_str(handle, kSsidKey, ssid.c_str());
     if (result == ESP_OK) result = nvs_set_str(handle, kPasswordKey, password.c_str());
     if (result == ESP_OK) {
-        result = nvs_set_u32(handle, kFirmwareBuildKey, chatai::firmware::kBuildNumber);
+        const std::string build_id = CurrentFirmwareBuildId();
+        result = nvs_set_str(handle, kFirmwareBuildKey, build_id.c_str());
     }
     if (result == ESP_OK) result = nvs_commit(handle);
     nvs_close(handle);
