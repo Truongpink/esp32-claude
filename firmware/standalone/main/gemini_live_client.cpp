@@ -265,8 +265,10 @@ void WebSocketEventHandler(void*, esp_event_base_t, int32_t event_id, void* even
             ESP_LOGI(kTag, "Gemini Live WebSocket connected; sending setup");
 
             std::lock_guard<std::mutex> lock(g_send_mutex);
-            const int sent = esp_websocket_client_send_text(
-                g_client, kSetupMessage, sizeof(kSetupMessage) - 1, pdMS_TO_TICKS(5000));
+            const int sent = g_client != nullptr
+                ? esp_websocket_client_send_text(
+                    g_client, kSetupMessage, sizeof(kSetupMessage) - 1, pdMS_TO_TICKS(5000))
+                : -1;
             if (sent != static_cast<int>(sizeof(kSetupMessage) - 1)) {
                 g_error.store(true);
                 ESP_LOGE(kTag, "Could not send Gemini Live setup message");
@@ -356,9 +358,13 @@ void MicrophoneWorker(void*) {
     bool audio_stream_active = false;
 
     while (true) {
-        const bool transport_ready = g_ready.load() &&
-            chatai::network::NetworkManager::IsInternetAvailable() &&
-            g_client != nullptr && esp_websocket_client_is_connected(g_client);
+        bool transport_ready = g_ready.load() &&
+            chatai::network::NetworkManager::IsInternetAvailable();
+        {
+            std::lock_guard<std::mutex> lock(g_send_mutex);
+            transport_ready = transport_ready && g_client != nullptr &&
+                esp_websocket_client_is_connected(g_client);
+        }
         if (!transport_ready || !ShouldListen()) {
             if (audio_stream_active && transport_ready) {
                 static constexpr char kAudioStreamEnd[] =
@@ -489,12 +495,22 @@ void SpeakerWorker(void*) {
 
 void GeminiWorker(void*) {
     while (true) {
-        if (g_client != nullptr) {
+        bool has_client = false;
+        {
+            std::lock_guard<std::mutex> lock(g_send_mutex);
+            has_client = g_client != nullptr;
+        }
+        if (has_client) {
             if (g_restart_requested.exchange(false)) {
-                esp_websocket_client_handle_t old_client = g_client;
-                const esp_err_t stop_result = esp_websocket_client_stop(old_client);
-                g_client = nullptr;
-                esp_websocket_client_destroy(old_client);
+                esp_websocket_client_handle_t old_client = nullptr;
+                {
+                    std::lock_guard<std::mutex> lock(g_send_mutex);
+                    old_client = g_client;
+                    g_client = nullptr;
+                }
+                const esp_err_t stop_result = old_client != nullptr
+                    ? esp_websocket_client_stop(old_client) : ESP_OK;
+                if (old_client != nullptr) esp_websocket_client_destroy(old_client);
                 g_ready.store(false);
                 g_waiting_setup.store(false);
                 g_speaking.store(false);
@@ -515,7 +531,14 @@ void GeminiWorker(void*) {
                     g_ready.store(false);
                     g_error.store(true);
                     ESP_LOGE(kTag, "Gemini Live did not send setupComplete within 20 seconds");
-                    esp_websocket_client_close(g_client, pdMS_TO_TICKS(1000));
+                    esp_websocket_client_handle_t client = nullptr;
+                    {
+                        std::lock_guard<std::mutex> lock(g_send_mutex);
+                        client = g_client;
+                    }
+                    if (client != nullptr) {
+                        esp_websocket_client_close(client, pdMS_TO_TICKS(1000));
+                    }
                 }
             }
             vTaskDelay(pdMS_TO_TICKS(1000));
@@ -573,7 +596,10 @@ void GeminiWorker(void*) {
             continue;
         }
 
-        g_client = client;
+        {
+            std::lock_guard<std::mutex> lock(g_send_mutex);
+            g_client = client;
+        }
         esp_err_t result = esp_websocket_register_events(
             client, WEBSOCKET_EVENT_ANY, WebSocketEventHandler, nullptr);
         if (result == ESP_OK) result = esp_websocket_client_start(client);
@@ -582,7 +608,10 @@ void GeminiWorker(void*) {
             g_error.store(true);
             ESP_LOGE(kTag, "Could not start Gemini Live WebSocket: %s",
                      esp_err_to_name(result));
-            g_client = nullptr;
+            {
+                std::lock_guard<std::mutex> lock(g_send_mutex);
+                if (g_client == client) g_client = nullptr;
+            }
             esp_websocket_client_destroy(client);
             vTaskDelay(pdMS_TO_TICKS(kRetryDelayMs));
             continue;
