@@ -12,6 +12,7 @@ public:
     static bool IsConnected();
     static std::string GetIpAddress();
     static bool IsProvisioningActive();
+    static bool HasSavedCredentials();
     static std::string GetProvisioningSsid();
 };
 
