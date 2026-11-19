@@ -56,6 +56,8 @@ std::atomic<bool> g_restart_requested{false};
 bool g_sntp_initialized = false;
 std::atomic<uint32_t> g_audio_epoch{0};
 std::atomic<bool> g_audio_response_reported{false};
+std::atomic<bool> g_audio_input_reported{false};
+std::atomic<bool> g_speaker_started_reported{false};
 std::atomic<bool> g_auth_reported{false};
 std::atomic<bool> g_tls_attempt_reported{false};
 esp_websocket_client_handle_t g_client = nullptr;
@@ -495,6 +497,8 @@ void MicrophoneWorker(void*) {
                 ESP_LOGW(kTag, "Microphone audio send was incomplete");
             } else {
                 audio_stream_active = true;
+                if (!g_audio_input_reported.exchange(true))
+                    chatai::diagnostics::Add("AUDIO_IN", "OK", "microphone PCM sent to Gemini Live");
             }
         }
     }
@@ -533,6 +537,8 @@ void SpeakerWorker(void*) {
                 continue;
             }
             speaker_enabled = true;
+            if (!g_speaker_started_reported.exchange(true))
+                chatai::diagnostics::Add("SPEAKER", "OK", "I2S playback started");
         }
 
         g_speaking.store(true);
