@@ -73,6 +73,22 @@ bool ShouldListen() {
     return g_chat_enabled.load() || g_push_to_talk.load();
 }
 
+esp_err_t AttachGeminiCertificateBundle(void* tls_config) {
+    const esp_err_t result = esp_crt_bundle_attach(tls_config);
+    char detail[112]{};
+    std::snprintf(detail, sizeof(detail), "esp_crt_bundle_attach=%s(0x%08x)",
+                  esp_err_to_name(result), static_cast<unsigned>(result));
+    if (result == ESP_OK) {
+        ESP_LOGI(kTag, "Gemini certificate bundle attached");
+        chatai::diagnostics::Add("TLS_CA", "OK", detail);
+    } else {
+        ESP_LOGE(kTag, "Gemini certificate bundle attach failed: %s",
+                 esp_err_to_name(result));
+        chatai::diagnostics::Add("TLS_CA", "FAIL", detail);
+    }
+    return result;
+}
+
 std::string UrlEncode(const std::string& value) {
     constexpr char kHex[] = "0123456789ABCDEF";
     std::string encoded;
@@ -338,19 +354,25 @@ void WebSocketEventHandler(void*, esp_event_base_t, int32_t event_id, void* even
             g_ready.store(false);
             g_speaking.store(false);
             g_error.store(true);
-            if (event != nullptr) {
-                chatai::diagnostics::Add("WS", "FAIL", "transport event reported");
-                chatai::display::Notify("GEMINI", "Loi ket noi WSS", 4000);
-                if (event->error_handle.esp_tls_last_esp_err != ESP_OK ||
-                    event->error_handle.esp_tls_stack_err != 0 ||
-                    event->error_handle.esp_tls_cert_verify_flags != 0) {
-                    const int stack_error = event->error_handle.esp_tls_stack_err;
+            if (event == nullptr) {
+                ESP_LOGE(kTag, "Gemini Live WebSocket error event had no data");
+                chatai::diagnostics::Add("WS", "FAIL", "error event had no data");
+                break;
+            }
+
+            chatai::display::Notify("GEMINI", "Loi ket noi WSS", 4000);
+            switch (event->error_handle.error_type) {
+                case WEBSOCKET_ERROR_TYPE_TCP_TRANSPORT: {
+                    const auto& error = event->error_handle;
+                    const int stack_error = error.esp_tls_stack_err;
                     const int mbedtls_error = stack_error > 0 ? -stack_error : stack_error;
                     char mbedtls_message[112]{};
                     if (mbedtls_error != 0) {
-                        mbedtls_strerror(mbedtls_error, mbedtls_message, sizeof(mbedtls_message));
+                        mbedtls_strerror(mbedtls_error, mbedtls_message,
+                                         sizeof(mbedtls_message));
                     } else {
-                        std::snprintf(mbedtls_message, sizeof(mbedtls_message), "not reported");
+                        std::snprintf(mbedtls_message, sizeof(mbedtls_message),
+                                      "not reported");
                     }
 
                     const size_t internal_free =
@@ -365,43 +387,62 @@ void WebSocketEventHandler(void*, esp_event_base_t, int32_t event_id, void* even
                                   "stack_raw=%d(0x%08x) mbedtls_code=%d text=%s "
                                   "cert_flags=0x%x unix_time=%lld internal_free=%lu "
                                   "internal_largest=%lu",
-                                  esp_err_to_name(event->error_handle.esp_tls_last_esp_err),
-                                  static_cast<unsigned>(event->error_handle.esp_tls_last_esp_err),
+                                  esp_err_to_name(error.esp_tls_last_esp_err),
+                                  static_cast<unsigned>(error.esp_tls_last_esp_err),
                                   stack_error, static_cast<unsigned>(stack_error),
                                   mbedtls_error, mbedtls_message,
-                                  event->error_handle.esp_tls_cert_verify_flags,
+                                  error.esp_tls_cert_verify_flags,
                                   static_cast<long long>(system_time),
                                   static_cast<unsigned long>(internal_free),
                                   static_cast<unsigned long>(internal_largest));
                     chatai::diagnostics::Add("TLS", "FAIL", detail);
+
+                    char socket_detail[80]{};
+                    std::snprintf(socket_detail, sizeof(socket_detail),
+                                  "socket_errno=%d", error.esp_transport_sock_errno);
+                    chatai::diagnostics::Add("WS_SOCKET", "FAIL", socket_detail);
+                    ESP_LOGE(kTag,
+                             "WebSocket TCP transport error: tls=%s tls_stack=%d "
+                             "cert_flags=0x%x socket_errno=%d",
+                             esp_err_to_name(error.esp_tls_last_esp_err),
+                             error.esp_tls_stack_err, error.esp_tls_cert_verify_flags,
+                             error.esp_transport_sock_errno);
+                    break;
                 }
-                if (event->error_handle.esp_ws_handshake_status_code != 0) {
+
+                case WEBSOCKET_ERROR_TYPE_HANDSHAKE: {
                     const int http_status = event->error_handle.esp_ws_handshake_status_code;
-                    if (http_status == 401 || http_status == 403) {
-                        char auth_detail[64]{};
-                        std::snprintf(auth_detail, sizeof(auth_detail), "HTTP %d during WSS handshake", http_status);
-                        chatai::diagnostics::Add("AUTH", "FAIL", auth_detail);
-                    }
                     char detail[80]{};
-                    std::snprintf(detail, sizeof(detail), "HTTP status=%d",
-                                  event->error_handle.esp_ws_handshake_status_code);
+                    std::snprintf(detail, sizeof(detail), "HTTP status=%d", http_status);
                     chatai::diagnostics::Add("WS_HANDSHAKE", "FAIL", detail);
+                    if (http_status == 401 || http_status == 403) {
+                        chatai::diagnostics::Add("AUTH", "FAIL",
+                                                 "HTTP authentication rejected during WSS handshake");
+                    }
+                    ESP_LOGE(kTag, "WebSocket HTTP handshake failed: status=%d", http_status);
+                    break;
                 }
-                char socket_detail[80]{};
-                std::snprintf(socket_detail, sizeof(socket_detail), "socket_errno=%d",
-                              event->error_handle.esp_transport_sock_errno);
-                chatai::diagnostics::Add("WS_SOCKET", "FAIL", socket_detail);
-                ESP_LOGE(kTag,
-                         "WebSocket error: tls=%s tls_stack=%d cert_flags=0x%x "
-                         "http_status=%d socket_errno=%d",
-                         esp_err_to_name(event->error_handle.esp_tls_last_esp_err),
-                         event->error_handle.esp_tls_stack_err,
-                         event->error_handle.esp_tls_cert_verify_flags,
-                         event->error_handle.esp_ws_handshake_status_code,
-                         event->error_handle.esp_transport_sock_errno);
-            } else {
-                ESP_LOGE(kTag, "Gemini Live WebSocket transport error");
-                chatai::diagnostics::Add("WS", "FAIL", "transport event had no diagnostic data");
+
+                case WEBSOCKET_ERROR_TYPE_PONG_TIMEOUT:
+                    chatai::diagnostics::Add("WS", "FAIL", "WebSocket PONG timeout");
+                    ESP_LOGE(kTag, "WebSocket PONG timeout");
+                    break;
+
+                case WEBSOCKET_ERROR_TYPE_SERVER_CLOSE:
+                    chatai::diagnostics::Add("WS", "FAIL", "server closed WebSocket connection");
+                    ESP_LOGE(kTag, "WebSocket server closed the connection");
+                    break;
+
+                case WEBSOCKET_ERROR_TYPE_NONE:
+                default: {
+                    char detail[64]{};
+                    std::snprintf(detail, sizeof(detail), "error_type=%d",
+                                  static_cast<int>(event->error_handle.error_type));
+                    chatai::diagnostics::Add("WS", "FAIL", detail);
+                    ESP_LOGE(kTag, "WebSocket error without transport details: type=%d",
+                             static_cast<int>(event->error_handle.error_type));
+                    break;
+                }
             }
             break;
 
@@ -677,7 +718,7 @@ void GeminiWorker(void*) {
 
         esp_websocket_client_config_t config{};
         config.uri = uri.c_str();
-        config.crt_bundle_attach = esp_crt_bundle_attach;
+        config.crt_bundle_attach = AttachGeminiCertificateBundle;
         config.buffer_size = 4096;
         config.task_stack = 6144;
         config.task_prio = 5;
