@@ -28,7 +28,7 @@
 namespace {
 constexpr char kTag[] = "ChatAI-Gemini";
 constexpr char kEndpoint[] =
-    "wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1alpha."
+    "wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta."
     "GenerativeService.BidiGenerateContent?key=";
 constexpr size_t kMaxIncomingMessage = 8192;
 constexpr size_t kMaxOutputSamples = 2048;
@@ -119,9 +119,7 @@ bool EnsureSystemTime() {
 const char kSetupMessage[] =
     "{\"setup\":{"
       "\"model\":\"models/gemini-3.8-live\","
-      "\"generationConfig\":{"
-        "\"responseModalities\":[\"AUDIO\"]"
-      "},"
+      "\"responseModalities\":[\"AUDIO\"],"
       "\"systemInstruction\":{"
         "\"parts\":[{"
           "\"text\":\"Bạn là trợ lý ChatAI TPIOS. Hãy giao tiếp tự nhiên, thân thiện "
