@@ -728,6 +728,7 @@ void EventHandler(void*, esp_event_base_t event_base, int32_t event_id, void* ev
             esp_wifi_connect();
         } else {
             ESP_LOGW(kTag, "Wi-Fi is disconnected");
+            chatai::diagnostics::Add("WIFI", "FAIL", "station disconnected");
             if (g_initialized) {
                 const esp_err_t result = StartProvisioning();
                 if (result != ESP_OK) {
@@ -746,6 +747,7 @@ void EventHandler(void*, esp_event_base_t event_base, int32_t event_id, void* ev
         g_connected.store(true);
         ESP_LOGI(kTag, "Wi-Fi received IPv4: " IPSTR " gateway: " IPSTR,
                  IP2STR(&event->ip_info.ip), IP2STR(&event->ip_info.gw));
+        chatai::diagnostics::Add("WIFI", "OK", "STA connected and received IPv4 address");
         if (g_provisioning_started.load()) StopProvisioning();
         chatai::display::Notify("WI-FI", "Đã kết nối mạng");
         return;
@@ -755,6 +757,7 @@ void EventHandler(void*, esp_event_base_t event_base, int32_t event_id, void* ev
         g_connected.store(false);
         g_internet_available.store(false);
         ESP_LOGW(kTag, "Wi-Fi station lost its IPv4 address");
+        chatai::diagnostics::Add("WIFI", "FAIL", "station lost IPv4 address");
     }
 }
 }  // namespace
