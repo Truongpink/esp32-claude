@@ -80,6 +80,7 @@ hr{border:0;border-top:1px solid #ffffff12;margin:18px 0}
 <div class="card-head"><div class="card-icon" aria-hidden="true">◉</div><div><h2 id="connectionTitle">Trạng thái kết nối</h2><p class="hint">Theo dõi Wi-Fi, Internet và Gemini Live</p></div></div>
 <p id="status">Đang kiểm tra trạng thái...</p>
 <p id="deviceStatus" role="status" aria-live="polite">Đang kiểm tra Wi-Fi, Internet và Gemini Live...</p>
+<div class="actions"><button id="retryGemini" class="secondary">Thử kết nối lại Gemini</button></div>
 </section>
 <section class="card" aria-labelledby="diagnosticsTitle">
 <div class="card-head"><div class="card-icon" aria-hidden="true">≋</div><div><h2 id="diagnosticsTitle">Log chẩn đoán Gemini</h2><p class="hint">Tối đa 8 KB · Không lưu API Key hoặc dữ liệu âm thanh</p></div></div>
@@ -113,6 +114,7 @@ hr{border:0;border-top:1px solid #ffffff12;margin:18px 0}
 const csrfToken = "__CSRF_TOKEN__";
 const statusText = document.getElementById("status");
 const deviceStatus = document.getElementById("deviceStatus");
+const retryGeminiButton = document.getElementById("retryGemini");
 const resultText = document.getElementById("result");
 const keyInput = document.getElementById("apiKey");
 const saveButton = document.getElementById("save");
@@ -483,7 +485,8 @@ async function refreshDeviceStatus() {
   else if (!data.internet_available) state = "Wi-Fi: Đã kết nối · Internet: Chưa xác nhận";
   else if (!data.key_configured) state = "Internet: Đã thông · Gemini: Chưa cấu hình API Key";
   else if (data.gemini_ready) state = "Gemini Live: Đã sẵn sàng (đã nhận setupComplete)";
-  else if (data.gemini_error) state = "Gemini Live: Lỗi kết nối hoặc xác thực; đang chờ thử lại";
+  else if (data.gemini_tls_fatal) state = "Gemini Live: Lỗi xác thực chứng chỉ TLS; đã tạm dừng tự kết nối lại. Hãy kiểm tra mạng/giờ hệ thống rồi thử lại.";
+  else if (data.gemini_error) state = "Gemini Live: Lỗi kết nối hoặc xác thực; hãy dùng nút Thử kết nối lại hoặc cập nhật API Key";
   else state = "Gemini Live: Đang kết nối, chờ setupComplete";
   deviceStatus.textContent = state +
     (data.ip ? " · IP: " + data.ip : "") +
@@ -513,6 +516,22 @@ async function sendKeyRequest(method, body) {
   if (!response.ok) throw new Error(data.error || ("Yêu cầu thất bại (HTTP " + response.status + ")"));
   return data;
 }
+retryGeminiButton.addEventListener("click", async () => {
+  retryGeminiButton.disabled = true;
+  try {
+    const response = await fetch("/api/gemini/reconnect", {
+      method:"POST", cache:"no-store", headers:{"X-ChatAI-CSRF":csrfToken}
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(data.error || ("Thử lại thất bại (HTTP " + response.status + ")"));
+    deviceStatus.textContent = data.message || "Đã yêu cầu Gemini kết nối lại.";
+    await refreshDeviceStatus();
+  } catch (error) {
+    deviceStatus.textContent = error.message;
+  } finally {
+    retryGeminiButton.disabled = false;
+  }
+});
 saveButton.addEventListener("click", async () => {
   const apiKey = keyInput.value.trim();
   if (!apiKey) { resultText.textContent = "Vui lòng nhập Gemini API Key."; return; }
@@ -657,19 +676,22 @@ esp_err_t DeviceStatusHandler(httpd_req_t* request) {
     const bool key_configured = chatai::settings::HasGeminiApiKey();
     const bool gemini_ready = chatai::gemini::IsReady();
     const bool gemini_error = chatai::gemini::HasError();
+    const bool gemini_tls_fatal = chatai::gemini::IsTlsFatal();
     const std::string ip = chatai::network::NetworkManager::GetIpAddress();
     const std::string gateway = chatai::network::NetworkManager::GetGatewayAddress();
 
-    char body[384]{};
+    char body[448]{};
     std::snprintf(body, sizeof(body),
         "{\"wifi_connected\":%s,\"internet_available\":%s,"
         "\"key_configured\":%s,\"gemini_ready\":%s,"
-        "\"gemini_error\":%s,\"ip\":\"%s\",\"gateway\":\"%s\"}",
+        "\"gemini_error\":%s,\"gemini_tls_fatal\":%s,"
+        "\"ip\":\"%s\",\"gateway\":\"%s\"}",
         wifi_connected ? "true" : "false",
         internet_available ? "true" : "false",
         key_configured ? "true" : "false",
         gemini_ready ? "true" : "false",
         gemini_error ? "true" : "false",
+        gemini_tls_fatal ? "true" : "false",
         ip.c_str(), gateway.c_str());
     return SendJson(request, "200 OK", body);
 }
@@ -727,6 +749,18 @@ esp_err_t GeminiKeyPostHandler(httpd_req_t* request) {
     chatai::gemini::RequestReconnect();
     chatai::display::Notify("WEB ADMIN", "Đã lưu API Key");
     return SendJson(request, "200 OK", "{\"message\":\"Đã lưu Gemini API Key.\"}");
+}
+
+esp_err_t GeminiReconnectHandler(httpd_req_t* request) {
+    if (!IsAuthorizedMutation(request)) {
+        return SendError(request, "403 Forbidden", "Yêu cầu không hợp lệ");
+    }
+    if (!chatai::settings::HasGeminiApiKey()) {
+        return SendError(request, "400 Bad Request", "Chưa cấu hình Gemini API Key");
+    }
+    chatai::gemini::RequestReconnect();
+    chatai::display::Notify("GEMINI", "Dang thu ket noi lai");
+    return SendJson(request, "200 OK", "{\"message\":\"Đã yêu cầu Gemini kết nối lại.\"}");
 }
 
 esp_err_t OtaUploadHandler(httpd_req_t* request) {
@@ -873,6 +907,11 @@ esp_err_t RegisterRoutes(httpd_handle_t server, const std::string& csrf_token) {
     device_status_uri.method = HTTP_GET;
     device_status_uri.handler = DeviceStatusHandler;
 
+    httpd_uri_t reconnect_uri{};
+    reconnect_uri.uri = "/api/gemini/reconnect";
+    reconnect_uri.method = HTTP_POST;
+    reconnect_uri.handler = GeminiReconnectHandler;
+
     httpd_uri_t save_uri{};
     save_uri.uri = "/api/gemini/key";
     save_uri.method = HTTP_POST;
@@ -902,6 +941,7 @@ esp_err_t RegisterRoutes(httpd_handle_t server, const std::string& csrf_token) {
     if (result == ESP_OK) result = httpd_register_uri_handler(server, &firmware_status_uri);
     if (result == ESP_OK) result = httpd_register_uri_handler(server, &status_uri);
     if (result == ESP_OK) result = httpd_register_uri_handler(server, &device_status_uri);
+    if (result == ESP_OK) result = httpd_register_uri_handler(server, &reconnect_uri);
     if (result == ESP_OK) result = httpd_register_uri_handler(server, &save_uri);
     if (result == ESP_OK) result = httpd_register_uri_handler(server, &delete_uri);
     if (result == ESP_OK) result = httpd_register_uri_handler(server, &diagnostics_uri);

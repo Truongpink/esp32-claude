@@ -16,6 +16,7 @@
 #include <esp_heap_caps.h>
 #include <esp_log.h>
 #include <esp_netif_sntp.h>
+#include <esp_random.h>
 #include <esp_websocket_client.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/queue.h>
@@ -37,7 +38,9 @@ constexpr char kEndpoint[] =
 constexpr size_t kMaxIncomingMessage = 8192;
 constexpr size_t kMaxOutputSamples = 2048;
 constexpr size_t kMicChunkSamples = 320;  // 20 ms at 16 kHz.
-constexpr uint32_t kRetryDelayMs = 5000;
+constexpr uint32_t kRetryBaseDelayMs = 5000;
+constexpr uint32_t kRetryMaxDelayMs = 60000;
+constexpr uint32_t kFailureSummaryIntervalMs = 300000;
 constexpr UBaseType_t kAudioQueueLength = 8;
 
 struct AudioChunk {
@@ -62,6 +65,20 @@ std::atomic<bool> g_audio_input_reported{false};
 std::atomic<bool> g_speaker_started_reported{false};
 std::atomic<bool> g_auth_reported{false};
 std::atomic<bool> g_tls_attempt_reported{false};
+std::atomic<bool> g_model_reported{false};
+std::atomic<bool> g_ws_start_reported{false};
+std::atomic<bool> g_tls_bundle_success_reported{false};
+std::atomic<bool> g_tls_bundle_failure_reported{false};
+std::atomic<bool> g_client_failed{false};
+std::atomic<bool> g_connection_failure_reported{false};
+std::atomic<bool> g_tls_fatal{false};
+std::atomic<bool> g_retry_blocked{false};
+std::atomic<bool> g_tls_failure_active{false};
+std::atomic<int> g_last_tls_error{0};
+std::atomic<uint32_t> g_last_tls_cert_flags{0};
+std::atomic<uint32_t> g_tls_suppressed_count{0};
+std::atomic<uint32_t> g_tls_failure_started_tick{0};
+std::atomic<uint32_t> g_tls_last_summary_tick{0};
 esp_websocket_client_handle_t g_client = nullptr;
 QueueHandle_t g_audio_queue = nullptr;
 std::string g_incoming_message;
@@ -73,15 +90,69 @@ bool ShouldListen() {
     return g_chat_enabled.load() || g_push_to_talk.load();
 }
 
+uint32_t NextRetryDelayMs(uint32_t attempt) {
+    const uint32_t base = attempt >= 4
+        ? kRetryMaxDelayMs : (kRetryBaseDelayMs << attempt);
+    const uint32_t jitter = base / 5;
+    return base - jitter / 2 + (esp_random() % (jitter + 1));
+}
+
+void ReportTlsFailure(const char* detail, int error_code, uint32_t cert_flags) {
+    const uint32_t now = static_cast<uint32_t>(xTaskGetTickCount());
+    const bool was_active = g_tls_failure_active.exchange(true);
+    const int previous_error = g_last_tls_error.exchange(error_code);
+    const uint32_t previous_flags = g_last_tls_cert_flags.exchange(cert_flags);
+
+    if (!was_active || previous_error != error_code || previous_flags != cert_flags) {
+        g_tls_suppressed_count.store(0);
+        g_tls_failure_started_tick.store(now);
+        g_tls_last_summary_tick.store(now);
+        chatai::diagnostics::Add("TLS", "FAIL", detail);
+        return;
+    }
+
+    const uint32_t suppressed = g_tls_suppressed_count.fetch_add(1) + 1;
+    const uint32_t last_summary = g_tls_last_summary_tick.load();
+    if (now - last_summary >= pdMS_TO_TICKS(kFailureSummaryIntervalMs)) {
+        char summary[128]{};
+        const uint32_t duration = (now - g_tls_failure_started_tick.load()) /
+                                  configTICK_RATE_HZ;
+        std::snprintf(summary, sizeof(summary),
+                      "same_error_count=%lu duration=%lus",
+                      static_cast<unsigned long>(suppressed),
+                      static_cast<unsigned long>(duration));
+        chatai::diagnostics::Add("TLS", "WARN", summary);
+        g_tls_last_summary_tick.store(now);
+    }
+}
+
+void ReportTlsRecovered() {
+    if (!g_tls_failure_active.exchange(false)) return;
+    const uint32_t now = static_cast<uint32_t>(xTaskGetTickCount());
+    const uint32_t failures = g_tls_suppressed_count.exchange(0) + 1;
+    const uint32_t duration = (now - g_tls_failure_started_tick.load()) /
+                              configTICK_RATE_HZ;
+    char detail[128]{};
+    std::snprintf(detail, sizeof(detail),
+                  "recovered_after_failures=%lu duration=%lus",
+                  static_cast<unsigned long>(failures),
+                  static_cast<unsigned long>(duration));
+    chatai::diagnostics::Add("TLS", "OK", detail);
+    g_tls_fatal.store(false);
+    g_retry_blocked.store(false);
+}
+
 esp_err_t AttachGeminiCertificateBundle(void* tls_config) {
     const esp_err_t result = esp_crt_bundle_attach(tls_config);
     char detail[112]{};
     std::snprintf(detail, sizeof(detail), "esp_crt_bundle_attach=%s(0x%08x)",
                   esp_err_to_name(result), static_cast<unsigned>(result));
     if (result == ESP_OK) {
-        ESP_LOGI(kTag, "Gemini certificate bundle attached");
-        chatai::diagnostics::Add("TLS_CA", "OK", detail);
-    } else {
+        if (!g_tls_bundle_success_reported.exchange(true)) {
+            ESP_LOGI(kTag, "Gemini certificate bundle attached");
+            chatai::diagnostics::Add("TLS_CA", "OK", detail);
+        }
+    } else if (!g_tls_bundle_failure_reported.exchange(true)) {
         ESP_LOGE(kTag, "Gemini certificate bundle attach failed: %s",
                  esp_err_to_name(result));
         chatai::diagnostics::Add("TLS_CA", "FAIL", detail);
@@ -222,6 +293,9 @@ void HandleServerMessage(const std::string& message) {
         g_waiting_setup.store(false);
         g_ready.store(true);
         g_error.store(false);
+        g_tls_fatal.store(false);
+        g_retry_blocked.store(false);
+        ReportTlsRecovered();
         ESP_LOGI(kTag, "Gemini Live setupComplete; audio session is ready");
         chatai::diagnostics::Add("SETUP", "OK", "setupComplete received; Gemini READY");
     }
@@ -260,11 +334,18 @@ void HandleServerMessage(const std::string& message) {
         g_ready.store(false);
         g_speaking.store(false);
         g_error.store(true);
+        g_client_failed.store(true);
+        g_connection_failure_reported.store(true);
 
         const cJSON* status = cJSON_IsObject(error)
             ? cJSON_GetObjectItemCaseSensitive(error, "status") : nullptr;
         const cJSON* message_text = cJSON_IsObject(error)
             ? cJSON_GetObjectItemCaseSensitive(error, "message") : nullptr;
+        if (cJSON_IsString(status) &&
+            (std::strcmp(status->valuestring, "UNAUTHENTICATED") == 0 ||
+             std::strcmp(status->valuestring, "PERMISSION_DENIED") == 0)) {
+            g_retry_blocked.store(true);
+        }
         if (cJSON_IsString(status) && cJSON_IsString(message_text)) {
             const int status_length = static_cast<int>(
                 std::min<size_t>(std::strlen(status->valuestring), 64));
@@ -298,6 +379,8 @@ void WebSocketEventHandler(void*, esp_event_base_t, int32_t event_id, void* even
             g_setup_started_tick.store(static_cast<uint32_t>(xTaskGetTickCount()));
             g_speaking.store(false);
             g_error.store(false);
+            g_client_failed.store(false);
+            g_connection_failure_reported.store(false);
             g_incoming_message.clear();
             g_receiving_text = false;
             ESP_LOGI(kTag, "Gemini Live WebSocket connected; sending setup");
@@ -314,6 +397,8 @@ void WebSocketEventHandler(void*, esp_event_base_t, int32_t event_id, void* even
             }
             if (sent != static_cast<int>(sizeof(kSetupMessage) - 1)) {
                 g_error.store(true);
+                g_client_failed.store(true);
+                g_connection_failure_reported.store(true);
                 ESP_LOGE(kTag, "Could not send Gemini Live setup message");
                 chatai::diagnostics::Add("SETUP", "FAIL", "WebSocket send setup failed");
                 chatai::display::Notify("GEMINI", "Loi gui setup", 4000);
@@ -349,14 +434,16 @@ void WebSocketEventHandler(void*, esp_event_base_t, int32_t event_id, void* even
             }
             break;
 
-        case WEBSOCKET_EVENT_ERROR:
+        case WEBSOCKET_EVENT_ERROR: {
             g_waiting_setup.store(false);
             g_ready.store(false);
             g_speaking.store(false);
             g_error.store(true);
+            g_client_failed.store(true);
+            if (g_connection_failure_reported.exchange(true)) break;
             if (event == nullptr) {
-                ESP_LOGE(kTag, "Gemini Live WebSocket error event had no data");
                 chatai::diagnostics::Add("WS", "FAIL", "error event had no data");
+                chatai::display::Notify("GEMINI", "Loi ket noi WSS", 4000);
                 break;
             }
 
@@ -381,32 +468,38 @@ void WebSocketEventHandler(void*, esp_event_base_t, int32_t event_id, void* even
                         heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
                     const std::time_t system_time = std::time(nullptr);
 
-                    char detail[384]{};
+                    char detail[416]{};
                     std::snprintf(detail, sizeof(detail),
                                   "host=generativelanguage.googleapis.com esp=%s(0x%08x) "
                                   "stack_raw=%d(0x%08x) mbedtls_code=%d text=%s "
-                                  "cert_flags=0x%x unix_time=%lld internal_free=%lu "
-                                  "internal_largest=%lu",
+                                  "cert_flags=0x%x socket_errno=%d unix_time=%lld "
+                                  "internal_free=%lu internal_largest=%lu",
                                   esp_err_to_name(error.esp_tls_last_esp_err),
                                   static_cast<unsigned>(error.esp_tls_last_esp_err),
                                   stack_error, static_cast<unsigned>(stack_error),
                                   mbedtls_error, mbedtls_message,
                                   error.esp_tls_cert_verify_flags,
+                                  error.esp_transport_sock_errno,
                                   static_cast<long long>(system_time),
                                   static_cast<unsigned long>(internal_free),
                                   static_cast<unsigned long>(internal_largest));
-                    chatai::diagnostics::Add("TLS", "FAIL", detail);
-
-                    char socket_detail[80]{};
-                    std::snprintf(socket_detail, sizeof(socket_detail),
-                                  "socket_errno=%d", error.esp_transport_sock_errno);
-                    chatai::diagnostics::Add("WS_SOCKET", "FAIL", socket_detail);
-                    ESP_LOGE(kTag,
-                             "WebSocket TCP transport error: tls=%s tls_stack=%d "
-                             "cert_flags=0x%x socket_errno=%d",
-                             esp_err_to_name(error.esp_tls_last_esp_err),
-                             error.esp_tls_stack_err, error.esp_tls_cert_verify_flags,
-                             error.esp_transport_sock_errno);
+                    if (mbedtls_error != 0 || error.esp_tls_cert_verify_flags != 0) {
+                        const bool fatal_tls = mbedtls_error == -0x3000 ||
+                                               error.esp_tls_cert_verify_flags != 0;
+                        if (fatal_tls) {
+                            g_tls_fatal.store(true);
+                            g_retry_blocked.store(true);
+                        }
+                        ReportTlsFailure(detail, mbedtls_error,
+                                         error.esp_tls_cert_verify_flags);
+                    } else {
+                        char socket_detail[80]{};
+                        std::snprintf(socket_detail, sizeof(socket_detail),
+                                      "socket_errno=%d tls=%s",
+                                      error.esp_transport_sock_errno,
+                                      esp_err_to_name(error.esp_tls_last_esp_err));
+                        chatai::diagnostics::Add("WS_SOCKET", "FAIL", socket_detail);
+                    }
                     break;
                 }
 
@@ -416,21 +509,19 @@ void WebSocketEventHandler(void*, esp_event_base_t, int32_t event_id, void* even
                     std::snprintf(detail, sizeof(detail), "HTTP status=%d", http_status);
                     chatai::diagnostics::Add("WS_HANDSHAKE", "FAIL", detail);
                     if (http_status == 401 || http_status == 403) {
+                        g_retry_blocked.store(true);
                         chatai::diagnostics::Add("AUTH", "FAIL",
                                                  "HTTP authentication rejected during WSS handshake");
                     }
-                    ESP_LOGE(kTag, "WebSocket HTTP handshake failed: status=%d", http_status);
                     break;
                 }
 
                 case WEBSOCKET_ERROR_TYPE_PONG_TIMEOUT:
                     chatai::diagnostics::Add("WS", "FAIL", "WebSocket PONG timeout");
-                    ESP_LOGE(kTag, "WebSocket PONG timeout");
                     break;
 
                 case WEBSOCKET_ERROR_TYPE_SERVER_CLOSE:
                     chatai::diagnostics::Add("WS", "FAIL", "server closed WebSocket connection");
-                    ESP_LOGE(kTag, "WebSocket server closed the connection");
                     break;
 
                 case WEBSOCKET_ERROR_TYPE_NONE:
@@ -439,23 +530,25 @@ void WebSocketEventHandler(void*, esp_event_base_t, int32_t event_id, void* even
                     std::snprintf(detail, sizeof(detail), "error_type=%d",
                                   static_cast<int>(event->error_handle.error_type));
                     chatai::diagnostics::Add("WS", "FAIL", detail);
-                    ESP_LOGE(kTag, "WebSocket error without transport details: type=%d",
-                             static_cast<int>(event->error_handle.error_type));
                     break;
                 }
             }
             break;
+        }
 
         case WEBSOCKET_EVENT_DISCONNECTED:
             g_waiting_setup.store(false);
             g_ready.store(false);
             g_speaking.store(false);
             g_error.store(true);
+            g_client_failed.store(true);
             g_audio_epoch.fetch_add(1);
             ClearAudioQueue();
-            ESP_LOGW(kTag, "Gemini Live WebSocket disconnected");
-            chatai::diagnostics::Add("WS", "FAIL", "disconnected");
-            chatai::display::Notify("GEMINI", "Mat ket noi WSS", 4000);
+            if (!g_connection_failure_reported.exchange(true)) {
+                ESP_LOGW(kTag, "Gemini Live WebSocket disconnected");
+                chatai::diagnostics::Add("WS", "FAIL", "disconnected");
+                chatai::display::Notify("GEMINI", "Mat ket noi WSS", 4000);
+            }
             break;
 
         case WEBSOCKET_EVENT_CLOSED:
@@ -463,13 +556,17 @@ void WebSocketEventHandler(void*, esp_event_base_t, int32_t event_id, void* even
             g_ready.store(false);
             g_speaking.store(false);
             g_error.store(true);
+            g_client_failed.store(true);
             g_audio_epoch.fetch_add(1);
             ClearAudioQueue();
-            ESP_LOGW(kTag, "Gemini Live WebSocket closed; code=%d",
-                     event != nullptr ? event->close_status_code : 0);
-            { char detail[64]{}; std::snprintf(detail, sizeof(detail), "close_code=%d",
-                event != nullptr ? event->close_status_code : 0);
-              chatai::diagnostics::Add("WS", "FAIL", detail); }
+            if (!g_connection_failure_reported.exchange(true)) {
+                const int close_code = event != nullptr ? event->close_status_code : 0;
+                ESP_LOGW(kTag, "Gemini Live WebSocket closed; code=%d", close_code);
+                char detail[64]{};
+                std::snprintf(detail, sizeof(detail), "close_code=%d", close_code);
+                chatai::diagnostics::Add("WS", "FAIL", detail);
+                chatai::display::Notify("GEMINI", "Mat ket noi WSS", 4000);
+            }
             break;
 
         default:
@@ -627,35 +724,58 @@ void SpeakerWorker(void*) {
 }
 
 void GeminiWorker(void*) {
+    uint32_t retry_attempt = 0;
+    TickType_t retry_deadline = 0;
+    bool retry_pending = false;
+
+    auto schedule_retry = [&]() {
+        const uint32_t delay_ms = NextRetryDelayMs(retry_attempt);
+        if (retry_attempt < 5) ++retry_attempt;
+        retry_deadline = xTaskGetTickCount() + pdMS_TO_TICKS(delay_ms);
+        retry_pending = true;
+    };
+
     while (true) {
-        bool has_client = false;
+        const bool manual_restart = g_restart_requested.exchange(false);
+        if (manual_restart) {
+            g_retry_blocked.store(false);
+            g_tls_fatal.store(false);
+            g_error.store(false);
+            retry_attempt = 0;
+            retry_pending = false;
+            chatai::diagnostics::Add("WS", "INFO", "manual reconnect requested");
+        }
+
+        esp_websocket_client_handle_t client = nullptr;
         {
             std::lock_guard<std::mutex> lock(g_send_mutex);
-            has_client = g_client != nullptr;
+            client = g_client;
         }
-        if (has_client) {
-            if (g_restart_requested.exchange(false)) {
-                esp_websocket_client_handle_t old_client = nullptr;
+
+        if (client != nullptr) {
+            const bool connection_failed = g_client_failed.exchange(false);
+            if (manual_restart || connection_failed) {
                 {
                     std::lock_guard<std::mutex> lock(g_send_mutex);
-                    old_client = g_client;
-                    g_client = nullptr;
+                    if (g_client == client) g_client = nullptr;
                 }
-                const esp_err_t stop_result = old_client != nullptr
-                    ? esp_websocket_client_stop(old_client) : ESP_OK;
-                if (old_client != nullptr) esp_websocket_client_destroy(old_client);
+                const esp_err_t stop_result = esp_websocket_client_stop(client);
+                esp_websocket_client_destroy(client);
                 g_ready.store(false);
                 g_waiting_setup.store(false);
                 g_speaking.store(false);
-                g_error.store(false);
                 g_audio_epoch.fetch_add(1);
                 ClearAudioQueue();
-                ESP_LOGI(kTag, "Gemini Live client restarted to apply updated credentials");
+                g_client_failed.store(false);
+
                 if (stop_result != ESP_OK) {
-                    ESP_LOGW(kTag, "Gemini client stop returned: %s", esp_err_to_name(stop_result));
+                    ESP_LOGW(kTag, "Gemini client stop returned: %s",
+                             esp_err_to_name(stop_result));
                 }
+                if (!manual_restart && !g_retry_blocked.load()) schedule_retry();
                 continue;
             }
+
             if (g_waiting_setup.load()) {
                 const uint32_t elapsed = static_cast<uint32_t>(xTaskGetTickCount()) -
                                           g_setup_started_tick.load();
@@ -663,26 +783,30 @@ void GeminiWorker(void*) {
                     g_waiting_setup.exchange(false)) {
                     g_ready.store(false);
                     g_error.store(true);
+                    g_client_failed.store(true);
+                    g_connection_failure_reported.store(true);
                     ESP_LOGE(kTag, "Gemini Live did not send setupComplete within 20 seconds");
                     chatai::diagnostics::Add("SETUP", "FAIL", "setupComplete timeout after 20 seconds");
                     chatai::display::Notify("GEMINI", "Qua han setup", 4000);
-                    esp_websocket_client_handle_t client = nullptr;
-                    {
-                        std::lock_guard<std::mutex> lock(g_send_mutex);
-                        client = g_client;
-                    }
-                    if (client != nullptr) {
-                        esp_websocket_client_close(client, pdMS_TO_TICKS(1000));
-                    }
+                    esp_websocket_client_close(client, pdMS_TO_TICKS(1000));
                 }
             }
+            vTaskDelay(pdMS_TO_TICKS(250));
+            continue;
+        }
+
+        if (g_retry_blocked.load()) {
             vTaskDelay(pdMS_TO_TICKS(1000));
             continue;
         }
 
-        if (g_restart_requested.exchange(false)) {
-            vTaskDelay(pdMS_TO_TICKS(50));
-            continue;
+        if (retry_pending) {
+            const TickType_t now = xTaskGetTickCount();
+            if (static_cast<int32_t>(now - retry_deadline) < 0) {
+                vTaskDelay(pdMS_TO_TICKS(250));
+                continue;
+            }
+            retry_pending = false;
         }
 
         if (!chatai::network::NetworkManager::IsInternetAvailable()) {
@@ -697,14 +821,14 @@ void GeminiWorker(void*) {
                 chatai::diagnostics::Add("AUTH", "FAIL", "API Key missing in NVS");
                 g_missing_key_reported = true;
             }
-            vTaskDelay(pdMS_TO_TICKS(kRetryDelayMs));
+            vTaskDelay(pdMS_TO_TICKS(1000));
             continue;
         }
 
         g_missing_key_reported = false;
         if (!EnsureSystemTime()) {
             std::fill(api_key.begin(), api_key.end(), '\0');
-            vTaskDelay(pdMS_TO_TICKS(kRetryDelayMs));
+            schedule_retry();
             continue;
         }
 
@@ -725,25 +849,27 @@ void GeminiWorker(void*) {
         config.network_timeout_ms = 15000;
         config.reconnect_timeout_ms = 5000;
         config.ping_interval_sec = 20;
-        config.disable_auto_reconnect = false;
-        config.enable_close_reconnect = true;
+        config.disable_auto_reconnect = true;
+        config.enable_close_reconnect = false;
 
-        esp_websocket_client_handle_t client = esp_websocket_client_init(&config);
-        if (client == nullptr) {
+        esp_websocket_client_handle_t new_client = esp_websocket_client_init(&config);
+        if (new_client == nullptr) {
             g_error.store(true);
             ESP_LOGE(kTag, "Could not initialize Gemini Live WebSocket client");
             chatai::diagnostics::Add("WS", "FAIL", "esp_websocket_client_init returned null");
-            vTaskDelay(pdMS_TO_TICKS(kRetryDelayMs));
+            schedule_retry();
             continue;
         }
 
+        g_client_failed.store(false);
+        g_connection_failure_reported.store(false);
         {
             std::lock_guard<std::mutex> lock(g_send_mutex);
-            g_client = client;
+            g_client = new_client;
         }
         esp_err_t result = esp_websocket_register_events(
-            client, WEBSOCKET_EVENT_ANY, WebSocketEventHandler, nullptr);
-        if (result == ESP_OK) result = esp_websocket_client_start(client);
+            new_client, WEBSOCKET_EVENT_ANY, WebSocketEventHandler, nullptr);
+        if (result == ESP_OK) result = esp_websocket_client_start(new_client);
 
         if (result != ESP_OK) {
             g_error.store(true);
@@ -752,16 +878,18 @@ void GeminiWorker(void*) {
             chatai::diagnostics::Add("WS", "FAIL", esp_err_to_name(result));
             {
                 std::lock_guard<std::mutex> lock(g_send_mutex);
-                if (g_client == client) g_client = nullptr;
+                if (g_client == new_client) g_client = nullptr;
             }
-            esp_websocket_client_destroy(client);
-            vTaskDelay(pdMS_TO_TICKS(kRetryDelayMs));
+            esp_websocket_client_destroy(new_client);
+            schedule_retry();
             continue;
         }
 
         ESP_LOGI(kTag, "Gemini Live connection started; waiting for setupComplete");
-        chatai::diagnostics::Add("MODEL", "INFO", "models/gemini-3.8-live; response modality AUDIO");
-        chatai::diagnostics::Add("WS", "INFO", "client start accepted; waiting for handshake");
+        if (!g_model_reported.exchange(true))
+            chatai::diagnostics::Add("MODEL", "INFO", "models/gemini-3.8-live; response modality AUDIO");
+        if (!g_ws_start_reported.exchange(true))
+            chatai::diagnostics::Add("WS", "INFO", "client start accepted; waiting for handshake");
     }
 }
 
@@ -802,6 +930,10 @@ bool IsReady() {
     return g_ready.load();
 }
 
+bool IsTlsFatal() {
+    return g_tls_fatal.load();
+}
+
 bool IsSpeaking() {
     return g_speaking.load();
 }
@@ -816,8 +948,11 @@ void SetPushToTalk(bool pressed) { g_push_to_talk.store(pressed); }
 bool IsListening() { return ShouldListen(); }
 
 void RequestReconnect() {
+    g_retry_blocked.store(false);
+    g_tls_fatal.store(false);
     g_restart_requested.store(true);
     g_ready.store(false);
+    g_error.store(false);
     g_audio_epoch.fetch_add(1);
     ClearAudioQueue();
 }
