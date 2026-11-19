@@ -27,6 +27,7 @@ The key is stored in NVS namespace `chatai_ai`, key `gemini_key`. The browser in
 | Method | Path | Purpose |
 |---|---|---|
 | GET | `/admin` | Web Admin page |
+| GET | `/api/wifi/scan` | Scans nearby Wi-Fi networks while provisioning is active |
 | GET | `/api/gemini/status` | Returns only whether a key is configured |
 | GET | `/api/firmware/status` | Returns running Build Number, marker, active slot, inactive OTA slot, and slot capacity |
 | POST | `/api/gemini/key` | Validate and save a key |
