@@ -59,6 +59,7 @@ std::atomic<bool> g_chat_enabled{false};
 std::atomic<bool> g_push_to_talk{false};
 std::atomic<bool> g_restart_requested{false};
 bool g_sntp_initialized = false;
+bool g_sntp_started = false;
 std::atomic<uint32_t> g_audio_epoch{0};
 std::atomic<bool> g_audio_response_reported{false};
 std::atomic<bool> g_audio_input_reported{false};
@@ -206,13 +207,17 @@ std::string UrlEncode(const std::string& value) {
 
 bool EnsureSystemTime() {
     constexpr std::time_t kMinimumValidTime = 1700000000;
+    constexpr unsigned kSntpServerCount = 3;
     if (std::time(nullptr) >= kMinimumValidTime) {
         ReportTimeSuccess("system clock valid");
         return true;
     }
 
     if (!g_sntp_initialized) {
-        esp_sntp_config_t config = ESP_NETIF_SNTP_DEFAULT_CONFIG("pool.ntp.org");
+        esp_sntp_config_t config = ESP_NETIF_SNTP_DEFAULT_CONFIG_MULTIPLE(
+            kSntpServerCount,
+            ESP_SNTP_SERVER_LIST("time.google.com", "pool.ntp.org",
+                                 "time.cloudflare.com"));
         config.start = false;
         const esp_err_t result = esp_netif_sntp_init(&config);
         if (result != ESP_OK) {
@@ -222,22 +227,42 @@ bool EnsureSystemTime() {
         g_sntp_initialized = true;
     }
 
-    const esp_err_t start_result = esp_netif_sntp_start();
-    if (start_result != ESP_OK) {
-        ReportTimeFailure(esp_err_to_name(start_result));
-        return false;
+    // Start once. Calling start again restarts the SNTP service and can
+    // postpone the next request while GeminiWorker is retrying.
+    if (!g_sntp_started) {
+        const esp_err_t start_result = esp_netif_sntp_start();
+        if (start_result != ESP_OK) {
+            ReportTimeFailure(esp_err_to_name(start_result));
+            return false;
+        }
+        g_sntp_started = true;
     }
 
-    const esp_err_t sync_result =
-        esp_netif_sntp_sync_wait(pdMS_TO_TICKS(10000));
-    if (sync_result != ESP_OK && std::time(nullptr) < kMinimumValidTime) {
-        ReportTimeFailure(esp_err_to_name(sync_result));
-        return false;
+    esp_err_t sync_result = ESP_ERR_TIMEOUT;
+    for (unsigned attempt = 0; attempt < 15; ++attempt) {
+        sync_result = esp_netif_sntp_sync_wait(pdMS_TO_TICKS(2000));
+        if (std::time(nullptr) >= kMinimumValidTime) {
+            ESP_LOGI(kTag, "System time synchronized; Gemini TLS certificate validation can proceed");
+            ReportTimeSuccess("SNTP synchronized");
+            return true;
+        }
+        if (sync_result != ESP_ERR_TIMEOUT &&
+            sync_result != ESP_ERR_NOT_FINISHED) {
+            break;
+        }
     }
 
-    ESP_LOGI(kTag, "System time synchronized; Gemini TLS certificate validation can proceed");
-    ReportTimeSuccess("SNTP synchronized");
-    return true;
+    unsigned int reachability[kSntpServerCount]{};
+    for (unsigned index = 0; index < kSntpServerCount; ++index) {
+        esp_netif_sntp_reachability(index, &reachability[index]);
+    }
+    char detail[128]{};
+    std::snprintf(detail, sizeof(detail),
+                  "sync=%s NTP_reachability=%02x/%02x/%02x",
+                  esp_err_to_name(sync_result), reachability[0],
+                  reachability[1], reachability[2]);
+    ReportTimeFailure(detail);
+    return false;
 }
 
 const char kSetupMessage[] =
