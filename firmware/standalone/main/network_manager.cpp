@@ -1,5 +1,6 @@
 #include "network_manager.h"
 #include "web_admin.h"
+#include "firmware_info.h"
 
 #include <atomic>
 #include <cstdint>
@@ -31,6 +32,7 @@ constexpr char kTag[] = "ChatAI-WiFi";
 constexpr char kNvsNamespace[] = "chatai_net";
 constexpr char kSsidKey[] = "ssid";
 constexpr char kPasswordKey[] = "password";
+constexpr char kFirmwareBuildKey[] = "fw_build";
 constexpr uint8_t kMaxReconnectAttempts = 5;
 constexpr size_t kMaxFormLength = 256;
 
@@ -81,26 +83,28 @@ bool ReadCredentials(const char* name_space, const char* ssid_key,
     return read_ssid == ESP_OK && read_password == ESP_OK && !ssid.empty();
 }
 
+esp_err_t EraseCredentialNamespace(const char* name_space);
+
 bool LoadCredentials(std::string& ssid, std::string& password) {
-    if (ReadCredentials(kNvsNamespace, kSsidKey, kPasswordKey, ssid, password)) {
-        return true;
+    nvs_handle_t handle;
+    if (nvs_open(kNvsNamespace, NVS_READONLY, &handle) != ESP_OK) {
+        EraseCredentialNamespace("wifi");
+        return false;
     }
 
-    // Xiaozhi stores saved networks in namespace "wifi".
-    for (unsigned index = 0; index <= 9; ++index) {
-        const std::string suffix = index == 0 ? "" : std::to_string(index);
-        const std::string ssid_key = "ssid" + suffix;
-        const std::string password_key = "password" + suffix;
-        if (!ReadCredentials("wifi", ssid_key.c_str(), password_key.c_str(),
-                             ssid, password)) {
-            continue;
-        }
-
-        // Keep the original Xiaozhi namespace intact; migrate a copy for ChatAI.
-        SaveCredentials(ssid, password);
-        return true;
+    uint32_t saved_build = UINT32_MAX;
+    const esp_err_t marker_result = nvs_get_u32(handle, kFirmwareBuildKey, &saved_build);
+    nvs_close(handle);
+    if (marker_result != ESP_OK || saved_build != chatai::firmware::kBuildNumber) {
+        EraseCredentialNamespace(kNvsNamespace);
+        EraseCredentialNamespace("wifi");
+        ESP_LOGI(kTag, "Firmware build changed; saved Wi-Fi credentials require setup again");
+        return false;
     }
-    return false;
+
+    // Never reuse credentials left by the previous Xiaozhi firmware.
+    EraseCredentialNamespace("wifi");
+    return ReadCredentials(kNvsNamespace, kSsidKey, kPasswordKey, ssid, password);
 }
 
 
@@ -123,6 +127,14 @@ esp_err_t EraseCredentialNamespace(const char* name_space) {
             }
         }
     }
+    if (std::strcmp(name_space, kNvsNamespace) == 0) {
+        result = nvs_erase_key(handle, kFirmwareBuildKey);
+        if (result == ESP_OK) changed = true;
+        else if (result != ESP_ERR_NVS_NOT_FOUND) {
+            nvs_close(handle);
+            return result;
+        }
+    }
     if (changed) result = nvs_commit(handle);
     nvs_close(handle);
     return result;
@@ -134,6 +146,9 @@ esp_err_t SaveCredentials(const std::string& ssid, const std::string& password) 
     if (result != ESP_OK) return result;
     result = nvs_set_str(handle, kSsidKey, ssid.c_str());
     if (result == ESP_OK) result = nvs_set_str(handle, kPasswordKey, password.c_str());
+    if (result == ESP_OK) {
+        result = nvs_set_u32(handle, kFirmwareBuildKey, chatai::firmware::kBuildNumber);
+    }
     if (result == ESP_OK) result = nvs_commit(handle);
     nvs_close(handle);
     return result;
