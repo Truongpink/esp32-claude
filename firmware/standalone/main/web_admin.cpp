@@ -292,7 +292,7 @@ firmwareInput.addEventListener("change", () => {
 });
 
 async function waitForRunningBuild(expectedBuild) {
-  otaResult.textContent = "Firmware đã được ghi. Chờ ESP32 khởi động lại và xác nhận phiên bản...";
+  otaResult.textContent = "Firmware đã được ghi. Đang chờ ESP32 khởi động lại và xác nhận phiên bản...";
   await new Promise(resolve => setTimeout(resolve, 6000));
   for (let attempt = 0; attempt < 24; attempt++) {
     try {
@@ -300,13 +300,13 @@ async function waitForRunningBuild(expectedBuild) {
       if (response.ok) {
         const data = await response.json();
         const actualBuild = Number(data.build_number || 0);
-        firmwareStatus.textContent = "Firmware Build đang chạy: #" + actualBuild;
+        firmwareStatus.textContent = "Bản dựng firmware đang chạy: #" + actualBuild;
         if (actualBuild === expectedBuild) {
-          otaResult.textContent = "Cập nhật thành công. Thiết bị đang chạy Firmware Build #" + actualBuild + ".";
+          otaResult.textContent = "Cập nhật thành công. Thiết bị đang chạy Firmware Bản dựng #" + actualBuild + ".";
           return;
         }
         if (attempt > 5 && actualBuild !== expectedBuild) {
-          otaResult.textContent = "Thiết bị hiện vẫn chạy Build #" + actualBuild +
+          otaResult.textContent = "Thiết bị hiện vẫn chạy Bản dựng #" + actualBuild +
             ". Firmware mới chưa được xác nhận; có thể thiết bị đã rollback.";
           return;
         }
@@ -314,12 +314,12 @@ async function waitForRunningBuild(expectedBuild) {
     } catch (_) {}
     await new Promise(resolve => setTimeout(resolve, 1000));
   }
-  otaResult.textContent = "Chưa đọc lại được phiên bản sau khởi động. Hãy tải lại trang để kiểm tra Build Number thực tế.";
+  otaResult.textContent = "Chưa đọc lại được phiên bản sau khi khởi động. Hãy tải lại trang để kiểm tra số bản dựng thực tế.";
 }
 
 updateFirmwareButton.addEventListener("click", async () => {
   const file = firmwareInput.files && firmwareInput.files[0];
-  if (!file) { otaResult.textContent = "Vui lòng chọn file BIN hoặc ZIP."; return; }
+  if (!file) { otaResult.textContent = "Vui lòng chọn tệp BIN hoặc ZIP."; return; }
   updateFirmwareButton.disabled = true;
   otaProgress.style.width = "0%";
   try {
@@ -331,21 +331,21 @@ updateFirmwareButton.addEventListener("click", async () => {
       firmware = extracted.blob;
       firmwareName = extracted.name;
     } else if (!/\.bin$/i.test(file.name)) {
-      throw new Error("Chỉ chấp nhận file .bin hoặc .zip.");
+      throw new Error("Chỉ chấp nhận tệp .bin hoặc .zip.");
     }
     if (firmware.size < 4096) throw new Error("Firmware quá nhỏ hoặc không hợp lệ.");
-    if (!otaMaxBytes) throw new Error("Không đọc được dung lượng OTA slot. Hãy tải lại trang.");
-    if (firmware.size > otaMaxBytes) throw new Error("Firmware vượt giới hạn slot OTA (" + formatBytes(otaMaxBytes) + ").");
-    otaResult.textContent = "Đang đọc Build Number trong firmware...";
+    if (!otaMaxBytes) throw new Error("Không đọc được dung lượng phân vùng OTA. Hãy tải lại trang.");
+    if (firmware.size > otaMaxBytes) throw new Error("Firmware vượt giới hạn phân vùng OTA (" + formatBytes(otaMaxBytes) + ").");
+    otaResult.textContent = "Đang đọc số bản dựng trong firmware...";
     const targetBuild = await readFirmwareBuild(firmware);
     otaFileInfo.textContent = firmwareName + " · " + formatBytes(firmware.size) +
-      " · Firmware Build dự kiến: #" + targetBuild;
+      " · Bản dựng firmware dự kiến: #" + targetBuild;
     const confirmText = "Cài đặt " + firmwareName + " (" + formatBytes(firmware.size) +
-      ")\nBuild hiện tại: #" + currentBuildNumber + "\nBuild mục tiêu: #" + targetBuild +
+      ")\nBản dựng hiện tại: #" + currentBuildNumber + "\nBản dựng mục tiêu: #" + targetBuild +
       "\nKhông tắt nguồn trong quá trình cập nhật. Tiếp tục?";
     if (!confirm(confirmText)) { updateFirmwareButton.disabled = false; return; }
 
-    otaResult.textContent = "Đang tải lên firmware lên thiết bị...";
+    otaResult.textContent = "Đang tải firmware lên thiết bị...";
     const data = await uploadOtaFirmware(firmware, firmwareName);
     otaProgress.style.width = "100%";
     otaResult.textContent = data.message || "ESP32 đã chấp nhận firmware.";
@@ -380,25 +380,25 @@ async function sendKeyRequest(method, body) {
 }
 saveButton.addEventListener("click", async () => {
   const apiKey = keyInput.value.trim();
-  if (!apiKey) { resultText.textContent = "Vui lòng nhập API Key."; return; }
+  if (!apiKey) { resultText.textContent = "Vui lòng nhập Gemini API Key."; return; }
   saveButton.disabled = true;
-  resultText.textContent = "Đang lưu...";
+  resultText.textContent = "Đang lưu API Key...";
   try {
     const data = await sendKeyRequest("POST", {api_key:apiKey});
     keyInput.value = "";
-    resultText.textContent = data.message || "Đã lưu API Key.";
+    resultText.textContent = data.message || "Đã lưu Gemini API Key.";
     await refreshStatus();
   } catch (error) {
     resultText.textContent = error.message;
   } finally { saveButton.disabled = false; }
 });
 removeButton.addEventListener("click", async () => {
-  if (!confirm("Xóa Gemini API Key đang lưu trên thiết bị?")) return;
+  if (!confirm("Bạn có chắc chắn muốn xóa Gemini API Key đã lưu trên thiết bị?")) return;
   removeButton.disabled = true;
-  resultText.textContent = "Đang xóa...";
+  resultText.textContent = "Đang xóa API Key...";
   try {
     const data = await sendKeyRequest("DELETE");
-    resultText.textContent = data.message || "Đã xóa API Key.";
+    resultText.textContent = data.message || "Đã xóa Gemini API Key.";
     await refreshStatus();
   } catch (error) {
     resultText.textContent = error.message;
