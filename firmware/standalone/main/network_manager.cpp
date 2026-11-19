@@ -470,38 +470,86 @@ esp_err_t RootHandler(httpd_req_t* request) {
         return httpd_resp_send(request, nullptr, 0);
     }
     const std::string page =
-        "<!doctype html><html lang=\"vi\"><meta name=\"viewport\" "
-        "content=\"width=device-width,initial-scale=1\"><meta charset=\"utf-8\">"
-        "<title>ChatAI TPIOS - Wi-Fi</title><body style=\"font:16px sans-serif;"
-        "max-width:480px;margin:40px auto;padding:0 18px\">"
-        "<h2>Thiết lập Wi-Fi ChatAI TPIOS</h2>"
-        "<p>Nhập tên và mật khẩu mạng Wi-Fi nhà anh.</p>"
-        "<form method=\"post\" action=\"/wifi\">"
-        "<input type=\"hidden\" name=\"token\" value=\"" + g_form_token + "\">"
-        "<label>Chọn mạng Wi-Fi</label><br><select id=\"ssid\" name=\"ssid\" required "
-        "style=\"box-sizing:border-box;width:100%;padding:12px;margin:8px 0\">"
-        "<option value=\"\">Nhấn Quét Wi-Fi để tìm mạng</option></select>"
-        "<button type=\"button\" id=\"scanWifi\" style=\"padding:12px 20px\">Quét Wi-Fi</button>"
-        "<label>Mật khẩu</label><br><input name=\"password\" type=\"password\" "
-        "maxlength=\"64\" style=\"box-sizing:border-box;width:100%;padding:12px;"
-        "margin:8px 0\"><button style=\"padding:12px 20px\">Lưu và kết nối</button>"
-        "</form><p id=\"scanStatus\">Đang tìm mạng Wi-Fi...</p>"
-        "<p><a href=\"/admin\">Mở Web Admin ChatAI</a></p>"
-        "<script>const list=document.getElementById('ssid');"
-        "const status=document.getElementById('scanStatus');"
-        "async function scanWifi(){status.textContent='Đang quét Wi-Fi...';"
-        "try{const r=await fetch('/api/wifi/scan',{cache:'no-store'});"
-        "if(!r.ok)throw new Error('Không quét được Wi-Fi');const d=await r.json();"
-        "const old=list.value;list.replaceChildren();"
-        "for(const n of d.networks){const o=document.createElement('option');"
-        "o.value=n.ssid;o.textContent=n.ssid+' ('+n.rssi+' dBm)';list.appendChild(o);}"
-        "if(!d.networks.length){const o=document.createElement('option');"
-        "o.value='';o.textContent='Không tìm thấy mạng Wi-Fi';list.appendChild(o);}"
-        "else if(d.networks.some(n=>n.ssid===old))list.value=old;"
-        "status.textContent='Tìm thấy '+d.networks.length+' mạng Wi-Fi.';"
-        "}catch(e){status.textContent=e.message;}}"
-        "document.getElementById('scanWifi').addEventListener('click',scanWifi);"
-        "scanWifi();</script></body></html>";
+        R"html(<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="color-scheme" content="dark">
+<title>ChatAI TPIOS · Cài đặt Wi-Fi</title>
+<style>
+:root{color-scheme:dark;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:#090914;color:#f4f1ff}
+*{box-sizing:border-box}
+body{margin:0;min-height:100vh;padding:30px 16px;background:radial-gradient(ellipse at 50% -10%,#38206a 0,transparent 48%),#0c0b19}
+main{max-width:460px;margin:0 auto}
+header{display:flex;align-items:center;gap:12px;margin:0 2px 22px}
+.mark{width:46px;height:46px;display:grid;place-items:center;border-radius:15px;background:linear-gradient(145deg,#9b5cff,#6034d6);font-size:23px}
+h1{font-size:20px;margin:0}
+.sub{font-size:13px;color:#aaa2c5;margin:5px 0 0}
+.card{padding:21px;border:1px solid #ffffff16;border-radius:21px;background:linear-gradient(145deg,#1b1930,#151426);box-shadow:0 16px 40px #0003}
+h2{font-size:16px;margin:0 0 7px}
+p{font-size:13px;line-height:1.55;color:#b9b1d1}
+label{display:block;font-size:13px;font-weight:650;margin:17px 0 8px}
+select,input{width:100%;padding:13px;border:1px solid #ffffff20;border-radius:12px;background:#0d0c19;color:#f5f1ff;font:inherit;font-size:14px}
+button{padding:12px 16px;border:0;border-radius:12px;background:linear-gradient(135deg,#9a5cff,#6739d9);color:white;font:inherit;font-size:13px;font-weight:700}
+button.secondary{background:#ffffff10;border:1px solid #ffffff1a}
+.actions{display:flex;gap:9px;flex-wrap:wrap;margin-top:12px}
+#scanStatus{font-size:12px;color:#c9baff;min-height:1.4em}
+a{color:#c4a5ff;text-decoration:none;font-size:13px}
+</style>
+</head>
+<body>
+<main>
+<header><div class="mark" aria-hidden="true">✦</div><div><h1>ChatAI TPIOS</h1><p class="sub">Thiết lập kết nối mạng Wi-Fi</p></div></header>
+<section class="card">
+<h2>Kết nối Wi-Fi nhà anh</h2>
+<p>Chọn mạng Wi-Fi, nhập mật khẩu rồi lưu để thiết bị kết nối Internet và khởi chạy Gemini Live.</p>
+<form method="post" action="/wifi">
+<input type="hidden" name="token" value=")html" + g_form_token + R"html(">
+<label for="ssid">Tên mạng Wi-Fi (SSID)</label>
+<select id="ssid" name="ssid" required><option value="">Đang tìm mạng Wi-Fi...</option></select>
+<div class="actions"><button type="button" class="secondary" id="scanWifi">Quét lại Wi-Fi</button></div>
+<label for="password">Mật khẩu Wi-Fi</label>
+<input id="password" name="password" type="password" maxlength="64" autocomplete="current-password" placeholder="Nhập mật khẩu mạng">
+<div class="actions"><button type="submit">Lưu và kết nối</button></div>
+</form>
+<p id="scanStatus" role="status" aria-live="polite">Đang quét các mạng Wi-Fi xung quanh...</p>
+<p><a href="/admin">Mở trang quản trị ChatAI TPIOS</a></p>
+</section>
+</main>
+<script>
+const list=document.getElementById("ssid");
+const status=document.getElementById("scanStatus");
+async function scanWifi(){
+  status.textContent="Đang quét Wi-Fi...";
+  try{
+    const response=await fetch("/api/wifi/scan",{cache:"no-store"});
+    if(!response.ok)throw new Error("Không quét được Wi-Fi (HTTP "+response.status+")");
+    const data=await response.json();
+    const previous=list.value;
+    list.replaceChildren();
+    for(const network of data.networks||[]){
+      const option=document.createElement("option");
+      option.value=network.ssid;
+      option.textContent=network.ssid+" ("+network.rssi+" dBm)";
+      list.appendChild(option);
+    }
+    if(!list.options.length){
+      const option=document.createElement("option");
+      option.value="";
+      option.textContent="Không tìm thấy mạng Wi-Fi";
+      list.appendChild(option);
+    }else if(Array.from(list.options).some(option=>option.value===previous)){
+      list.value=previous;
+    }
+    status.textContent="Tìm thấy "+(data.networks||[]).length+" mạng Wi-Fi.";
+  }catch(error){status.textContent=error.message;}
+}
+document.getElementById("scanWifi").addEventListener("click",scanWifi);
+scanWifi();
+</script>
+</body>
+</html>)html";
     httpd_resp_set_type(request, "text/html; charset=utf-8");
     return httpd_resp_send(request, page.c_str(), HTTPD_RESP_USE_STRLEN);
 }
