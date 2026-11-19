@@ -2,6 +2,7 @@
 #include "web_admin.h"
 #include "firmware_info.h"
 #include "display_manager.h"
+#include "diagnostic_manager.h"
 
 #include <atomic>
 #include <cerrno>
@@ -69,8 +70,14 @@ bool ProbeGeminiInternet() {
     esp_netif_ip_info_t ip_info{};
     if (esp_netif_get_ip_info(g_sta_netif, &ip_info) != ESP_OK ||
         ip_info.ip.addr == 0 || ip_info.gw.addr == 0) {
+        chatai::diagnostics::Add("NETWORK", "FAIL", "STA IP or gateway unavailable");
         return false;
     }
+    char network_detail[96]{};
+    std::snprintf(network_detail, sizeof(network_detail), "IP=%s gateway=%s",
+                  ip4addr_ntoa(reinterpret_cast<const ip4_addr_t*>(&ip_info.ip)),
+                  ip4addr_ntoa(reinterpret_cast<const ip4_addr_t*>(&ip_info.gw)));
+    chatai::diagnostics::Add("NETWORK", "OK", network_detail);
 
     addrinfo hints{};
     hints.ai_family = AF_INET;
@@ -78,7 +85,13 @@ bool ProbeGeminiInternet() {
     addrinfo* addresses = nullptr;
     const int lookup_result = getaddrinfo(
         "generativelanguage.googleapis.com", "443", &hints, &addresses);
-    if (lookup_result != 0 || addresses == nullptr) return false;
+    if (lookup_result != 0 || addresses == nullptr) {
+        char detail[96]{};
+        std::snprintf(detail, sizeof(detail), "getaddrinfo failed code=%d", lookup_result);
+        chatai::diagnostics::Add("DNS", "FAIL", detail);
+        return false;
+    }
+    chatai::diagnostics::Add("DNS", "OK", "generativelanguage.googleapis.com resolved");
 
     bool reachable = false;
     for (addrinfo* address = addresses; address != nullptr && !reachable;
@@ -117,6 +130,9 @@ bool ProbeGeminiInternet() {
     }
 
     freeaddrinfo(addresses);
+    chatai::diagnostics::Add("TCP_443", reachable ? "OK" : "FAIL",
+                             reachable ? "Google endpoint reachable on port 443" :
+                                         "TCP connection to Google port 443 failed");
     return reachable;
 }
 
@@ -133,8 +149,10 @@ void InternetCheckTask(void*) {
         if (available != previous) {
             if (available) {
                 ESP_LOGI(kTag, "Internet verified: Gemini DNS resolved and TCP port 443 reachable");
+                chatai::diagnostics::Add("INTERNET", "OK", "DNS and TCP 443 probe passed");
             } else {
                 ESP_LOGW(kTag, "Internet unavailable: Gemini DNS or TCP port 443 check failed");
+                chatai::diagnostics::Add("INTERNET", "FAIL", "DNS or TCP 443 probe failed");
             }
         }
         vTaskDelay(pdMS_TO_TICKS(available ? 10000 : 5000));
