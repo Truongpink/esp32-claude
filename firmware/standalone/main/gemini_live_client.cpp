@@ -41,6 +41,8 @@ struct AudioChunk {
 };
 
 std::atomic<bool> g_ready{false};
+std::atomic<bool> g_speaking{false};
+std::atomic<bool> g_error{false};
 std::atomic<bool> g_task_started{false};
 std::atomic<uint32_t> g_audio_epoch{0};
 esp_websocket_client_handle_t g_client = nullptr;
@@ -85,9 +87,7 @@ const char kSetupMessage[] =
     "}}";
 
 void ClearAudioQueue() {
-    if (g_audio_queue == nullptr) {
-        return;
-    }
+    if (g_audio_queue == nullptr) return;
     AudioChunk* chunk = nullptr;
     while (xQueueReceive(g_audio_queue, &chunk, 0) == pdTRUE) {
         std::free(chunk);
@@ -99,9 +99,7 @@ void QueueServerAudio(const cJSON* inline_data) {
     const cJSON* data = cJSON_GetObjectItemCaseSensitive(inline_data, "data");
     if (!cJSON_IsString(mime) || !cJSON_IsString(data) ||
         std::strncmp(mime->valuestring, "audio/pcm;rate=24000", 20) != 0 ||
-        data->valuestring == nullptr || g_audio_queue == nullptr) {
-        return;
-    }
+        data->valuestring == nullptr || g_audio_queue == nullptr) return;
 
     const size_t encoded_size = std::strlen(data->valuestring);
     if (encoded_size == 0 || encoded_size > 6000) {
@@ -117,12 +115,11 @@ void QueueServerAudio(const cJSON* inline_data) {
 
     size_t decoded_size = 0;
     const int result = mbedtls_base64_decode(
-        reinterpret_cast<unsigned char*>(chunk->samples),
-        sizeof(chunk->samples), &decoded_size,
-        reinterpret_cast<const unsigned char*>(data->valuestring), encoded_size);
+        reinterpret_cast<unsigned char*>(chunk->samples), sizeof(chunk->samples),
+        &decoded_size, reinterpret_cast<const unsigned char*>(data->valuestring),
+        encoded_size);
     if (result != 0 || decoded_size == 0 ||
-        decoded_size % sizeof(int16_t) != 0 ||
-        decoded_size > sizeof(chunk->samples)) {
+        decoded_size % sizeof(int16_t) != 0 || decoded_size > sizeof(chunk->samples)) {
         std::free(chunk);
         ESP_LOGW(kTag, "Discarded invalid Gemini PCM chunk");
         return;
@@ -133,6 +130,8 @@ void QueueServerAudio(const cJSON* inline_data) {
     if (xQueueSend(g_audio_queue, &chunk, 0) != pdTRUE) {
         std::free(chunk);
         ESP_LOGW(kTag, "Gemini playback queue full; dropping audio chunk");
+    } else {
+        g_speaking.store(true);
     }
 }
 
@@ -146,6 +145,7 @@ void HandleServerMessage(const std::string& message) {
     const cJSON* setup_complete = cJSON_GetObjectItemCaseSensitive(root, "setupComplete");
     if (cJSON_IsObject(setup_complete)) {
         g_ready.store(true);
+        g_error.store(false);
         ESP_LOGI(kTag, "Gemini Live setupComplete; audio session is ready");
     }
 
@@ -157,6 +157,7 @@ void HandleServerMessage(const std::string& message) {
         if (cJSON_IsTrue(interrupted)) {
             g_audio_epoch.fetch_add(1);
             ClearAudioQueue();
+            g_speaking.store(false);
             chatai::audio::EnableSpeaker(false);
             ESP_LOGI(kTag, "Gemini interrupted playback; queued audio cleared");
         }
@@ -171,15 +172,15 @@ void HandleServerMessage(const std::string& message) {
                 const cJSON* part = cJSON_GetArrayItem(parts, i);
                 const cJSON* inline_data = cJSON_IsObject(part)
                     ? cJSON_GetObjectItemCaseSensitive(part, "inlineData") : nullptr;
-                if (cJSON_IsObject(inline_data)) {
-                    QueueServerAudio(inline_data);
-                }
+                if (cJSON_IsObject(inline_data)) QueueServerAudio(inline_data);
             }
         }
     }
 
     if (cJSON_GetObjectItemCaseSensitive(root, "error") != nullptr) {
         g_ready.store(false);
+        g_speaking.store(false);
+        g_error.store(true);
         ESP_LOGE(kTag, "Gemini rejected or terminated the Live session");
     }
 
@@ -192,15 +193,17 @@ void WebSocketEventHandler(void*, esp_event_base_t, int32_t event_id, void* even
     switch (event_id) {
         case WEBSOCKET_EVENT_CONNECTED: {
             g_ready.store(false);
+            g_speaking.store(false);
+            g_error.store(false);
             g_incoming_message.clear();
             g_receiving_text = false;
             ESP_LOGI(kTag, "Gemini Live WebSocket connected; sending setup");
 
             std::lock_guard<std::mutex> lock(g_send_mutex);
             const int sent = esp_websocket_client_send_text(
-                g_client, kSetupMessage, sizeof(kSetupMessage) - 1,
-                pdMS_TO_TICKS(5000));
+                g_client, kSetupMessage, sizeof(kSetupMessage) - 1, pdMS_TO_TICKS(5000));
             if (sent != static_cast<int>(sizeof(kSetupMessage) - 1)) {
+                g_error.store(true);
                 ESP_LOGE(kTag, "Could not send Gemini Live setup message");
             }
             break;
@@ -210,9 +213,7 @@ void WebSocketEventHandler(void*, esp_event_base_t, int32_t event_id, void* even
             if (event == nullptr || event->data_ptr == nullptr ||
                 event->data_len <= 0 || event->payload_len <= 0 ||
                 event->payload_len > static_cast<int>(kMaxIncomingMessage) ||
-                event->payload_offset < 0) {
-                break;
-            }
+                event->payload_offset < 0) break;
 
             if (event->payload_offset == 0) {
                 g_incoming_message.clear();
@@ -228,8 +229,7 @@ void WebSocketEventHandler(void*, esp_event_base_t, int32_t event_id, void* even
                 break;
             }
 
-            g_incoming_message.append(event->data_ptr,
-                                      static_cast<size_t>(event->data_len));
+            g_incoming_message.append(event->data_ptr, static_cast<size_t>(event->data_len));
             if (event->fin) {
                 HandleServerMessage(g_incoming_message);
                 g_incoming_message.clear();
@@ -239,6 +239,8 @@ void WebSocketEventHandler(void*, esp_event_base_t, int32_t event_id, void* even
 
         case WEBSOCKET_EVENT_ERROR:
             g_ready.store(false);
+            g_speaking.store(false);
+            g_error.store(true);
             if (event != nullptr) {
                 ESP_LOGE(kTag,
                          "WebSocket error: tls=%s tls_stack=%d cert_flags=0x%x "
@@ -255,6 +257,8 @@ void WebSocketEventHandler(void*, esp_event_base_t, int32_t event_id, void* even
 
         case WEBSOCKET_EVENT_DISCONNECTED:
             g_ready.store(false);
+            g_speaking.store(false);
+            g_error.store(true);
             g_audio_epoch.fetch_add(1);
             ClearAudioQueue();
             ESP_LOGW(kTag, "Gemini Live WebSocket disconnected");
@@ -262,6 +266,8 @@ void WebSocketEventHandler(void*, esp_event_base_t, int32_t event_id, void* even
 
         case WEBSOCKET_EVENT_CLOSED:
             g_ready.store(false);
+            g_speaking.store(false);
+            g_error.store(true);
             g_audio_epoch.fetch_add(1);
             ClearAudioQueue();
             ESP_LOGW(kTag, "Gemini Live WebSocket closed; code=%d",
@@ -310,12 +316,9 @@ void MicrophoneWorker(void*) {
         size_t samples_read = 0;
         const esp_err_t read_result = chatai::audio::ReadMicrophonePcm16(
             pcm, kMicChunkSamples, &samples_read, 100);
-        if (read_result == ESP_ERR_TIMEOUT) {
-            continue;
-        }
+        if (read_result == ESP_ERR_TIMEOUT) continue;
         if (read_result != ESP_OK || samples_read == 0) {
-            ESP_LOGW(kTag, "Microphone read failed: %s",
-                     esp_err_to_name(read_result));
+            ESP_LOGW(kTag, "Microphone read failed: %s", esp_err_to_name(read_result));
             chatai::audio::EnableMicrophone(false);
             microphone_enabled = false;
             vTaskDelay(pdMS_TO_TICKS(250));
@@ -325,8 +328,7 @@ void MicrophoneWorker(void*) {
         size_t encoded_size = 0;
         const int encode_result = mbedtls_base64_encode(
             encoded, sizeof(encoded), &encoded_size,
-            reinterpret_cast<const unsigned char*>(pcm),
-            samples_read * sizeof(int16_t));
+            reinterpret_cast<const unsigned char*>(pcm), samples_read * sizeof(int16_t));
         if (encode_result != 0 || encoded_size >= sizeof(encoded)) {
             ESP_LOGE(kTag, "Could not encode microphone PCM chunk");
             continue;
@@ -348,9 +350,7 @@ void MicrophoneWorker(void*) {
             esp_websocket_client_is_connected(g_client)) {
             const int sent = esp_websocket_client_send_text(
                 g_client, message, message_size, pdMS_TO_TICKS(1000));
-            if (sent != message_size) {
-                ESP_LOGW(kTag, "Microphone audio send was incomplete");
-            }
+            if (sent != message_size) ESP_LOGW(kTag, "Microphone audio send was incomplete");
         }
     }
 }
@@ -366,13 +366,12 @@ void SpeakerWorker(void*) {
                 uxQueueMessagesWaiting(g_audio_queue) == 0) {
                 chatai::audio::EnableSpeaker(false);
                 speaker_enabled = false;
+                g_speaking.store(false);
             }
             continue;
         }
 
-        if (chunk == nullptr) {
-            continue;
-        }
+        if (chunk == nullptr) continue;
         if (chunk->epoch != g_audio_epoch.load() || !g_ready.load()) {
             std::free(chunk);
             chunk = nullptr;
@@ -382,8 +381,8 @@ void SpeakerWorker(void*) {
         if (!speaker_enabled) {
             const esp_err_t enable_result = chatai::audio::EnableSpeaker(true);
             if (enable_result != ESP_OK) {
-                ESP_LOGE(kTag, "Could not enable speaker: %s",
-                         esp_err_to_name(enable_result));
+                g_error.store(true);
+                ESP_LOGE(kTag, "Could not enable speaker: %s", esp_err_to_name(enable_result));
                 std::free(chunk);
                 chunk = nullptr;
                 continue;
@@ -391,12 +390,12 @@ void SpeakerWorker(void*) {
             speaker_enabled = true;
         }
 
+        g_speaking.store(true);
         size_t samples_written = 0;
         const esp_err_t write_result = chatai::audio::WriteSpeakerPcm16(
             chunk->samples, chunk->sample_count, &samples_written, 100);
         if (write_result != ESP_OK || samples_written != chunk->sample_count) {
-            ESP_LOGW(kTag, "Speaker write incomplete: %s",
-                     esp_err_to_name(write_result));
+            ESP_LOGW(kTag, "Speaker write incomplete: %s", esp_err_to_name(write_result));
         }
         std::free(chunk);
         chunk = nullptr;
@@ -444,6 +443,7 @@ void GeminiWorker(void*) {
 
         esp_websocket_client_handle_t client = esp_websocket_client_init(&config);
         if (client == nullptr) {
+            g_error.store(true);
             ESP_LOGE(kTag, "Could not initialize Gemini Live WebSocket client");
             vTaskDelay(pdMS_TO_TICKS(kRetryDelayMs));
             continue;
@@ -452,11 +452,10 @@ void GeminiWorker(void*) {
         g_client = client;
         esp_err_t result = esp_websocket_register_events(
             client, WEBSOCKET_EVENT_ANY, WebSocketEventHandler, nullptr);
-        if (result == ESP_OK) {
-            result = esp_websocket_client_start(client);
-        }
+        if (result == ESP_OK) result = esp_websocket_client_start(client);
 
         if (result != ESP_OK) {
+            g_error.store(true);
             ESP_LOGE(kTag, "Could not start Gemini Live WebSocket: %s",
                      esp_err_to_name(result));
             g_client = nullptr;
@@ -475,9 +474,7 @@ namespace chatai::gemini {
 
 esp_err_t Initialize() {
     bool expected = false;
-    if (!g_task_started.compare_exchange_strong(expected, true)) {
-        return ESP_OK;
-    }
+    if (!g_task_started.compare_exchange_strong(expected, true)) return ESP_OK;
 
     g_audio_queue = xQueueCreate(kAudioQueueLength, sizeof(AudioChunk*));
     if (g_audio_queue == nullptr) {
@@ -489,12 +486,10 @@ esp_err_t Initialize() {
     BaseType_t result = xTaskCreate(
         SpeakerWorker, "chatai_spk", 4096, nullptr, 5, nullptr);
     if (result == pdPASS) {
-        result = xTaskCreate(
-            MicrophoneWorker, "chatai_mic", 6144, nullptr, 5, nullptr);
+        result = xTaskCreate(MicrophoneWorker, "chatai_mic", 6144, nullptr, 5, nullptr);
     }
     if (result == pdPASS) {
-        result = xTaskCreate(
-            GeminiWorker, "chatai_gemini", 6144, nullptr, 5, nullptr);
+        result = xTaskCreate(GeminiWorker, "chatai_gemini", 6144, nullptr, 5, nullptr);
     }
     if (result != pdPASS) {
         g_task_started.store(false);
@@ -508,6 +503,14 @@ esp_err_t Initialize() {
 
 bool IsReady() {
     return g_ready.load();
+}
+
+bool IsSpeaking() {
+    return g_speaking.load();
+}
+
+bool HasError() {
+    return g_error.load();
 }
 
 }  // namespace chatai::gemini

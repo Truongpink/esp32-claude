@@ -91,6 +91,7 @@ bool InitializePlatform() {
     }
 
     const esp_err_t audio_result = chatai::audio::Initialize();
+    chatai::display::SetAudioReady(audio_result == ESP_OK);
     if (audio_result != ESP_OK) {
         ESP_LOGW(kTag, "Standalone I2S audio unavailable: %s",
                  esp_err_to_name(audio_result));

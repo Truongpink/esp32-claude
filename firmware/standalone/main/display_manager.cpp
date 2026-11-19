@@ -1,15 +1,21 @@
 #include "display_manager.h"
+
 #include <array>
+#include <atomic>
 #include <cctype>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
 #include <string>
+
 #include <driver/gpio.h>
 #include <driver/i2c_master.h>
 #include <esp_log.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
+
+#include "gemini_live_client.h"
+#include "gemini_settings.h"
 #include "network_manager.h"
 
 namespace {
@@ -19,9 +25,13 @@ constexpr gpio_num_t kSclPin = GPIO_NUM_42;
 constexpr uint16_t kAddress = 0x3C;
 constexpr size_t kWidth = 128;
 constexpr size_t kPages = 8;
+constexpr TickType_t kBootLogoDuration = pdMS_TO_TICKS(1800);
+
 i2c_master_bus_handle_t g_bus = nullptr;
 i2c_master_dev_handle_t g_display = nullptr;
 bool g_initialized = false;
+std::atomic<bool> g_audio_ready{false};
+TickType_t g_boot_screen_until = 0;
 std::array<uint8_t, kWidth * kPages> g_frame{};
 
 std::array<uint8_t, 5> Glyph(char value) {
@@ -61,7 +71,7 @@ std::array<uint8_t, 5> Glyph(char value) {
         case '6': return {0x3E,0x49,0x49,0x49,0x32};
         case '7': return {0x01,0x71,0x09,0x05,0x03};
         case '8': return {0x36,0x49,0x49,0x49,0x36};
-        case '9': return {0x26,0x49,0x49,0x49,0x3E};
+        case '9': return {0x26,0x49,0x49,0x45,0x3E};
         case ':': return {0x00,0x36,0x36,0x00,0x00};
         case '.': return {0x00,0x60,0x60,0x00,0x00};
         case '-': return {0x08,0x08,0x08,0x08,0x08};
@@ -100,37 +110,65 @@ esp_err_t FlushFrame() {
 
 void RenderStatus() {
     g_frame.fill(0);
-    DrawText(0, 0, "CHATAI TPIOS");
-    if (chatai::network::NetworkManager::IsProvisioningActive()) {
+
+    if (static_cast<int32_t>(g_boot_screen_until - xTaskGetTickCount()) > 0) {
+        DrawText(28, 16, "CHATAI");
+        DrawText(34, 40, "TPIOS");
+    } else if (chatai::network::NetworkManager::IsProvisioningActive()) {
+        DrawText(0, 0, "CHATAI TPIOS");
         DrawText(0, 16, "WIFI SETUP");
         DrawText(0, 24, "SSID:" +
             chatai::network::NetworkManager::GetProvisioningSsid());
         DrawText(0, 40, "OPEN WIFI");
         DrawText(0, 52, "192.168.4.1");
-    } else if (chatai::network::NetworkManager::IsConnected()) {
-        DrawText(0, 16, "WIFI CONNECTED");
-        DrawText(0, 32, "IP:" +
-            chatai::network::NetworkManager::GetIpAddress());
-        DrawText(0, 48, "NETWORK READY");
+    } else if (!chatai::network::NetworkManager::IsConnected()) {
+        DrawText(0, 0, "CHATAI TPIOS");
+        DrawText(0, 24, "WIFI CONNECTING");
+        DrawText(0, 40, "PLEASE WAIT");
     } else {
-        DrawText(0, 16, "WIFI CONNECTING");
-        DrawText(0, 32, "PLEASE WAIT");
+        DrawText(0, 0, "CHATAI TPIOS");
+        DrawText(0, 16, "WIFI CONNECTED");
+
+        if (!chatai::settings::HasGeminiApiKey()) {
+            DrawText(0, 32, "SET GEMINI API KEY");
+            DrawText(0, 48, "CHATAI.LOCAL");
+        } else if (!g_audio_ready.load()) {
+            DrawText(0, 32, "AUDIO ERROR");
+            DrawText(0, 48, "CHECK I2S");
+        } else if (chatai::gemini::HasError()) {
+            DrawText(0, 32, "GEMINI ERROR");
+            DrawText(0, 48, "RECONNECTING");
+        } else if (!chatai::gemini::IsReady()) {
+            DrawText(0, 32, "GEMINI CONNECT");
+            DrawText(0, 48, "PLEASE WAIT");
+        } else if (chatai::gemini::IsSpeaking()) {
+            DrawText(0, 32, "GEMINI SPEAKING");
+            DrawText(0, 48, "CHAT ACTIVE");
+        } else {
+            DrawText(0, 32, "CHAT READY");
+            DrawText(0, 48, "LISTENING");
+        }
     }
+
     const esp_err_t result = FlushFrame();
-    if (result != ESP_OK) ESP_LOGW(kTag, "OLED refresh failed: %s", esp_err_to_name(result));
+    if (result != ESP_OK) {
+        ESP_LOGW(kTag, "OLED refresh failed: %s", esp_err_to_name(result));
+    }
 }
 
 void DisplayTask(void*) {
     while (true) {
         RenderStatus();
-        vTaskDelay(pdMS_TO_TICKS(1000));
+        vTaskDelay(pdMS_TO_TICKS(250));
     }
 }
 }  // namespace
 
 namespace chatai::display {
+
 esp_err_t Initialize() {
     if (g_initialized) return ESP_OK;
+
     i2c_master_bus_config_t bus_config{};
     bus_config.i2c_port = I2C_NUM_0;
     bus_config.sda_io_num = kSdaPin;
@@ -157,6 +195,7 @@ esp_err_t Initialize() {
     result = i2c_master_transmit(g_display, initialization, sizeof(initialization), 250);
     if (result != ESP_OK) return result;
 
+    g_boot_screen_until = xTaskGetTickCount() + kBootLogoDuration;
     g_initialized = true;
     if (xTaskCreate(DisplayTask, "chatai_oled", 4096, nullptr, 3, nullptr) != pdPASS) {
         g_initialized = false;
@@ -165,4 +204,9 @@ esp_err_t Initialize() {
     ESP_LOGI(kTag, "Standalone SSD1306 initialized on SDA=%d SCL=%d", kSdaPin, kSclPin);
     return ESP_OK;
 }
+
+void SetAudioReady(bool ready) {
+    g_audio_ready.store(ready);
+}
+
 }  // namespace chatai::display
