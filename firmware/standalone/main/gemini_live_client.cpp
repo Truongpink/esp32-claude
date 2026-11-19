@@ -25,6 +25,7 @@
 #include "gemini_settings.h"
 #include "network_manager.h"
 #include "diagnostic_manager.h"
+#include "display_manager.h"
 
 namespace {
 constexpr char kTag[] = "ChatAI-Gemini";
@@ -54,6 +55,7 @@ std::atomic<bool> g_push_to_talk{false};
 std::atomic<bool> g_restart_requested{false};
 bool g_sntp_initialized = false;
 std::atomic<uint32_t> g_audio_epoch{0};
+std::atomic<bool> g_audio_response_reported{false};
 esp_websocket_client_handle_t g_client = nullptr;
 QueueHandle_t g_audio_queue = nullptr;
 std::string g_incoming_message;
@@ -179,6 +181,8 @@ void QueueServerAudio(const cJSON* inline_data) {
         std::free(chunk);
         ESP_LOGW(kTag, "Gemini playback queue full; dropping audio chunk");
     } else {
+        if (!g_audio_response_reported.exchange(true))
+            chatai::diagnostics::Add("AUDIO_OUT", "OK", "Gemini PCM16 24000 Hz response received");
         g_speaking.store(true);
     }
 }
@@ -251,6 +255,7 @@ void HandleServerMessage(const std::string& message) {
                           status_length, status->valuestring,
                           message_length, message_text->valuestring);
             chatai::diagnostics::Add("GEMINI_API", "FAIL", detail);
+            chatai::display::Notify("GEMINI API", "Loi phan hoi", 4000);
         } else {
             ESP_LOGE(kTag, "Gemini rejected or terminated the Live session");
             chatai::diagnostics::Add("GEMINI_API", "FAIL", "error response without status/message");
@@ -281,10 +286,14 @@ void WebSocketEventHandler(void*, esp_event_base_t, int32_t event_id, void* even
                 ? esp_websocket_client_send_text(
                     g_client, kSetupMessage, sizeof(kSetupMessage) - 1, pdMS_TO_TICKS(5000))
                 : -1;
+            if (sent == static_cast<int>(sizeof(kSetupMessage) - 1)) {
+                chatai::diagnostics::Add("SETUP", "INFO", "setup message sent; waiting for setupComplete");
+            }
             if (sent != static_cast<int>(sizeof(kSetupMessage) - 1)) {
                 g_error.store(true);
                 ESP_LOGE(kTag, "Could not send Gemini Live setup message");
                 chatai::diagnostics::Add("SETUP", "FAIL", "WebSocket send setup failed");
+                chatai::display::Notify("GEMINI", "Loi gui setup", 4000);
             }
             break;
         }
@@ -324,6 +333,7 @@ void WebSocketEventHandler(void*, esp_event_base_t, int32_t event_id, void* even
             g_error.store(true);
             if (event != nullptr) {
                 chatai::diagnostics::Add("WS", "FAIL", "transport event reported");
+                chatai::display::Notify("GEMINI", "Loi ket noi WSS", 4000);
                 if (event->error_handle.esp_tls_last_esp_err != ESP_OK ||
                     event->error_handle.esp_tls_stack_err != 0 ||
                     event->error_handle.esp_tls_cert_verify_flags != 0) {
@@ -362,6 +372,7 @@ void WebSocketEventHandler(void*, esp_event_base_t, int32_t event_id, void* even
             ClearAudioQueue();
             ESP_LOGW(kTag, "Gemini Live WebSocket disconnected");
             chatai::diagnostics::Add("WS", "FAIL", "disconnected");
+            chatai::display::Notify("GEMINI", "Mat ket noi WSS", 4000);
             break;
 
         case WEBSOCKET_EVENT_CLOSED:
@@ -566,6 +577,8 @@ void GeminiWorker(void*) {
                     g_ready.store(false);
                     g_error.store(true);
                     ESP_LOGE(kTag, "Gemini Live did not send setupComplete within 20 seconds");
+                    chatai::diagnostics::Add("SETUP", "FAIL", "setupComplete timeout after 20 seconds");
+                    chatai::display::Notify("GEMINI", "Qua han setup", 4000);
                     esp_websocket_client_handle_t client = nullptr;
                     {
                         std::lock_guard<std::mutex> lock(g_send_mutex);
@@ -658,6 +671,8 @@ void GeminiWorker(void*) {
         }
 
         ESP_LOGI(kTag, "Gemini Live connection started; waiting for setupComplete");
+        chatai::diagnostics::Add("MODEL", "INFO", "models/gemini-3.8-live; response modality AUDIO");
+        chatai::diagnostics::Add("WS", "INFO", "client start accepted; waiting for handshake");
         chatai::diagnostics::Add("WS", "INFO", "client start accepted; waiting for handshake");
     }
 }
