@@ -6,6 +6,12 @@
 #include <cstring>
 #include <string>
 #include <utility>
+#include <vector>
+
+#include <freertos/FreeRTOS.h>
+#include <freertos/task.h>
+#include <lwip/inet.h>
+#include <lwip/sockets.h>
 
 #include <esp_event.h>
 #include <esp_http_server.h>
@@ -37,6 +43,7 @@ std::atomic<bool> g_connected{false};
 std::atomic<bool> g_provisioning_started{false};
 std::string g_provisioning_ssid;
 std::string g_form_token;
+bool g_dns_started = false;
 
 esp_err_t SaveCredentials(const std::string& ssid, const std::string& password);
 
@@ -91,6 +98,31 @@ bool LoadCredentials(std::string& ssid, std::string& password) {
         return true;
     }
     return false;
+}
+
+
+esp_err_t EraseCredentialNamespace(const char* name_space) {
+    nvs_handle_t handle;
+    esp_err_t result = nvs_open(name_space, NVS_READWRITE, &handle);
+    if (result == ESP_ERR_NVS_NOT_FOUND) return ESP_OK;
+    if (result != ESP_OK) return result;
+    bool changed = false;
+    for (unsigned index = 0; index <= 9; ++index) {
+        const std::string suffix = index == 0 ? "" : std::to_string(index);
+        const std::string ssid_key = "ssid" + suffix;
+        const std::string password_key = "password" + suffix;
+        for (const char* key : {ssid_key.c_str(), password_key.c_str()}) {
+            result = nvs_erase_key(handle, key);
+            if (result == ESP_OK) changed = true;
+            else if (result != ESP_ERR_NVS_NOT_FOUND) {
+                nvs_close(handle);
+                return result;
+            }
+        }
+    }
+    if (changed) result = nvs_commit(handle);
+    nvs_close(handle);
+    return result;
 }
 
 esp_err_t SaveCredentials(const std::string& ssid, const std::string& password) {
@@ -170,6 +202,138 @@ esp_err_t ConnectFromForm(const std::string& body) {
     return chatai::network::NetworkManager::Connect(ssid, password);
 }
 
+std::string JsonEscape(const uint8_t* value, size_t length) {
+    constexpr char hex[] = "0123456789abcdef";
+    std::string escaped;
+    for (size_t i = 0; i < length; ++i) {
+        const unsigned char c = value[i];
+        if (c == '"' || c == '\\') {
+            escaped.push_back('\\');
+            escaped.push_back(static_cast<char>(c));
+        } else if (c < 0x20) {
+            escaped += "\\u00";
+            escaped.push_back(hex[c >> 4]);
+            escaped.push_back(hex[c & 0x0f]);
+        } else {
+            escaped.push_back(static_cast<char>(c));
+        }
+    }
+    return escaped;
+}
+
+void DnsServerTask(void* argument) {
+    const int socket_fd = static_cast<int>(reinterpret_cast<intptr_t>(argument));
+    uint8_t query[512]{};
+    uint8_t response[528]{};
+    while (true) {
+        sockaddr_in client{};
+        socklen_t client_length = sizeof(client);
+        const int received = recvfrom(socket_fd, query, sizeof(query), 0,
+                                      reinterpret_cast<sockaddr*>(&client), &client_length);
+        if (received < 17) continue;
+        size_t question_end = 12;
+        bool valid_name = false;
+        while (question_end < static_cast<size_t>(received)) {
+            const uint8_t label_length = query[question_end];
+            if (label_length == 0) {
+                ++question_end;
+                valid_name = true;
+                break;
+            }
+            if ((label_length & 0xc0) != 0 || label_length > 63 ||
+                question_end + 1 + label_length >= static_cast<size_t>(received)) break;
+            question_end += 1 + label_length;
+        }
+        if (!valid_name || question_end + 4 > static_cast<size_t>(received)) continue;
+        const uint16_t query_type =
+            (static_cast<uint16_t>(query[question_end]) << 8) | query[question_end + 1];
+        const uint16_t query_class =
+            (static_cast<uint16_t>(query[question_end + 2]) << 8) | query[question_end + 3];
+        const bool answer_a = query_type == 1 && query_class == 1;
+        const size_t question_size = question_end + 4;
+        std::memcpy(response, query, question_size);
+        response[2] = static_cast<uint8_t>(0x80 | (query[2] & 0x01));
+        response[3] = 0x80;
+        response[6] = 0;
+        response[7] = answer_a ? 1 : 0;
+        response[8] = response[9] = response[10] = response[11] = 0;
+        size_t response_size = question_size;
+        if (answer_a) {
+            const uint8_t answer[] = {
+                0xc0, 0x0c, 0x00, 0x01, 0x00, 0x01,
+                0x00, 0x00, 0x00, 0x3c, 0x00, 0x04,
+                192, 168, 4, 1
+            };
+            std::memcpy(response + response_size, answer, sizeof(answer));
+            response_size += sizeof(answer);
+        }
+        sendto(socket_fd, response, response_size, 0,
+               reinterpret_cast<sockaddr*>(&client), client_length);
+    }
+}
+
+esp_err_t StartDnsServer() {
+    if (g_dns_started) return ESP_OK;
+    const int socket_fd = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+    if (socket_fd < 0) return ESP_FAIL;
+    sockaddr_in address{};
+    address.sin_family = AF_INET;
+    address.sin_port = htons(53);
+    address.sin_addr.s_addr = htonl(INADDR_ANY);
+    if (bind(socket_fd, reinterpret_cast<sockaddr*>(&address), sizeof(address)) != 0) {
+        close(socket_fd);
+        return ESP_FAIL;
+    }
+    timeval timeout{};
+    timeout.tv_sec = 1;
+    setsockopt(socket_fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
+    if (xTaskCreate(DnsServerTask, "chatai_dns", 3072,
+                    reinterpret_cast<void*>(static_cast<intptr_t>(socket_fd)),
+                    3, nullptr) != pdPASS) {
+        close(socket_fd);
+        return ESP_ERR_NO_MEM;
+    }
+    g_dns_started = true;
+    ESP_LOGI(kTag, "Captive portal DNS server listening on UDP port 53");
+    return ESP_OK;
+}
+
+esp_err_t WifiScanHandler(httpd_req_t* request) {
+    if (!g_provisioning_started.load()) {
+        httpd_resp_set_status(request, "503 Service Unavailable");
+        return httpd_resp_sendstr(request, "{\"error\":\"Chế độ cấu hình Wi-Fi không hoạt động\"}");
+    }
+    wifi_scan_config_t scan_config{};
+    scan_config.show_hidden = false;
+    esp_err_t result = esp_wifi_scan_start(&scan_config, true);
+    if (result != ESP_OK) {
+        httpd_resp_set_status(request, "503 Service Unavailable");
+        return httpd_resp_sendstr(request, "{\"error\":\"Không thể quét Wi-Fi lúc này\"}");
+    }
+    uint16_t count = 0;
+    result = esp_wifi_scan_get_ap_num(&count);
+    if (result != ESP_OK) return ESP_FAIL;
+    if (count > 40) count = 40;
+    std::vector<wifi_ap_record_t> records(count);
+    if (count > 0) {
+        result = esp_wifi_scan_get_ap_records(&count, records.data());
+        if (result != ESP_OK) return ESP_FAIL;
+    }
+    std::string body = "{\"networks\":[";
+    for (uint16_t i = 0; i < count; ++i) {
+        if (i != 0) body.push_back(',');
+        const size_t length = strnlen(
+            reinterpret_cast<const char*>(records[i].ssid), sizeof(records[i].ssid));
+        body += "{\"ssid\":\"" + JsonEscape(records[i].ssid, length) +
+                "\",\"rssi\":" + std::to_string(records[i].rssi) +
+                ",\"auth\":" + std::to_string(records[i].authmode) + "}";
+    }
+    body += "]}";
+    httpd_resp_set_type(request, "application/json; charset=utf-8");
+    httpd_resp_set_hdr(request, "Cache-Control", "no-store");
+    return httpd_resp_send(request, body.c_str(), body.size());
+}
+
 esp_err_t RootHandler(httpd_req_t* request) {
     if (!g_provisioning_started.load()) {
         httpd_resp_set_status(request, "302 Found");
@@ -185,12 +349,30 @@ esp_err_t RootHandler(httpd_req_t* request) {
         "<p>Nhập tên và mật khẩu mạng Wi-Fi nhà anh.</p>"
         "<form method=\"post\" action=\"/wifi\">"
         "<input type=\"hidden\" name=\"token\" value=\"" + g_form_token + "\">"
-        "<label>Tên Wi-Fi (SSID)</label><br><input name=\"ssid\" maxlength=\"32\" "
-        "required style=\"box-sizing:border-box;width:100%;padding:12px;margin:8px 0\">"
+        "<label>Chọn mạng Wi-Fi</label><br><select id=\"ssid\" name=\"ssid\" required "
+        "style=\"box-sizing:border-box;width:100%;padding:12px;margin:8px 0\">"
+        "<option value=\"\">Nhấn Quét Wi-Fi để tìm mạng</option></select>"
+        "<button type=\"button\" id=\"scanWifi\" style=\"padding:12px 20px\">Quét Wi-Fi</button>"
         "<label>Mật khẩu</label><br><input name=\"password\" type=\"password\" "
         "maxlength=\"64\" style=\"box-sizing:border-box;width:100%;padding:12px;"
         "margin:8px 0\"><button style=\"padding:12px 20px\">Lưu và kết nối</button>"
-        "</form><p><a href=\"/admin\">Mở Web Admin ChatAI</a></p></body></html>";
+        "</form><p id=\"scanStatus\">Đang tìm mạng Wi-Fi...</p>"
+        "<p><a href=\"/admin\">Mở Web Admin ChatAI</a></p>"
+        "<script>const list=document.getElementById('ssid');"
+        "const status=document.getElementById('scanStatus');"
+        "async function scanWifi(){status.textContent='Đang quét Wi-Fi...';"
+        "try{const r=await fetch('/api/wifi/scan',{cache:'no-store'});"
+        "if(!r.ok)throw new Error('Không quét được Wi-Fi');const d=await r.json();"
+        "const old=list.value;list.replaceChildren();"
+        "for(const n of d.networks){const o=document.createElement('option');"
+        "o.value=n.ssid;o.textContent=n.ssid+' ('+n.rssi+' dBm)';list.appendChild(o);}"
+        "if(!d.networks.length){const o=document.createElement('option');"
+        "o.value='';o.textContent='Không tìm thấy mạng Wi-Fi';list.appendChild(o);}"
+        "else if(d.networks.some(n=>n.ssid===old))list.value=old;"
+        "status.textContent='Tìm thấy '+d.networks.length+' mạng Wi-Fi.';"
+        "}catch(e){status.textContent=e.message;}}"
+        "document.getElementById('scanWifi').addEventListener('click',scanWifi);"
+        "scanWifi();</script></body></html>";
     httpd_resp_set_type(request, "text/html; charset=utf-8");
     return httpd_resp_send(request, page.c_str(), HTTPD_RESP_USE_STRLEN);
 }
@@ -229,8 +411,9 @@ esp_err_t WifiPostHandler(httpd_req_t* request) {
 esp_err_t StartHttpServer() {
     if (g_http_server != nullptr) return ESP_OK;
     httpd_config_t config = HTTPD_DEFAULT_CONFIG();
-    config.max_uri_handlers = 8;
+    config.max_uri_handlers = 10;
     config.lru_purge_enable = true;
+    config.uri_match_fn = httpd_uri_match_wildcard;
     esp_err_t result = httpd_start(&g_http_server, &config);
     if (result != ESP_OK) return result;
 
@@ -244,9 +427,21 @@ esp_err_t StartHttpServer() {
     wifi_uri.method = HTTP_POST;
     wifi_uri.handler = WifiPostHandler;
 
+    httpd_uri_t wifi_scan_uri{};
+    wifi_scan_uri.uri = "/api/wifi/scan";
+    wifi_scan_uri.method = HTTP_GET;
+    wifi_scan_uri.handler = WifiScanHandler;
+
+    httpd_uri_t captive_uri{};
+    captive_uri.uri = "/*";
+    captive_uri.method = HTTP_GET;
+    captive_uri.handler = RootHandler;
+
     result = httpd_register_uri_handler(g_http_server, &root_uri);
     if (result == ESP_OK) result = httpd_register_uri_handler(g_http_server, &wifi_uri);
+    if (result == ESP_OK) result = httpd_register_uri_handler(g_http_server, &wifi_scan_uri);
     if (result == ESP_OK) result = chatai::web_admin::RegisterRoutes(g_http_server, g_form_token);
+    if (result == ESP_OK) result = httpd_register_uri_handler(g_http_server, &captive_uri);
     if (result != ESP_OK) {
         httpd_stop(g_http_server);
         g_http_server = nullptr;
@@ -288,6 +483,7 @@ esp_err_t StartProvisioning() {
 
     result = esp_wifi_set_mode(WIFI_MODE_APSTA);
     if (result == ESP_OK) result = esp_wifi_set_config(WIFI_IF_AP, &ap_config);
+    if (result == ESP_OK) result = StartDnsServer();
     if (result != ESP_OK) {
         esp_wifi_set_mode(WIFI_MODE_STA);
         g_provisioning_started.store(false);
@@ -347,6 +543,12 @@ void EventHandler(void*, esp_event_base_t event_base, int32_t event_id, void* ev
 
 namespace chatai::network {
 
+esp_err_t NetworkManager::ClearSavedCredentials() {
+    esp_err_t result = EraseCredentialNamespace(kNvsNamespace);
+    if (result == ESP_OK) result = EraseCredentialNamespace("wifi");
+    return result;
+}
+
 esp_err_t NetworkManager::Initialize() {
     if (g_initialized) return ESP_OK;
 
@@ -357,6 +559,9 @@ esp_err_t NetworkManager::Initialize() {
 
     wifi_init_config_t wifi_init_config = WIFI_INIT_CONFIG_DEFAULT();
     esp_err_t result = esp_wifi_init(&wifi_init_config);
+    if (result != ESP_OK) return result;
+
+    result = esp_wifi_set_storage(WIFI_STORAGE_RAM);
     if (result != ESP_OK) return result;
 
     result = esp_event_handler_instance_register(
