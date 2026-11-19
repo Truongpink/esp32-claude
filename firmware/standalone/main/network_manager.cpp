@@ -222,8 +222,8 @@ esp_err_t WifiPostHandler(httpd_req_t* request) {
     return httpd_resp_sendstr(request,
         "<!doctype html><html lang=\"vi\"><meta charset=\"utf-8\">"
         "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">"
-        "<body style=\"font:16px sans-serif;padding:24px\"><h2>Da luu Wi-Fi</h2>"
-        "<p>ChatAI dang ket noi. Hay cho thiet bi khoi dong ket noi mang.</p></body></html>");
+        "<body style=\"font:16px sans-serif;padding:24px\"><h2>Đã lưu Wi-Fi</h2>"
+        "<p>ChatAI đang kết nối. Vui lòng chờ thiết bị vào mạng.</p></body></html>");
 }
 
 esp_err_t StartHttpServer() {
