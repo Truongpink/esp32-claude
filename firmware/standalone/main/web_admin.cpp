@@ -640,7 +640,7 @@ esp_err_t DiagnosticsClearHandler(httpd_req_t* request) {
         return SendError(request, "403 Forbidden", "Yêu cầu không hợp lệ");
     }
     chatai::diagnostics::Clear();
-    return SendJson(request, "200 OK", "{\\"message\\":\\"Đã xóa log.\\"}");
+    return SendJson(request, "200 OK", "{\"message\":\"Đã xóa log.\"}");
 }
 
 esp_err_t GeminiStatusHandler(httpd_req_t* request) {
