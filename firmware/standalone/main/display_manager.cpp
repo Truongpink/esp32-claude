@@ -135,6 +135,12 @@ void RenderStatus() {
         DrawText(0, 30, "Gemini sẵn sàng");
     }
 
+    if (chatai::network::NetworkManager::IsConnected()) {
+        const std::string ip = chatai::network::NetworkManager::GetIpAddress();
+        DrawText(0, 42, "IP:");
+        DrawText(0, 52, ip.empty() ? "Đang nhận IP" : ip);
+    }
+
     const esp_err_t result = FlushFrame();
     if (result != ESP_OK) {
         ESP_LOGW(kTag, "OLED refresh failed: %s", esp_err_to_name(result));
