@@ -302,7 +302,7 @@ async function waitForRunningBuild(expectedBuild) {
         const actualBuild = Number(data.build_number || 0);
         firmwareStatus.textContent = "Bản dựng firmware đang chạy: #" + actualBuild;
         if (actualBuild === expectedBuild) {
-          otaResult.textContent = "Cập nhật thành công. Thiết bị đang chạy Firmware Bản dựng #" + actualBuild + ".";
+          otaResult.textContent = "Cập nhật thành công. Thiết bị đang chạy Bản dựng firmware #" + actualBuild + ".";
           return;
         }
         if (attempt > 5 && actualBuild !== expectedBuild) {
@@ -559,7 +559,7 @@ esp_err_t OtaUploadHandler(httpd_req_t* request) {
 
     std::unique_lock<std::mutex> lock(g_ota_mutex, std::try_to_lock);
     if (!lock.owns_lock()) {
-        return SendError(request, "409 Conflict", "Dang co mot qua trinh OTA khac");
+        return SendError(request, "409 Conflict", "Đang có một quá trình OTA khác");
     }
 
     const esp_partition_t* ota0 = esp_partition_find_first(
