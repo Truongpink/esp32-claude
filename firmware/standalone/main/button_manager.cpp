@@ -87,7 +87,7 @@ void ButtonTask(void*) {
         if (UpdateButton(g_boot, now) && !g_boot.stable_pressed) {
             const bool enabled = !chatai::gemini::IsChatEnabled();
             chatai::gemini::SetChatEnabled(enabled);
-            chatai::display::Notify("CHAT AI", enabled ? "Đã bật nghe liên tục" : "Đã tắt nghe");
+            chatai::display::Notify("CHAT AI", enabled ? "Bật nghe liên tục" : "Đã tắt nghe");
             ESP_LOGI(kTag, "Chat listening %s", enabled ? "enabled" : "disabled");
         }
 

@@ -522,6 +522,11 @@ void GeminiWorker(void*) {
             continue;
         }
 
+        if (g_restart_requested.exchange(false)) {
+            vTaskDelay(pdMS_TO_TICKS(50));
+            continue;
+        }
+
         if (!chatai::network::NetworkManager::IsInternetAvailable()) {
             vTaskDelay(pdMS_TO_TICKS(1000));
             continue;
@@ -638,7 +643,7 @@ void SetPushToTalk(bool pressed) { g_push_to_talk.store(pressed); }
 bool IsListening() { return ShouldListen(); }
 
 void RequestReconnect() {
-    if (g_client != nullptr) g_restart_requested.store(true);
+    g_restart_requested.store(true);
     g_ready.store(false);
     g_audio_epoch.fetch_add(1);
     ClearAudioQueue();

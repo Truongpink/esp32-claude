@@ -720,7 +720,7 @@ esp_err_t OtaUploadHandler(httpd_req_t* request) {
 
     ESP_LOGI(kTag, "OTA image accepted: %u bytes -> %s",
              static_cast<unsigned>(written), target->label);
-    chatai::display::Notify("WEB ADMIN", "Đang cập nhật Firmware", 5000);
+    chatai::display::Notify("WEB ADMIN", "Đang cập nhật", 5000);
     const esp_err_t response_result = SendJson(
         request, "200 OK",
         "{\"message\":\"Firmware đã được xác thực và cài đặt. ESP32 đang khởi động lại.\"}");

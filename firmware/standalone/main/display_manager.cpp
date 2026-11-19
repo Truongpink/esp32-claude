@@ -131,8 +131,8 @@ void RenderStatus() {
     if (static_cast<int32_t>(g_boot_screen_until - now) > 0) {
         DrawText(8, 30, "Đang khởi động");
     } else if (show_notification) {
-        DrawText(0, 26, notification_title);
-        DrawText(0, 40, notification_message);
+        DrawText(0, 20, notification_title);
+        DrawText(0, 32, notification_message);
     } else if (chatai::network::NetworkManager::IsProvisioningActive()) {
         DrawText(0, 26,
             chatai::network::NetworkManager::HasSavedCredentials()

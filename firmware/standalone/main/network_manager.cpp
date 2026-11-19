@@ -578,7 +578,7 @@ esp_err_t WifiPostHandler(httpd_req_t* request) {
         return ESP_FAIL;
     }
 
-    chatai::display::Notify("WI-FI", "Đang kết nối mạng");
+    chatai::display::Notify("WI-FI", "Đang kết nối");
     httpd_resp_set_type(request, "text/html; charset=utf-8");
     return httpd_resp_sendstr(request,
         "<!doctype html><html lang=\"vi\"><meta charset=\"utf-8\">"
