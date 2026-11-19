@@ -24,6 +24,7 @@
 #include "audio_manager.h"
 #include "gemini_settings.h"
 #include "network_manager.h"
+#include "diagnostic_manager.h"
 
 namespace {
 constexpr char kTag[] = "ChatAI-Gemini";
@@ -85,7 +86,7 @@ std::string UrlEncode(const std::string& value) {
 
 bool EnsureSystemTime() {
     constexpr std::time_t kMinimumValidTime = 1700000000;
-    if (std::time(nullptr) >= kMinimumValidTime) return true;
+    if (std::time(nullptr) >= kMinimumValidTime) { chatai::diagnostics::Add("TIME", "OK", "system clock valid"); return true; }
 
     if (!g_sntp_initialized) {
         esp_sntp_config_t config = ESP_NETIF_SNTP_DEFAULT_CONFIG("pool.ntp.org");
@@ -93,6 +94,7 @@ bool EnsureSystemTime() {
         const esp_err_t result = esp_netif_sntp_init(&config);
         if (result != ESP_OK) {
             ESP_LOGE(kTag, "Could not initialize SNTP: %s", esp_err_to_name(result));
+            chatai::diagnostics::Add("TIME", "FAIL", esp_err_to_name(result));
             return false;
         }
         g_sntp_initialized = true;
@@ -101,6 +103,7 @@ bool EnsureSystemTime() {
     const esp_err_t start_result = esp_netif_sntp_start();
     if (start_result != ESP_OK) {
         ESP_LOGW(kTag, "Could not start SNTP: %s", esp_err_to_name(start_result));
+        chatai::diagnostics::Add("TIME", "FAIL", esp_err_to_name(start_result));
         return false;
     }
 
@@ -109,10 +112,12 @@ bool EnsureSystemTime() {
     if (sync_result != ESP_OK && std::time(nullptr) < kMinimumValidTime) {
         ESP_LOGW(kTag, "Waiting for system time synchronization before Gemini TLS: %s",
                  esp_err_to_name(sync_result));
+        chatai::diagnostics::Add("TIME", "FAIL", esp_err_to_name(sync_result));
         return false;
     }
 
     ESP_LOGI(kTag, "System time synchronized; Gemini TLS certificate validation can proceed");
+    chatai::diagnostics::Add("TIME", "OK", "SNTP synchronized");
     return true;
 }
 
@@ -191,6 +196,7 @@ void HandleServerMessage(const std::string& message) {
         g_ready.store(true);
         g_error.store(false);
         ESP_LOGI(kTag, "Gemini Live setupComplete; audio session is ready");
+        chatai::diagnostics::Add("SETUP", "OK", "setupComplete received; Gemini READY");
     }
 
     const cJSON* server_content =
@@ -240,8 +246,14 @@ void HandleServerMessage(const std::string& message) {
             ESP_LOGE(kTag, "Gemini API error: status=%.*s message=%.*s",
                      status_length, status->valuestring,
                      message_length, message_text->valuestring);
+            char detail[240]{};
+            std::snprintf(detail, sizeof(detail), "status=%.*s message=%.*s",
+                          status_length, status->valuestring,
+                          message_length, message_text->valuestring);
+            chatai::diagnostics::Add("GEMINI_API", "FAIL", detail);
         } else {
             ESP_LOGE(kTag, "Gemini rejected or terminated the Live session");
+            chatai::diagnostics::Add("GEMINI_API", "FAIL", "error response without status/message");
         }
     }
 
@@ -261,6 +273,8 @@ void WebSocketEventHandler(void*, esp_event_base_t, int32_t event_id, void* even
             g_incoming_message.clear();
             g_receiving_text = false;
             ESP_LOGI(kTag, "Gemini Live WebSocket connected; sending setup");
+            chatai::diagnostics::Add("WS", "OK", "WebSocket handshake completed");
+            chatai::diagnostics::Add("SETUP", "INFO", "setup request sending");
 
             std::lock_guard<std::mutex> lock(g_send_mutex);
             const int sent = g_client != nullptr
@@ -270,6 +284,7 @@ void WebSocketEventHandler(void*, esp_event_base_t, int32_t event_id, void* even
             if (sent != static_cast<int>(sizeof(kSetupMessage) - 1)) {
                 g_error.store(true);
                 ESP_LOGE(kTag, "Could not send Gemini Live setup message");
+                chatai::diagnostics::Add("SETUP", "FAIL", "WebSocket send setup failed");
             }
             break;
         }
@@ -308,6 +323,23 @@ void WebSocketEventHandler(void*, esp_event_base_t, int32_t event_id, void* even
             g_speaking.store(false);
             g_error.store(true);
             if (event != nullptr) {
+                chatai::diagnostics::Add("WS", "FAIL", "transport event reported");
+                if (event->error_handle.esp_tls_last_esp_err != ESP_OK ||
+                    event->error_handle.esp_tls_stack_err != 0 ||
+                    event->error_handle.esp_tls_cert_verify_flags != 0) {
+                    char detail[160]{};
+                    std::snprintf(detail, sizeof(detail), "tls=%s stack=%d cert_flags=0x%x",
+                                  esp_err_to_name(event->error_handle.esp_tls_last_esp_err),
+                                  event->error_handle.esp_tls_stack_err,
+                                  event->error_handle.esp_tls_cert_verify_flags);
+                    chatai::diagnostics::Add("TLS", "FAIL", detail);
+                }
+                if (event->error_handle.esp_ws_handshake_status_code != 0) {
+                    char detail[80]{};
+                    std::snprintf(detail, sizeof(detail), "HTTP status=%d",
+                                  event->error_handle.esp_ws_handshake_status_code);
+                    chatai::diagnostics::Add("WS_HANDSHAKE", "FAIL", detail);
+                }
                 ESP_LOGE(kTag,
                          "WebSocket error: tls=%s tls_stack=%d cert_flags=0x%x "
                          "http_status=%d socket_errno=%d",
@@ -329,6 +361,7 @@ void WebSocketEventHandler(void*, esp_event_base_t, int32_t event_id, void* even
             g_audio_epoch.fetch_add(1);
             ClearAudioQueue();
             ESP_LOGW(kTag, "Gemini Live WebSocket disconnected");
+            chatai::diagnostics::Add("WS", "FAIL", "disconnected");
             break;
 
         case WEBSOCKET_EVENT_CLOSED:
@@ -340,6 +373,9 @@ void WebSocketEventHandler(void*, esp_event_base_t, int32_t event_id, void* even
             ClearAudioQueue();
             ESP_LOGW(kTag, "Gemini Live WebSocket closed; code=%d",
                      event != nullptr ? event->close_status_code : 0);
+            { char detail[64]{}; std::snprintf(detail, sizeof(detail), "close_code=%d",
+                event != nullptr ? event->close_status_code : 0);
+              chatai::diagnostics::Add("WS", "FAIL", detail); }
             break;
 
         default:
@@ -396,6 +432,7 @@ void MicrophoneWorker(void*) {
             microphone_enabled = true;
             microphone_error_reported = false;
             ESP_LOGI(kTag, "Microphone streaming started: PCM16 mono 16 kHz");
+            chatai::diagnostics::Add("AUDIO_IN", "OK", "PCM16 mono 16000 Hz streaming");
         }
 
         size_t samples_read = 0;
@@ -557,6 +594,7 @@ void GeminiWorker(void*) {
         if (api_key.empty()) {
             if (!g_missing_key_reported) {
                 ESP_LOGW(kTag, "Gemini API Key is not configured; waiting for Web Admin");
+                chatai::diagnostics::Add("AUTH", "FAIL", "API Key missing in NVS");
                 g_missing_key_reported = true;
             }
             vTaskDelay(pdMS_TO_TICKS(kRetryDelayMs));
@@ -570,6 +608,8 @@ void GeminiWorker(void*) {
             continue;
         }
 
+        chatai::diagnostics::Add("AUTH", "INFO", "API Key present in NVS; credential value redacted");
+        chatai::diagnostics::Add("TLS", "INFO", "starting verified TLS/WSS connection");
         std::string uri = std::string(kEndpoint) + UrlEncode(api_key);
         std::fill(api_key.begin(), api_key.end(), '\0');
         api_key.clear();
@@ -590,6 +630,7 @@ void GeminiWorker(void*) {
         if (client == nullptr) {
             g_error.store(true);
             ESP_LOGE(kTag, "Could not initialize Gemini Live WebSocket client");
+            chatai::diagnostics::Add("WS", "FAIL", "esp_websocket_client_init returned null");
             vTaskDelay(pdMS_TO_TICKS(kRetryDelayMs));
             continue;
         }
@@ -606,6 +647,7 @@ void GeminiWorker(void*) {
             g_error.store(true);
             ESP_LOGE(kTag, "Could not start Gemini Live WebSocket: %s",
                      esp_err_to_name(result));
+            chatai::diagnostics::Add("WS", "FAIL", esp_err_to_name(result));
             {
                 std::lock_guard<std::mutex> lock(g_send_mutex);
                 if (g_client == client) g_client = nullptr;
@@ -616,6 +658,7 @@ void GeminiWorker(void*) {
         }
 
         ESP_LOGI(kTag, "Gemini Live connection started; waiting for setupComplete");
+        chatai::diagnostics::Add("WS", "INFO", "client start accepted; waiting for handshake");
     }
 }
 
