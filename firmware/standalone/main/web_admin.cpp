@@ -1,79 +1,76 @@
-#include "web_admin.h"
-
-#include <algorithm>
-#include <cstring>
-#include <cstdio>
-#include <mutex>
-#include <string>
-
-#include <cJSON.h>
-#include <esp_log.h>
-#include <esp_ota_ops.h>
-#include <esp_partition.h>
-#include <esp_system.h>
-#include <freertos/FreeRTOS.h>
-#include <freertos/task.h>
-
-#include "gemini_settings.h"
-#include "gemini_live_client.h"
-#include "network_manager.h"
-#include "firmware_info.h"
-
-namespace {
-constexpr char kTag[] = "ChatAI-Admin";
-constexpr size_t kMaxRequestBody = 512;
-constexpr size_t kMaxApiKeyLength = 256;
-std::string g_csrf_token;
-std::mutex g_ota_mutex;
-
 const char kAdminPage[] = R"html(
 <!doctype html>
 <html lang="vi">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<meta name="color-scheme" content="light dark">
-<title>Quản trị ChatAI TPIOS</title>
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="color-scheme" content="dark">
+<title>ChatAI TPIOS · Web Admin</title>
 <style>
-:root{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color-scheme:light dark}
-body{max-width:560px;margin:36px auto;padding:0 18px;line-height:1.5}
-main{border:1px solid #8885;border-radius:16px;padding:22px}
-h1{font-size:1.45rem;margin-top:0}
-label{display:block;font-weight:600;margin:18px 0 7px}
-input{box-sizing:border-box;width:100%;padding:13px;border:1px solid #8888;border-radius:9px;font:inherit}
-button{padding:11px 16px;border:0;border-radius:9px;font:inherit;font-weight:600;margin:14px 8px 0 0}
-small,.muted{opacity:.72}
-#result{min-height:1.5em;margin-top:14px}
-.progress{height:8px;background:#8883;border-radius:8px;overflow:hidden;margin-top:10px}
-#otaProgress{height:100%;width:0;background:#4f8cff;transition:width .12s}
-#firmwareStatus{font-weight:650;margin:12px 0}
+:root{color-scheme:dark;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:#090914;color:#f4f1ff;font-synthesis:none}
+*{box-sizing:border-box}
+body{margin:0;min-height:100vh;padding:28px 16px 44px;background:radial-gradient(ellipse at 50% -10%,#38206a 0,transparent 48%),linear-gradient(160deg,#0c0b19,#111020 58%,#090914)}
+main{width:100%;max-width:480px;margin:0 auto}
+header{display:flex;align-items:center;gap:13px;margin:0 2px 22px}
+.brand-mark{width:48px;height:48px;display:grid;place-items:center;border-radius:16px;background:linear-gradient(145deg,#9b5cff,#6034d6);box-shadow:0 8px 28px #8149ff45;font-size:24px}
+h1{font-size:21px;line-height:1.2;margin:0;font-weight:760;letter-spacing:-.35px}
+.subtitle{margin:5px 0 0;color:#a9a2c4;font-size:13px}
+.card{background:linear-gradient(145deg,#1b1930f5,#151426f5);border:1px solid #ffffff14;border-radius:21px;padding:20px;margin:0 0 15px;box-shadow:0 16px 40px #0003}
+.card-head{display:flex;align-items:center;gap:11px;margin-bottom:15px}
+.card-icon{width:37px;height:37px;display:grid;place-items:center;border-radius:12px;background:#8c5bff20;color:#c4a5ff;font-size:18px}
+h2{font-size:16px;margin:0;font-weight:700}
+.hint{font-size:12px;color:#a9a2c4;margin:4px 0 0;line-height:1.5}
+#status{font-size:13px;color:#d5c9ff;margin:0 0 10px}
+#deviceStatus{font-size:13px;line-height:1.55;color:#e9e3ff;background:#ffffff08;border:1px solid #ffffff10;border-radius:13px;padding:12px;margin:0}
+label{display:block;font-size:13px;font-weight:650;color:#e4def6;margin:16px 0 8px}
+input[type=password],input[type=file]{width:100%;min-width:0;padding:13px 14px;border:1px solid #ffffff20;border-radius:12px;background:#0d0c19;color:#f5f1ff;font:inherit;font-size:14px;outline:none}
+input:focus{border-color:#a477ff;box-shadow:0 0 0 3px #8c5bff24}
+small,.muted{font-size:11px;line-height:1.5;color:#a9a2c4}
+button{border:0;border-radius:12px;padding:12px 16px;background:linear-gradient(135deg,#9a5cff,#6739d9);color:white;font:inherit;font-size:13px;font-weight:700;cursor:pointer;box-shadow:0 7px 18px #7948dc35}
+button:disabled{opacity:.55;cursor:wait}
+button.secondary{background:#ffffff10;border:1px solid #ffffff1a;box-shadow:none;color:#e9e3ff}
+.actions{display:flex;gap:9px;flex-wrap:wrap;margin-top:13px}
+hr{border:0;border-top:1px solid #ffffff12;margin:18px 0}
+#result,#otaResult{font-size:12px;line-height:1.5;color:#d8caff;min-height:1.4em;margin:12px 0 0;overflow-wrap:anywhere}
+#firmwareStatus{font-size:12px;line-height:1.55;color:#d9d2f0;margin:0 0 12px;overflow-wrap:anywhere}
+#otaFileInfo{margin:9px 0}
+.progress{height:8px;background:#ffffff12;border-radius:20px;overflow:hidden;margin-top:13px}
+#otaProgress{height:100%;width:0;background:linear-gradient(90deg,#9b5cff,#55d6c2);transition:width .12s}
+.foot{text-align:center;color:#77718f;font-size:11px;margin:20px 0 0}
+@media(min-width:600px){body{padding-top:44px}}
 </style>
 </head>
 <body>
 <main>
-<h1>ChatAI TPIOS</h1>
-<p class="muted">Cấu hình Gemini Live trên thiết bị.</p>
+<header>
+<div class="brand-mark" aria-hidden="true">✦</div>
+<div><h1>ChatAI TPIOS</h1><p class="subtitle">Trung tâm điều khiển thiết bị</p></div>
+</header>
+<section class="card" aria-labelledby="connectionTitle">
+<div class="card-head"><div class="card-icon" aria-hidden="true">◉</div><div><h2 id="connectionTitle">Trạng thái kết nối</h2><p class="hint">Theo dõi Wi-Fi, Internet và Gemini Live</p></div></div>
 <p id="status">Đang kiểm tra trạng thái...</p>
-<p id="deviceStatus" role="status">Đang kiểm tra Wi-Fi, Internet và Gemini Live...</p>
+<p id="deviceStatus" role="status" aria-live="polite">Đang kiểm tra Wi-Fi, Internet và Gemini Live...</p>
+</section>
+<section class="card" aria-labelledby="geminiTitle">
+<div class="card-head"><div class="card-icon" aria-hidden="true">✧</div><div><h2 id="geminiTitle">Cấu hình Gemini Live</h2><p class="hint">API Key được lưu an toàn trong bộ nhớ thiết bị</p></div></div>
 <label for="apiKey">Gemini API Key</label>
-<input id="apiKey" type="password" maxlength="256" autocomplete="new-password"
-       autocapitalize="off" spellcheck="false" placeholder="Nhập API Key mới">
-<small>Khóa đã lưu không được gửi ngược về trình duyệt. Để thay khóa, nhập khóa mới.</small>
-<div>
-<button id="save">Lưu API Key</button>
-<button id="remove" hidden>Xóa API Key</button>
-</div>
-<hr>
-<h2>Cập nhật Firmware OTA</h2>
+<input id="apiKey" type="password" maxlength="256" autocomplete="new-password" autocapitalize="off" spellcheck="false" placeholder="Nhập API Key mới">
+<p class="hint">Khóa đã lưu không được gửi ngược về trình duyệt. Để giữ khóa hiện tại, hãy để trống và không nhấn lưu.</p>
+<div class="actions"><button id="save">Lưu API Key</button><button id="remove" class="secondary" hidden>Xóa API Key</button></div>
+<p id="result" role="status" aria-live="polite"></p>
+</section>
+<section class="card" aria-labelledby="otaTitle">
+<div class="card-head"><div class="card-icon" aria-hidden="true">⇧</div><div><h2 id="otaTitle">Cập nhật Firmware OTA</h2><p class="hint">Cập nhật trực tiếp từ điện thoại, không cần cáp USB</p></div></div>
 <p id="firmwareStatus" role="status">Đang đọc phiên bản firmware...</p>
-<p class="muted">Hỗ trợ tệp BIN hoặc ZIP chỉ chứa một firmware ứng dụng BIN. Không tắt nguồn trong quá trình cập nhật.</p>
-<label for="firmware">Firmware BIN / ZIP</label>
+<p class="hint">Chọn tệp BIN hoặc ZIP chỉ chứa một firmware ứng dụng BIN. Không tắt nguồn trong quá trình cập nhật.</p>
+<label for="firmware">Tệp firmware</label>
 <input id="firmware" type="file" accept=".bin,.zip,application/octet-stream,application/zip">
 <p id="otaFileInfo" class="muted">Chưa chọn tệp.</p>
 <button id="updateFirmware">Kiểm tra và cài đặt</button>
 <div class="progress" aria-label="Tiến trình tải firmware"><div id="otaProgress"></div></div>
-<p id="otaResult" role="status"></p>
-<p id="result" role="status"></p>
+<p id="otaResult" role="status" aria-live="polite"></p>
+</section>
+<p class="foot">ChatAI TPIOS · Web Admin nội bộ</p>
 </main>
 <script>
 const csrfToken = "__CSRF_TOKEN__";
