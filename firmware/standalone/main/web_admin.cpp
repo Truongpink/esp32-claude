@@ -1,3 +1,31 @@
+#include "web_admin.h"
+
+#include <algorithm>
+#include <cstring>
+#include <cstdio>
+#include <mutex>
+#include <string>
+
+#include <cJSON.h>
+#include <esp_log.h>
+#include <esp_ota_ops.h>
+#include <esp_partition.h>
+#include <esp_system.h>
+#include <freertos/FreeRTOS.h>
+#include <freertos/task.h>
+
+#include "gemini_settings.h"
+#include "gemini_live_client.h"
+#include "network_manager.h"
+#include "firmware_info.h"
+
+namespace {
+constexpr char kTag[] = "ChatAI-Admin";
+constexpr size_t kMaxRequestBody = 512;
+constexpr size_t kMaxApiKeyLength = 256;
+std::string g_csrf_token;
+std::mutex g_ota_mutex;
+
 const char kAdminPage[] = R"html(
 <!doctype html>
 <html lang="vi">
