@@ -6,6 +6,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <iterator>
 #include <string_view>
 
 #include <driver/gpio.h>
@@ -111,14 +112,14 @@ void RenderStatus() {
     if (static_cast<int32_t>(g_boot_screen_until - xTaskGetTickCount()) > 0) {
         DrawText(8, 30, "Đang khởi động");
     } else if (chatai::network::NetworkManager::IsProvisioningActive()) {
-        DrawText(8, 26,
+        DrawText(0, 26,
             chatai::network::NetworkManager::HasSavedCredentials()
                 ? "Mất kết nối mạng" : "Chưa có Wi-Fi");
         DrawText(8, 44, "Mở 192.168.4.1");
     } else if (!chatai::network::NetworkManager::IsConnected()) {
-        DrawText(8, 30, "Kết nối Wi-Fi");
+        DrawText(0, 30, "Kết nối Wi-Fi");
     } else if (!chatai::settings::HasGeminiApiKey()) {
-        DrawText(8, 26, "Thiếu Gemini Key");
+        DrawText(0, 26, "Thiếu Gemini Key");
         DrawText(8, 44, "Mở chatai.local");
     } else if (!g_audio_ready.load()) {
         DrawText(8, 30, "Lỗi âm thanh");
