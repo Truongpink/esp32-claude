@@ -1,5 +1,7 @@
 #include "diagnostic_manager.h"
 
+#include <cstdio>
+#include <cstring>
 #include <ctime>
 #include <mutex>
 #include <string>
