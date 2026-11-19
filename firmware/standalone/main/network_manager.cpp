@@ -2,6 +2,8 @@
 #include "web_admin.h"
 
 #include <atomic>
+#include <cstdint>
+#include <initializer_list>
 #include <cstdio>
 #include <cstring>
 #include <string>
@@ -12,6 +14,7 @@
 #include <freertos/task.h>
 #include <lwip/inet.h>
 #include <lwip/sockets.h>
+#include <sys/time.h>
 
 #include <esp_event.h>
 #include <esp_http_server.h>
