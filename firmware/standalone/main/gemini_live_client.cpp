@@ -112,9 +112,7 @@ bool EnsureSystemTime() {
 const char kSetupMessage[] =
     "{\"setup\":{"
       "\"model\":\"models/gemini-3.8-live\","
-      "\"generationConfig\":{"
-        "\"responseModalities\":[\"AUDIO\"]"
-      "},"
+      "\"responseModalities\":[\"AUDIO\"],"
       "\"systemInstruction\":{"
         "\"parts\":[{"
           "\"text\":\"Bạn là trợ lý ChatAI TPIOS. Hãy giao tiếp tự nhiên, thân thiện "
