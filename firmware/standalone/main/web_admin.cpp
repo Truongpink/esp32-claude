@@ -547,9 +547,9 @@ esp_err_t DeviceStatusHandler(httpd_req_t* request) {
 
     char body[384]{};
     std::snprintf(body, sizeof(body),
-        "{\\"wifi_connected\\":%s,\\"internet_available\\":%s,"
-        "\\"key_configured\\":%s,\\"gemini_ready\\":%s,"
-        "\\"gemini_error\\":%s,\\"ip\\":\\"%s\\",\\"gateway\\":\\"%s\\"}",
+        "{\"wifi_connected\":%s,\"internet_available\":%s,"
+        "\"key_configured\":%s,\"gemini_ready\":%s,"
+        "\"gemini_error\":%s,\"ip\":\"%s\",\"gateway\":\"%s\"}",
         wifi_connected ? "true" : "false",
         internet_available ? "true" : "false",
         key_configured ? "true" : "false",
@@ -558,7 +558,6 @@ esp_err_t DeviceStatusHandler(httpd_req_t* request) {
         ip.c_str(), gateway.c_str());
     return SendJson(request, "200 OK", body);
 }
-
 
 esp_err_t GeminiStatusHandler(httpd_req_t* request) {
     const char* status = chatai::settings::HasGeminiApiKey()
