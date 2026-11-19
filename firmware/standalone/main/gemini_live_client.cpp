@@ -56,6 +56,8 @@ std::atomic<bool> g_restart_requested{false};
 bool g_sntp_initialized = false;
 std::atomic<uint32_t> g_audio_epoch{0};
 std::atomic<bool> g_audio_response_reported{false};
+std::atomic<bool> g_auth_reported{false};
+std::atomic<bool> g_tls_attempt_reported{false};
 esp_websocket_client_handle_t g_client = nullptr;
 QueueHandle_t g_audio_queue = nullptr;
 std::string g_incoming_message;
@@ -345,6 +347,12 @@ void WebSocketEventHandler(void*, esp_event_base_t, int32_t event_id, void* even
                     chatai::diagnostics::Add("TLS", "FAIL", detail);
                 }
                 if (event->error_handle.esp_ws_handshake_status_code != 0) {
+                    const int http_status = event->error_handle.esp_ws_handshake_status_code;
+                    if (http_status == 401 || http_status == 403) {
+                        char auth_detail[64]{};
+                        std::snprintf(auth_detail, sizeof(auth_detail), "HTTP %d during WSS handshake", http_status);
+                        chatai::diagnostics::Add("AUTH", "FAIL", auth_detail);
+                    }
                     char detail[80]{};
                     std::snprintf(detail, sizeof(detail), "HTTP status=%d",
                                   event->error_handle.esp_ws_handshake_status_code);
@@ -621,8 +629,10 @@ void GeminiWorker(void*) {
             continue;
         }
 
-        chatai::diagnostics::Add("AUTH", "INFO", "API Key present in NVS; credential value redacted");
-        chatai::diagnostics::Add("TLS", "INFO", "starting verified TLS/WSS connection");
+        if (!g_auth_reported.exchange(true))
+            chatai::diagnostics::Add("AUTH", "INFO", "API Key present in NVS; credential value redacted");
+        if (!g_tls_attempt_reported.exchange(true))
+            chatai::diagnostics::Add("TLS", "INFO", "starting verified TLS/WSS connection");
         std::string uri = std::string(kEndpoint) + UrlEncode(api_key);
         std::fill(api_key.begin(), api_key.end(), '\0');
         api_key.clear();
