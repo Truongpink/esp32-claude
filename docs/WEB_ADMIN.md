@@ -4,9 +4,10 @@ The Standalone firmware provides a local Web Admin for configuring the Gemini AP
 
 ## Access
 
+- After the device joins the same home Wi-Fi network as the phone or computer, open `http://chatai.local/` or `http://chatai.local/admin`.
+- The `.local` address is provided by mDNS; a fixed DHCP address is not required.
+- If the router or client network blocks mDNS multicast, use the device's current LAN IP as a fallback.
 - During Wi-Fi provisioning, connect to the device's setup access point and open `http://192.168.4.1/`.
-- After the device joins the home Wi-Fi, open the device's LAN address and navigate to `/admin`.
-- Keep the device and browser on a trusted local network.
 
 ## Gemini API Key controls
 
@@ -29,7 +30,7 @@ The key is stored in NVS namespace `chatai_ai`, key `gemini_key`. The browser in
 | GET | `/api/gemini/status` | Returns only whether a key is configured |
 | GET | `/api/firmware/status` | Returns running Build Number, marker, active slot, inactive OTA slot, and slot capacity |
 | POST | `/api/gemini/key` | Validate and save a key |
-| DELETE | `/api/gemini/key` | Delete the saved key |
+| DELETE | `/api/gemini/key` | Delete the saved Gemini API Key |
 | POST | `/api/ota` | Stream and validate an application BIN into the inactive OTA slot |
 
 Mutating requests require same-origin validation and the per-boot CSRF token. The browser accepts BIN or ZIP, but always uploads only the extracted raw application BIN. ZIP64, multi-disk archives, encrypted BINs, unsafe paths, multiple BIN candidates, unsupported compression, invalid size, and CRC32 mismatches are rejected before upload. The ESP32 rejects images larger than the inactive OTA slot and changes the boot partition only after `esp_ota_end()` validates the image.

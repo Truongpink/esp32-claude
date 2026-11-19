@@ -5,6 +5,7 @@
 #include <esp_ota_ops.h>
 #include <esp_partition.h>
 #include <esp_system.h>
+#include <mdns.h>
 #include <nvs_flash.h>
 
 #include "network_manager.h"
@@ -16,6 +17,32 @@
 
 namespace {
 constexpr char kTag[] = "ChatAI";
+
+esp_err_t InitializeMdns() {
+    esp_err_t result = mdns_init();
+    if (result != ESP_OK) {
+        return result;
+    }
+
+    result = mdns_hostname_set("chatai");
+    if (result == ESP_OK) {
+        result = mdns_instance_name_set("ChatAI TPIOS");
+    }
+    if (result != ESP_OK) {
+        mdns_free();
+        return result;
+    }
+
+    const esp_err_t service_result = mdns_service_add(
+        "ChatAI TPIOS Web Admin", "_http", "_tcp", 80, nullptr, 0);
+    if (service_result != ESP_OK) {
+        ESP_LOGW(kTag, "Could not advertise HTTP service over mDNS: %s",
+                 esp_err_to_name(service_result));
+    }
+
+    ESP_LOGI(kTag, "Web Admin local address: http://chatai.local/");
+    return ESP_OK;
+}
 
 bool InitializePlatform() {
     const esp_err_t nvs_result = nvs_flash_init();
@@ -42,6 +69,12 @@ bool InitializePlatform() {
         ESP_LOGE(kTag, "Default event loop initialization failed: %s",
                  esp_err_to_name(event_result));
         return false;
+    }
+
+    const esp_err_t mdns_result = InitializeMdns();
+    if (mdns_result != ESP_OK) {
+        ESP_LOGW(kTag, "mDNS unavailable; Web Admin remains accessible by IP: %s",
+                 esp_err_to_name(mdns_result));
     }
 
     const esp_err_t wifi_result = chatai::network::NetworkManager::Initialize();

@@ -14,7 +14,7 @@ idf_component_register(
          "web_admin.cpp"
     INCLUDE_DIRS "."
     REQUIRES app_update spi_flash nvs_flash esp_event esp_netif esp_wifi esp_http_server
-             esp_driver_i2c esp_driver_i2s esp_driver_gpio esp_websocket_client
+             mdns esp_driver_i2c esp_driver_i2s esp_driver_gpio esp_websocket_client
              freertos mbedtls
 )
 
