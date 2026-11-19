@@ -15,6 +15,7 @@
 #include <freertos/task.h>
 
 #include "gemini_settings.h"
+#include "network_manager.h"
 #include "firmware_info.h"
 
 namespace {
@@ -631,6 +632,15 @@ esp_err_t OtaUploadHandler(httpd_req_t* request) {
                  esp_err_to_name(result));
         return SendError(request, "500 Internal Server Error",
                          "Không thể chọn firmware mới để khởi động");
+    }
+
+    result = chatai::network::NetworkManager::ClearSavedCredentials();
+    if (result != ESP_OK) {
+        ESP_LOGE(kTag, "Could not clear old Wi-Fi credentials for the new firmware: %s",
+                 esp_err_to_name(result));
+        esp_ota_set_boot_partition(running);
+        return SendError(request, "500 Internal Server Error",
+                         "Không thể xóa cấu hình Wi-Fi cũ; firmware mới chưa được khởi động");
     }
 
     ESP_LOGI(kTag, "OTA image accepted: %u bytes -> %s",
