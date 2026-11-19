@@ -84,6 +84,7 @@ hr{border:0;border-top:1px solid #ffffff12;margin:18px 0}
 <section class="card" aria-labelledby="diagnosticsTitle">
 <div class="card-head"><div class="card-icon" aria-hidden="true">≋</div><div><h2 id="diagnosticsTitle">Log chẩn đoán Gemini</h2><p class="hint">Tối đa 8 KB · Không lưu API Key hoặc dữ liệu âm thanh</p></div></div>
 <pre id="diagnosticLog" style="white-space:pre-wrap;overflow-wrap:anywhere;max-height:260px;overflow:auto;background:#0d0c19;border:1px solid #ffffff18;border-radius:12px;padding:12px;color:#d9d2f0;font:11px/1.55 ui-monospace,monospace">Đang tải log...</pre>
+<textarea id="diagnosticCopyFallback" readonly hidden aria-label="Log chẩn đoán để sao chép" style="width:100%;min-height:150px;margin-top:10px;padding:12px;border:1px solid #a477ff;border-radius:12px;background:#0d0c19;color:#f5f1ff;font:11px/1.55 ui-monospace,monospace"></textarea>
 <div class="actions"><button id="copyDiagnostic" class="secondary">Sao chép log</button><button id="clearDiagnostic" class="secondary">Xóa log</button></div>
 <p id="diagnosticResult" class="hint" role="status" aria-live="polite"></p>
 </section>
@@ -139,21 +140,66 @@ async function refreshDiagnostics() {
   diagnosticLog.textContent = await response.text() || "Chưa có log chẩn đoán.";
   diagnosticLog.scrollTop = diagnosticLog.scrollHeight;
 }
-copyDiagnosticButton.addEventListener("click", async () => {
+const diagnosticCopyFallback = document.getElementById("diagnosticCopyFallback");
+
+function tryLegacyDiagnosticCopy(text) {
+  const temp = document.createElement("textarea");
+  temp.value = text;
+  temp.setAttribute("readonly", "");
+  temp.style.position = "fixed";
+  temp.style.top = "0";
+  temp.style.left = "-9999px";
+  temp.style.opacity = "0";
+  document.body.appendChild(temp);
   try {
-    await refreshDiagnostics();
-    if (navigator.clipboard && navigator.clipboard.writeText) {
-      await navigator.clipboard.writeText(diagnosticLog.textContent);
-    } else {
-      const temp = document.createElement("textarea");
-      temp.value = diagnosticLog.textContent;
-      temp.style.position = "fixed"; temp.style.opacity = "0";
-      document.body.appendChild(temp); temp.select();
-      if (!document.execCommand("copy")) throw new Error("Trình duyệt từ chối sao chép");
-      temp.remove();
+    temp.focus();
+    temp.select();
+    temp.setSelectionRange(0, temp.value.length);
+    return document.execCommand("copy");
+  } catch (_) {
+    return false;
+  } finally {
+    temp.remove();
+  }
+}
+
+function showDiagnosticCopyFallback(text) {
+  diagnosticCopyFallback.value = text;
+  diagnosticCopyFallback.hidden = false;
+  diagnosticCopyFallback.focus();
+  diagnosticCopyFallback.select();
+  diagnosticCopyFallback.setSelectionRange(0, text.length);
+  diagnosticResult.textContent =
+    "Safari đã chặn sao chép tự động. Log đã được chọn trong ô bên dưới; anh có thể chạm giữ để sao chép.";
+}
+
+copyDiagnosticButton.addEventListener("click", () => {
+  const text = diagnosticLog.textContent || "";
+  diagnosticCopyFallback.hidden = true;
+
+  // Start Clipboard API synchronously in the click handler; do not await a log refresh first.
+  if (navigator.clipboard && typeof navigator.clipboard.writeText === "function") {
+    try {
+      navigator.clipboard.writeText(text).then(() => {
+        diagnosticResult.textContent = "Đã sao chép log đang hiển thị.";
+      }).catch(() => {
+        if (tryLegacyDiagnosticCopy(text)) {
+          diagnosticResult.textContent = "Đã sao chép log.";
+        } else {
+          showDiagnosticCopyFallback(text);
+        }
+      });
+      return;
+    } catch (_) {
+      // Continue to the synchronous legacy fallback below.
     }
+  }
+
+  if (tryLegacyDiagnosticCopy(text)) {
     diagnosticResult.textContent = "Đã sao chép log.";
-  } catch (error) { diagnosticResult.textContent = "Không sao chép được: " + error.message; }
+  } else {
+    showDiagnosticCopyFallback(text);
+  }
 });
 clearDiagnosticButton.addEventListener("click", async () => {
   try {
