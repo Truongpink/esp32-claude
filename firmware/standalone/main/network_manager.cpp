@@ -63,6 +63,9 @@ std::atomic<bool> g_provisioning_started{false};
 std::string g_provisioning_ssid;
 std::string g_form_token;
 bool g_dns_started = false;
+std::atomic<int> g_last_ip_state{-1};
+std::atomic<int> g_last_dns_state{-1};
+std::atomic<int> g_last_tcp_state{-1};
 
 bool ProbeGeminiInternet() {
     if (g_sta_netif == nullptr) return false;
@@ -70,14 +73,17 @@ bool ProbeGeminiInternet() {
     esp_netif_ip_info_t ip_info{};
     if (esp_netif_get_ip_info(g_sta_netif, &ip_info) != ESP_OK ||
         ip_info.ip.addr == 0 || ip_info.gw.addr == 0) {
-        chatai::diagnostics::Add("NETWORK", "FAIL", "STA IP or gateway unavailable");
+        if (g_last_ip_state.exchange(0) != 0)
+            chatai::diagnostics::Add("NETWORK", "FAIL", "STA IP or gateway unavailable");
         return false;
     }
-    char network_detail[96]{};
-    std::snprintf(network_detail, sizeof(network_detail), "IP=%s gateway=%s",
-                  ip4addr_ntoa(reinterpret_cast<const ip4_addr_t*>(&ip_info.ip)),
-                  ip4addr_ntoa(reinterpret_cast<const ip4_addr_t*>(&ip_info.gw)));
-    chatai::diagnostics::Add("NETWORK", "OK", network_detail);
+    if (g_last_ip_state.exchange(1) != 1) {
+        char ip_text[16]{}, gateway_text[16]{}, network_detail[96]{};
+        ip4addr_ntoa_r(reinterpret_cast<const ip4_addr_t*>(&ip_info.ip), ip_text, sizeof(ip_text));
+        ip4addr_ntoa_r(reinterpret_cast<const ip4_addr_t*>(&ip_info.gw), gateway_text, sizeof(gateway_text));
+        std::snprintf(network_detail, sizeof(network_detail), "IP=%s gateway=%s", ip_text, gateway_text);
+        chatai::diagnostics::Add("NETWORK", "OK", network_detail);
+    }
 
     addrinfo hints{};
     hints.ai_family = AF_INET;
@@ -88,10 +94,12 @@ bool ProbeGeminiInternet() {
     if (lookup_result != 0 || addresses == nullptr) {
         char detail[96]{};
         std::snprintf(detail, sizeof(detail), "getaddrinfo failed code=%d", lookup_result);
-        chatai::diagnostics::Add("DNS", "FAIL", detail);
+        if (g_last_dns_state.exchange(0) != 0)
+            chatai::diagnostics::Add("DNS", "FAIL", detail);
         return false;
     }
-    chatai::diagnostics::Add("DNS", "OK", "generativelanguage.googleapis.com resolved");
+    if (g_last_dns_state.exchange(1) != 1)
+        chatai::diagnostics::Add("DNS", "OK", "generativelanguage.googleapis.com resolved");
 
     bool reachable = false;
     for (addrinfo* address = addresses; address != nullptr && !reachable;
@@ -130,9 +138,11 @@ bool ProbeGeminiInternet() {
     }
 
     freeaddrinfo(addresses);
-    chatai::diagnostics::Add("TCP_443", reachable ? "OK" : "FAIL",
-                             reachable ? "Google endpoint reachable on port 443" :
-                                         "TCP connection to Google port 443 failed");
+    const int tcp_state = reachable ? 1 : 0;
+    if (g_last_tcp_state.exchange(tcp_state) != tcp_state)
+        chatai::diagnostics::Add("TCP_443", reachable ? "OK" : "FAIL",
+                                 reachable ? "Google endpoint reachable on port 443" :
+                                             "TCP connection to Google port 443 failed");
     return reachable;
 }
 
