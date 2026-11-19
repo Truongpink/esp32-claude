@@ -19,6 +19,7 @@
 #include "display_manager.h"
 #include "network_manager.h"
 #include "firmware_info.h"
+#include "diagnostic_manager.h"
 
 namespace {
 constexpr char kTag[] = "ChatAI-Admin";
@@ -80,6 +81,12 @@ hr{border:0;border-top:1px solid #ffffff12;margin:18px 0}
 <p id="status">Đang kiểm tra trạng thái...</p>
 <p id="deviceStatus" role="status" aria-live="polite">Đang kiểm tra Wi-Fi, Internet và Gemini Live...</p>
 </section>
+<section class="card" aria-labelledby="diagnosticsTitle">
+<div class="card-head"><div class="card-icon" aria-hidden="true">≋</div><div><h2 id="diagnosticsTitle">Log chẩn đoán Gemini</h2><p class="hint">Tối đa 8 KB · Không lưu API Key hoặc dữ liệu âm thanh</p></div></div>
+<pre id="diagnosticLog" style="white-space:pre-wrap;overflow-wrap:anywhere;max-height:260px;overflow:auto;background:#0d0c19;border:1px solid #ffffff18;border-radius:12px;padding:12px;color:#d9d2f0;font:11px/1.55 ui-monospace,monospace">Đang tải log...</pre>
+<div class="actions"><button id="copyDiagnostic" class="secondary">Sao chép log</button><button id="clearDiagnostic" class="secondary">Xóa log</button></div>
+<p id="diagnosticResult" class="hint" role="status" aria-live="polite"></p>
+</section>
 <section class="card" aria-labelledby="geminiTitle">
 <div class="card-head"><div class="card-icon" aria-hidden="true">✧</div><div><h2 id="geminiTitle">Cấu hình Gemini Live</h2><p class="hint">API Key được lưu an toàn trong bộ nhớ thiết bị</p></div></div>
 <label for="apiKey">Gemini API Key</label>
@@ -115,6 +122,10 @@ const otaResult = document.getElementById("otaResult");
 const otaFileInfo = document.getElementById("otaFileInfo");
 const otaProgress = document.getElementById("otaProgress");
 const firmwareStatus = document.getElementById("firmwareStatus");
+const diagnosticLog = document.getElementById("diagnosticLog");
+const diagnosticResult = document.getElementById("diagnosticResult");
+const copyDiagnosticButton = document.getElementById("copyDiagnostic");
+const clearDiagnosticButton = document.getElementById("clearDiagnostic");
 let otaMaxBytes = 0;
 let currentBuildNumber = 0;
 
@@ -122,6 +133,27 @@ function formatBytes(bytes) {
   return (bytes / 1048576).toFixed(2) + " MB";
 }
 
+async function refreshDiagnostics() {
+  const response = await fetch("/api/diagnostics", {cache:"no-store"});
+  if (!response.ok) throw new Error("Không đọc được log (HTTP " + response.status + ")");
+  diagnosticLog.textContent = await response.text() || "Chưa có log chẩn đoán.";
+  diagnosticLog.scrollTop = diagnosticLog.scrollHeight;
+}
+copyDiagnosticButton.addEventListener("click", async () => {
+  try {
+    await refreshDiagnostics();
+    await navigator.clipboard.writeText(diagnosticLog.textContent);
+    diagnosticResult.textContent = "Đã sao chép log.";
+  } catch (error) { diagnosticResult.textContent = "Không sao chép được: " + error.message; }
+});
+clearDiagnosticButton.addEventListener("click", async () => {
+  try {
+    const response = await fetch("/api/diagnostics/clear", {method:"POST", cache:"no-store", headers:{"X-ChatAI-CSRF":csrfToken}});
+    if (!response.ok) throw new Error("HTTP " + response.status);
+    await refreshDiagnostics();
+    diagnosticResult.textContent = "Đã xóa log chẩn đoán.";
+  } catch (error) { diagnosticResult.textContent = "Không xóa được log: " + error.message; }
+});
 async function refreshFirmwareStatus() {
   const response = await fetch("/api/firmware/status", {cache:"no-store"});
   if (!response.ok) throw new Error("Không đọc được phiên bản firmware (HTTP " + response.status + ")");
@@ -453,8 +485,10 @@ removeButton.addEventListener("click", async () => {
   } finally { removeButton.disabled = false; }
 });
 refreshStatus().catch(error => { statusText.textContent = error.message; });
+refreshDiagnostics().catch(error => { diagnosticLog.textContent = error.message; });
 setInterval(() => {
   refreshDeviceStatus().catch(error => { deviceStatus.textContent = error.message; });
+  refreshDiagnostics().catch(error => { diagnosticResult.textContent = error.message; });
 }, 5000);
 </script>
 </body>
@@ -583,6 +617,21 @@ esp_err_t DeviceStatusHandler(httpd_req_t* request) {
         gemini_error ? "true" : "false",
         ip.c_str(), gateway.c_str());
     return SendJson(request, "200 OK", body);
+}
+
+esp_err_t DiagnosticsHandler(httpd_req_t* request) {
+    const std::string log = chatai::diagnostics::Get();
+    httpd_resp_set_type(request, "text/plain; charset=utf-8");
+    SetNoStore(request);
+    return httpd_resp_send(request, log.c_str(), log.size());
+}
+
+esp_err_t DiagnosticsClearHandler(httpd_req_t* request) {
+    if (!IsAuthorizedMutation(request)) {
+        return SendError(request, "403 Forbidden", "Yêu cầu không hợp lệ");
+    }
+    chatai::diagnostics::Clear();
+    return SendJson(request, "200 OK", "{\\"message\\":\\"Đã xóa log.\\"}");
 }
 
 esp_err_t GeminiStatusHandler(httpd_req_t* request) {
@@ -779,6 +828,16 @@ esp_err_t RegisterRoutes(httpd_handle_t server, const std::string& csrf_token) {
     delete_uri.method = HTTP_DELETE;
     delete_uri.handler = GeminiKeyDeleteHandler;
 
+    httpd_uri_t diagnostics_uri{};
+    diagnostics_uri.uri = "/api/diagnostics";
+    diagnostics_uri.method = HTTP_GET;
+    diagnostics_uri.handler = DiagnosticsHandler;
+
+    httpd_uri_t diagnostics_clear_uri{};
+    diagnostics_clear_uri.uri = "/api/diagnostics/clear";
+    diagnostics_clear_uri.method = HTTP_POST;
+    diagnostics_clear_uri.handler = DiagnosticsClearHandler;
+
     httpd_uri_t ota_uri{};
     ota_uri.uri = "/api/ota";
     ota_uri.method = HTTP_POST;
@@ -790,6 +849,8 @@ esp_err_t RegisterRoutes(httpd_handle_t server, const std::string& csrf_token) {
     if (result == ESP_OK) result = httpd_register_uri_handler(server, &device_status_uri);
     if (result == ESP_OK) result = httpd_register_uri_handler(server, &save_uri);
     if (result == ESP_OK) result = httpd_register_uri_handler(server, &delete_uri);
+    if (result == ESP_OK) result = httpd_register_uri_handler(server, &diagnostics_uri);
+    if (result == ESP_OK) result = httpd_register_uri_handler(server, &diagnostics_clear_uri);
     if (result == ESP_OK) result = httpd_register_uri_handler(server, &ota_uri);
     if (result != ESP_OK) {
         ESP_LOGE(kTag, "Could not register Web Admin routes: %s", esp_err_to_name(result));
