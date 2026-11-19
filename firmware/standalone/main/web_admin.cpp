@@ -31,7 +31,7 @@ const char kAdminPage[] = R"html(
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="color-scheme" content="light dark">
-<title>ChatAI TPIOS - Web Admin</title>
+<title>Quản trị ChatAI TPIOS</title>
 <style>
 :root{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color-scheme:light dark}
 body{max-width:560px;margin:36px auto;padding:0 18px;line-height:1.5}
@@ -63,7 +63,7 @@ small,.muted{opacity:.72}
 <hr>
 <h2>Cập nhật Firmware OTA</h2>
 <p id="firmwareStatus" role="status">Đang đọc phiên bản firmware...</p>
-<p class="muted">Hỗ trợ file BIN hoặc ZIP chứa duy nhất một firmware ứng dụng BIN. Không tắt nguồn trong quá trình cập nhật.</p>
+<p class="muted">Hỗ trợ tệp BIN hoặc ZIP chỉ chứa một firmware ứng dụng BIN. Không tắt nguồn trong quá trình cập nhật.</p>
 <label for="firmware">Firmware BIN / ZIP</label>
 <input id="firmware" type="file" accept=".bin,.zip,application/octet-stream,application/zip">
 <p id="otaFileInfo" class="muted">Chưa chọn tệp.</p>
