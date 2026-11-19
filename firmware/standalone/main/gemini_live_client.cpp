@@ -13,6 +13,7 @@
 #include <cJSON.h>
 #include <esp_crt_bundle.h>
 #include <esp_event.h>
+#include <esp_heap_caps.h>
 #include <esp_log.h>
 #include <esp_netif_sntp.h>
 #include <esp_websocket_client.h>
@@ -20,6 +21,7 @@
 #include <freertos/queue.h>
 #include <freertos/task.h>
 #include <mbedtls/base64.h>
+#include <mbedtls/error.h>
 
 #include "audio_manager.h"
 #include "gemini_settings.h"
@@ -342,11 +344,35 @@ void WebSocketEventHandler(void*, esp_event_base_t, int32_t event_id, void* even
                 if (event->error_handle.esp_tls_last_esp_err != ESP_OK ||
                     event->error_handle.esp_tls_stack_err != 0 ||
                     event->error_handle.esp_tls_cert_verify_flags != 0) {
-                    char detail[160]{};
-                    std::snprintf(detail, sizeof(detail), "tls=%s stack=%d cert_flags=0x%x",
+                    const int stack_error = event->error_handle.esp_tls_stack_err;
+                    const int mbedtls_error = stack_error > 0 ? -stack_error : stack_error;
+                    char mbedtls_message[112]{};
+                    if (mbedtls_error != 0) {
+                        mbedtls_strerror(mbedtls_error, mbedtls_message, sizeof(mbedtls_message));
+                    } else {
+                        std::snprintf(mbedtls_message, sizeof(mbedtls_message), "not reported");
+                    }
+
+                    const size_t internal_free =
+                        heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+                    const size_t internal_largest =
+                        heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+                    const std::time_t system_time = std::time(nullptr);
+
+                    char detail[384]{};
+                    std::snprintf(detail, sizeof(detail),
+                                  "host=generativelanguage.googleapis.com esp=%s(0x%08x) "
+                                  "stack_raw=%d(0x%08x) mbedtls_code=%d text=%s "
+                                  "cert_flags=0x%x unix_time=%lld internal_free=%lu "
+                                  "internal_largest=%lu",
                                   esp_err_to_name(event->error_handle.esp_tls_last_esp_err),
-                                  event->error_handle.esp_tls_stack_err,
-                                  event->error_handle.esp_tls_cert_verify_flags);
+                                  static_cast<unsigned>(event->error_handle.esp_tls_last_esp_err),
+                                  stack_error, static_cast<unsigned>(stack_error),
+                                  mbedtls_error, mbedtls_message,
+                                  event->error_handle.esp_tls_cert_verify_flags,
+                                  static_cast<long long>(system_time),
+                                  static_cast<unsigned long>(internal_free),
+                                  static_cast<unsigned long>(internal_largest));
                     chatai::diagnostics::Add("TLS", "FAIL", detail);
                 }
                 if (event->error_handle.esp_ws_handshake_status_code != 0) {
@@ -694,7 +720,6 @@ void GeminiWorker(void*) {
 
         ESP_LOGI(kTag, "Gemini Live connection started; waiting for setupComplete");
         chatai::diagnostics::Add("MODEL", "INFO", "models/gemini-3.8-live; response modality AUDIO");
-        chatai::diagnostics::Add("WS", "INFO", "client start accepted; waiting for handshake");
         chatai::diagnostics::Add("WS", "INFO", "client start accepted; waiting for handshake");
     }
 }
