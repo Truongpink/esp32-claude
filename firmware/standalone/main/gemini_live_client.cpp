@@ -810,6 +810,10 @@ void GeminiWorker(void*) {
                 continue;
             }
 
+            if (g_ready.load()) {
+                retry_attempt = 0;
+                retry_pending = false;
+            }
             if (g_waiting_setup.load()) {
                 const uint32_t elapsed = static_cast<uint32_t>(xTaskGetTickCount()) -
                                           g_setup_started_tick.load();
