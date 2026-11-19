@@ -22,6 +22,8 @@ The Web Admin supports:
 
 The key is stored in NVS namespace `chatai_ai`, key `gemini_key`. The browser input is cleared after saving or deleting. A blank key is not returned as a substitute for the saved value.
 
+After a successful OTA image is selected, the firmware removes only Wi-Fi SSID/password entries from `chatai_net` and the legacy Xiaozhi `wifi` namespace. The next boot starts the setup access point and requires Wi-Fi provisioning again. The `chatai_ai` namespace is not erased, so the Gemini API Key remains saved. No full NVS or flash erase is performed.
+
 ## HTTP endpoints
 
 | Method | Path | Purpose |
