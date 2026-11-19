@@ -7,6 +7,7 @@ namespace chatai::network {
 
 class NetworkManager {
 public:
+    static esp_err_t ClearSavedCredentials();
     static esp_err_t Initialize();
     static esp_err_t Connect(const std::string& ssid, const std::string& password);
     static bool IsConnected();
