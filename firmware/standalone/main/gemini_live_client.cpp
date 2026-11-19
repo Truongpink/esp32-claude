@@ -394,6 +394,99 @@ void HandleServerMessage(const std::string& message) {
     cJSON_Delete(root);
 }
 
+void ReportWebSocketDisconnectError(const esp_websocket_event_data_t* event) {
+    if (event == nullptr) {
+        chatai::diagnostics::Add("WS", "FAIL", "disconnect event had no data");
+        return;
+    }
+
+    switch (event->error_handle.error_type) {
+        case WEBSOCKET_ERROR_TYPE_TCP_TRANSPORT: {
+            const auto& error = event->error_handle;
+            const int stack_error = error.esp_tls_stack_err;
+            const int mbedtls_error = stack_error > 0 ? -stack_error : stack_error;
+            char mbedtls_message[112]{};
+            if (mbedtls_error != 0) {
+                mbedtls_strerror(mbedtls_error, mbedtls_message,
+                                 sizeof(mbedtls_message));
+            } else {
+                std::snprintf(mbedtls_message, sizeof(mbedtls_message),
+                              "not reported");
+            }
+    
+            const size_t internal_free =
+                heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+            const size_t internal_largest =
+                heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+            const std::time_t system_time = std::time(nullptr);
+    
+            char detail[416]{};
+            std::snprintf(detail, sizeof(detail),
+                          "host=generativelanguage.googleapis.com esp=%s(0x%08x) "
+                          "stack_raw=%d(0x%08x) mbedtls_code=%d text=%s "
+                          "cert_flags=0x%x socket_errno=%d unix_time=%lld "
+                          "internal_free=%lu internal_largest=%lu",
+                          esp_err_to_name(error.esp_tls_last_esp_err),
+                          static_cast<unsigned>(error.esp_tls_last_esp_err),
+                          stack_error, static_cast<unsigned>(stack_error),
+                          mbedtls_error, mbedtls_message,
+                          error.esp_tls_cert_verify_flags,
+                          error.esp_transport_sock_errno,
+                          static_cast<long long>(system_time),
+                          static_cast<unsigned long>(internal_free),
+                          static_cast<unsigned long>(internal_largest));
+            if (mbedtls_error != 0 || error.esp_tls_cert_verify_flags != 0) {
+                const bool fatal_tls = mbedtls_error == -0x3000 ||
+                                       error.esp_tls_cert_verify_flags != 0;
+                if (fatal_tls) {
+                    g_tls_fatal.store(true);
+                    g_retry_blocked.store(true);
+                }
+                ReportTlsFailure(detail, mbedtls_error,
+                                 error.esp_tls_cert_verify_flags);
+            } else {
+                char socket_detail[80]{};
+                std::snprintf(socket_detail, sizeof(socket_detail),
+                              "socket_errno=%d tls=%s",
+                              error.esp_transport_sock_errno,
+                              esp_err_to_name(error.esp_tls_last_esp_err));
+                chatai::diagnostics::Add("WS_SOCKET", "FAIL", socket_detail);
+            }
+            break;
+        }
+    
+        case WEBSOCKET_ERROR_TYPE_HANDSHAKE: {
+            const int http_status = event->error_handle.esp_ws_handshake_status_code;
+            char detail[80]{};
+            std::snprintf(detail, sizeof(detail), "HTTP status=%d", http_status);
+            chatai::diagnostics::Add("WS_HANDSHAKE", "FAIL", detail);
+            if (http_status == 401 || http_status == 403) {
+                g_retry_blocked.store(true);
+                chatai::diagnostics::Add("AUTH", "FAIL",
+                                         "HTTP authentication rejected during WSS handshake");
+            }
+            break;
+        }
+    
+        case WEBSOCKET_ERROR_TYPE_PONG_TIMEOUT:
+            chatai::diagnostics::Add("WS", "FAIL", "WebSocket PONG timeout");
+            break;
+    
+        case WEBSOCKET_ERROR_TYPE_SERVER_CLOSE:
+            chatai::diagnostics::Add("WS", "FAIL", "server closed WebSocket connection");
+            break;
+    
+        case WEBSOCKET_ERROR_TYPE_NONE:
+        default: {
+            char detail[64]{};
+            std::snprintf(detail, sizeof(detail), "error_type=%d",
+                          static_cast<int>(event->error_handle.error_type));
+            chatai::diagnostics::Add("WS", "FAIL", detail);
+            break;
+        }
+    }
+}
+
 void WebSocketEventHandler(void* handler_arg, esp_event_base_t, int32_t event_id, void* event_data) {
     const uint32_t callback_generation =
         static_cast<uint32_t>(reinterpret_cast<uintptr_t>(handler_arg));
@@ -464,107 +557,10 @@ void WebSocketEventHandler(void* handler_arg, esp_event_base_t, int32_t event_id
             }
             break;
 
-        case WEBSOCKET_EVENT_ERROR: {
-            g_waiting_setup.store(false);
-            g_ready.store(false);
-            g_speaking.store(false);
-            g_error.store(true);
-            g_client_failed.store(true);
-            if (g_connection_failure_reported.exchange(true)) break;
-            if (event == nullptr) {
-                chatai::diagnostics::Add("WS", "FAIL", "error event had no data");
-                NotifyConnectionError("GEMINI", "Loi ket noi WSS");
-                break;
-            }
-
-            NotifyConnectionError("GEMINI", "Loi ket noi WSS");
-            switch (event->error_handle.error_type) {
-                case WEBSOCKET_ERROR_TYPE_TCP_TRANSPORT: {
-                    const auto& error = event->error_handle;
-                    const int stack_error = error.esp_tls_stack_err;
-                    const int mbedtls_error = stack_error > 0 ? -stack_error : stack_error;
-                    char mbedtls_message[112]{};
-                    if (mbedtls_error != 0) {
-                        mbedtls_strerror(mbedtls_error, mbedtls_message,
-                                         sizeof(mbedtls_message));
-                    } else {
-                        std::snprintf(mbedtls_message, sizeof(mbedtls_message),
-                                      "not reported");
-                    }
-
-                    const size_t internal_free =
-                        heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
-                    const size_t internal_largest =
-                        heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
-                    const std::time_t system_time = std::time(nullptr);
-
-                    char detail[416]{};
-                    std::snprintf(detail, sizeof(detail),
-                                  "host=generativelanguage.googleapis.com esp=%s(0x%08x) "
-                                  "stack_raw=%d(0x%08x) mbedtls_code=%d text=%s "
-                                  "cert_flags=0x%x socket_errno=%d unix_time=%lld "
-                                  "internal_free=%lu internal_largest=%lu",
-                                  esp_err_to_name(error.esp_tls_last_esp_err),
-                                  static_cast<unsigned>(error.esp_tls_last_esp_err),
-                                  stack_error, static_cast<unsigned>(stack_error),
-                                  mbedtls_error, mbedtls_message,
-                                  error.esp_tls_cert_verify_flags,
-                                  error.esp_transport_sock_errno,
-                                  static_cast<long long>(system_time),
-                                  static_cast<unsigned long>(internal_free),
-                                  static_cast<unsigned long>(internal_largest));
-                    if (mbedtls_error != 0 || error.esp_tls_cert_verify_flags != 0) {
-                        const bool fatal_tls = mbedtls_error == -0x3000 ||
-                                               error.esp_tls_cert_verify_flags != 0;
-                        if (fatal_tls) {
-                            g_tls_fatal.store(true);
-                            g_retry_blocked.store(true);
-                        }
-                        ReportTlsFailure(detail, mbedtls_error,
-                                         error.esp_tls_cert_verify_flags);
-                    } else {
-                        char socket_detail[80]{};
-                        std::snprintf(socket_detail, sizeof(socket_detail),
-                                      "socket_errno=%d tls=%s",
-                                      error.esp_transport_sock_errno,
-                                      esp_err_to_name(error.esp_tls_last_esp_err));
-                        chatai::diagnostics::Add("WS_SOCKET", "FAIL", socket_detail);
-                    }
-                    break;
-                }
-
-                case WEBSOCKET_ERROR_TYPE_HANDSHAKE: {
-                    const int http_status = event->error_handle.esp_ws_handshake_status_code;
-                    char detail[80]{};
-                    std::snprintf(detail, sizeof(detail), "HTTP status=%d", http_status);
-                    chatai::diagnostics::Add("WS_HANDSHAKE", "FAIL", detail);
-                    if (http_status == 401 || http_status == 403) {
-                        g_retry_blocked.store(true);
-                        chatai::diagnostics::Add("AUTH", "FAIL",
-                                                 "HTTP authentication rejected during WSS handshake");
-                    }
-                    break;
-                }
-
-                case WEBSOCKET_ERROR_TYPE_PONG_TIMEOUT:
-                    chatai::diagnostics::Add("WS", "FAIL", "WebSocket PONG timeout");
-                    break;
-
-                case WEBSOCKET_ERROR_TYPE_SERVER_CLOSE:
-                    chatai::diagnostics::Add("WS", "FAIL", "server closed WebSocket connection");
-                    break;
-
-                case WEBSOCKET_ERROR_TYPE_NONE:
-                default: {
-                    char detail[64]{};
-                    std::snprintf(detail, sizeof(detail), "error_type=%d",
-                                  static_cast<int>(event->error_handle.error_type));
-                    chatai::diagnostics::Add("WS", "FAIL", detail);
-                    break;
-                }
-            }
+        case WEBSOCKET_EVENT_ERROR:
+            // The ERROR event is preliminary; esp_websocket_client fills transport
+            // and TLS details before dispatching DISCONNECTED. Defer teardown.
             break;
-        }
 
         case WEBSOCKET_EVENT_DISCONNECTED:
             g_waiting_setup.store(false);
@@ -574,6 +570,7 @@ void WebSocketEventHandler(void* handler_arg, esp_event_base_t, int32_t event_id
             g_client_failed.store(true);
             g_audio_epoch.fetch_add(1);
             ClearAudioQueue();
+            ReportWebSocketDisconnectError(event);
             if (!g_connection_failure_reported.exchange(true)) {
                 ESP_LOGW(kTag, "Gemini Live WebSocket disconnected");
                 chatai::diagnostics::Add("WS", "FAIL", "disconnected");
