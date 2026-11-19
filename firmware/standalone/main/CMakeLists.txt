@@ -13,7 +13,7 @@ idf_component_register(
          "audio_manager.cpp" "gemini_settings.cpp" "gemini_live_client.cpp"
          "web_admin.cpp"
     INCLUDE_DIRS "."
-    REQUIRES app_update spi_flash nvs_flash esp_event esp_netif esp_wifi esp_http_server
+    REQUIRES app_update spi_flash nvs_flash esp_event esp_netif esp_wifi lwip esp_http_server
              mdns esp_driver_i2c esp_driver_i2s esp_driver_gpio esp_websocket_client
              freertos mbedtls
 )
