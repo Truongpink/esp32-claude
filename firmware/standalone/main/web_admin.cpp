@@ -1,6 +1,7 @@
 #include "web_admin.h"
 
 #include <algorithm>
+#include <atomic>
 #include <cstring>
 #include <cstdio>
 #include <mutex>
@@ -27,6 +28,7 @@ constexpr size_t kMaxRequestBody = 512;
 constexpr size_t kMaxApiKeyLength = 256;
 std::string g_csrf_token;
 std::mutex g_ota_mutex;
+std::atomic<bool> g_restart_pending{false};
 
 const char kAdminPage[] = R"html(
 <!doctype html>
@@ -60,6 +62,7 @@ button{border:0;border-radius:12px;padding:12px 16px;background:linear-gradient(
 button:disabled{opacity:.55;cursor:wait}
 button.secondary{background:#ffffff10;border:1px solid #ffffff1a;box-shadow:none;color:#e9e3ff}
 .actions{display:flex;gap:9px;flex-wrap:wrap;margin-top:13px}
+button.danger{background:linear-gradient(135deg,#b74a5a,#852c49);box-shadow:0 7px 18px #a8324a35}
 hr{border:0;border-top:1px solid #ffffff12;margin:18px 0}
 #result,#otaResult{font-size:12px;line-height:1.5;color:#d8caff;min-height:1.4em;margin:12px 0 0;overflow-wrap:anywhere}
 #firmwareStatus{font-size:12px;line-height:1.55;color:#d9d2f0;margin:0 0 12px;overflow-wrap:anywhere}
@@ -80,7 +83,8 @@ hr{border:0;border-top:1px solid #ffffff12;margin:18px 0}
 <div class="card-head"><div class="card-icon" aria-hidden="true">◉</div><div><h2 id="connectionTitle">Trạng thái kết nối</h2><p class="hint">Theo dõi Wi-Fi, Internet và Gemini Live</p></div></div>
 <p id="status">Đang kiểm tra trạng thái...</p>
 <p id="deviceStatus" role="status" aria-live="polite">Đang kiểm tra Wi-Fi, Internet và Gemini Live...</p>
-<div class="actions"><button id="retryGemini" class="secondary">Thử kết nối lại Gemini</button></div>
+<div class="actions"><button id="retryGemini" class="secondary">Thử kết nối lại Gemini</button><button id="restartDevice" class="danger">↻ Khởi động lại ESP32</button></div>
+<p id="restartResult" class="hint" role="status" aria-live="polite"></p>
 </section>
 <section class="card" aria-labelledby="diagnosticsTitle">
 <div class="card-head"><div class="card-icon" aria-hidden="true">≋</div><div><h2 id="diagnosticsTitle">Log chẩn đoán Gemini</h2><p class="hint">Tối đa 8 KB · Không lưu API Key hoặc dữ liệu âm thanh</p></div></div>
@@ -115,6 +119,8 @@ const csrfToken = "__CSRF_TOKEN__";
 const statusText = document.getElementById("status");
 const deviceStatus = document.getElementById("deviceStatus");
 const retryGeminiButton = document.getElementById("retryGemini");
+const restartDeviceButton = document.getElementById("restartDevice");
+const restartResult = document.getElementById("restartResult");
 const resultText = document.getElementById("result");
 const keyInput = document.getElementById("apiKey");
 const saveButton = document.getElementById("save");
@@ -532,6 +538,21 @@ retryGeminiButton.addEventListener("click", async () => {
     retryGeminiButton.disabled = false;
   }
 });
+restartDeviceButton.addEventListener("click", async () => {
+  if (!confirm("Bạn có chắc chắn muốn khởi động lại ESP32? Kết nối Wi-Fi và Web Admin sẽ tạm thời bị gián đoạn.")) return;
+  restartDeviceButton.disabled = true;
+  restartResult.textContent = "Đang gửi lệnh khởi động lại...";
+  try {
+    const response = await fetch("/api/device/restart", {
+      method:"POST", cache:"no-store", headers:{"X-ChatAI-CSRF":csrfToken}
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(data.error || ("Khởi động lại thất bại (HTTP " + response.status + ")"));
+    restartResult.textContent = data.message || "ESP32 đã nhận lệnh và đang khởi động lại.";
+  } catch (error) {
+    restartResult.textContent = "Không nhận được phản hồi xác nhận. Hãy chờ thiết bị khởi động lại rồi tải lại Web Admin. Chi tiết: " + error.message;
+  }
+});
 saveButton.addEventListener("click", async () => {
   const apiKey = keyInput.value.trim();
   if (!apiKey) { resultText.textContent = "Vui lòng nhập Gemini API Key."; return; }
@@ -763,6 +784,37 @@ esp_err_t GeminiReconnectHandler(httpd_req_t* request) {
     return SendJson(request, "200 OK", "{\"message\":\"Đã yêu cầu Gemini kết nối lại.\"}");
 }
 
+esp_err_t DeviceRestartHandler(httpd_req_t* request) {
+    if (!IsAuthorizedMutation(request)) {
+        return SendError(request, "403 Forbidden", "Yêu cầu không hợp lệ");
+    }
+
+    std::unique_lock<std::mutex> ota_lock(g_ota_mutex, std::try_to_lock);
+    if (!ota_lock.owns_lock()) {
+        return SendError(request, "409 Conflict", "Không thể khởi động lại khi đang cập nhật firmware OTA");
+    }
+
+    bool expected = false;
+    if (!g_restart_pending.compare_exchange_strong(expected, true)) {
+        return SendError(request, "409 Conflict", "Thiết bị đang xử lý lệnh khởi động lại");
+    }
+
+    chatai::display::Notify("WEB ADMIN", "Dang khoi dong lai", 2000);
+    const esp_err_t response_result = SendJson(
+        request, "200 OK",
+        "{\"message\":\"ESP32 đã nhận lệnh. Thiết bị đang khởi động lại; Wi-Fi và Web Admin sẽ tạm ngắt.\"}");
+    if (response_result != ESP_OK) {
+        g_restart_pending.store(false);
+        ESP_LOGW(kTag, "Could not send restart confirmation: %s", esp_err_to_name(response_result));
+        return response_result;
+    }
+
+    ESP_LOGW(kTag, "Restart requested through authenticated Web Admin");
+    vTaskDelay(pdMS_TO_TICKS(300));
+    esp_restart();
+    return ESP_OK;
+}
+
 esp_err_t OtaUploadHandler(httpd_req_t* request) {
     if (!IsAuthorizedMutation(request)) {
         return SendError(request, "403 Forbidden", "Yêu cầu không hợp lệ");
@@ -912,6 +964,11 @@ esp_err_t RegisterRoutes(httpd_handle_t server, const std::string& csrf_token) {
     reconnect_uri.method = HTTP_POST;
     reconnect_uri.handler = GeminiReconnectHandler;
 
+    httpd_uri_t restart_uri{};
+    restart_uri.uri = "/api/device/restart";
+    restart_uri.method = HTTP_POST;
+    restart_uri.handler = DeviceRestartHandler;
+
     httpd_uri_t save_uri{};
     save_uri.uri = "/api/gemini/key";
     save_uri.method = HTTP_POST;
@@ -942,6 +999,7 @@ esp_err_t RegisterRoutes(httpd_handle_t server, const std::string& csrf_token) {
     if (result == ESP_OK) result = httpd_register_uri_handler(server, &status_uri);
     if (result == ESP_OK) result = httpd_register_uri_handler(server, &device_status_uri);
     if (result == ESP_OK) result = httpd_register_uri_handler(server, &reconnect_uri);
+    if (result == ESP_OK) result = httpd_register_uri_handler(server, &restart_uri);
     if (result == ESP_OK) result = httpd_register_uri_handler(server, &save_uri);
     if (result == ESP_OK) result = httpd_register_uri_handler(server, &delete_uri);
     if (result == ESP_OK) result = httpd_register_uri_handler(server, &diagnostics_uri);
