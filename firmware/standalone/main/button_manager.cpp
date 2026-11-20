@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <atomic>
 #include <cstdio>
+#include <cstring>
 
 #include <driver/gpio.h>
 #include <esp_log.h>
