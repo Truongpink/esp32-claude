@@ -42,7 +42,7 @@ const char kAdminPage[] = R"html(
 :root{color-scheme:dark;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:#090914;color:#f4f1ff;font-synthesis:none}
 *{box-sizing:border-box}
 body{margin:0;min-height:100vh;padding:28px 16px 44px;background:radial-gradient(ellipse at 50% -10%,#38206a 0,transparent 48%),linear-gradient(160deg,#0c0b19,#111020 58%,#090914)}
-main{width:100%;max-width:480px;margin:0 auto}
+main{width:100%;max-width:680px;margin:0 auto}
 header{display:flex;align-items:center;gap:13px;margin:0 2px 22px}
 .brand-mark{width:48px;height:48px;display:grid;place-items:center;border-radius:16px;background:linear-gradient(145deg,#9b5cff,#6034d6);box-shadow:0 8px 28px #8149ff45;font-size:24px}
 h1{font-size:21px;line-height:1.2;margin:0;font-weight:760;letter-spacing:-.35px}
@@ -69,6 +69,10 @@ hr{border:0;border-top:1px solid #ffffff12;margin:18px 0}
 #otaFileInfo{margin:9px 0}
 .progress{height:8px;background:#ffffff12;border-radius:20px;overflow:hidden;margin-top:13px}
 #otaProgress{height:100%;width:0;background:linear-gradient(90deg,#9b5cff,#55d6c2);transition:width .12s}
+.tabbar{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:7px;padding:7px;margin:0 0 16px;border:1px solid #ffffff14;border-radius:16px;background:#100f20;position:sticky;top:8px;z-index:5;backdrop-filter:blur(14px)}
+.tabbar button{min-width:0;padding:11px 5px;border-radius:11px;background:transparent;border:1px solid transparent;box-shadow:none;color:#aaa2c5;font-size:12px;white-space:nowrap}
+.tabbar button[aria-selected="true"]{background:linear-gradient(135deg,#7043c9,#4b3291);border-color:#b89aff55;color:#fff}
+.tab-panel[hidden]{display:none}
 .foot{text-align:center;color:#77718f;font-size:11px;margin:20px 0 0}
 @media(min-width:600px){body{padding-top:44px}}
 </style>
@@ -79,21 +83,27 @@ hr{border:0;border-top:1px solid #ffffff12;margin:18px 0}
 <div class="brand-mark" aria-hidden="true">✦</div>
 <div><h1>ChatAI TPIOS</h1><p class="subtitle">Trung tâm điều khiển thiết bị</p></div>
 </header>
-<section class="card" aria-labelledby="connectionTitle">
+<nav class="tabbar" role="tablist" aria-label="Các mục quản trị">
+<button type="button" role="tab" data-tab="overview" aria-selected="true">Tổng quan</button>
+<button type="button" role="tab" data-tab="gemini" aria-selected="false">Gemini AI</button>
+<button type="button" role="tab" data-tab="ota" aria-selected="false">Cập nhật</button>
+<button type="button" role="tab" data-tab="logs" aria-selected="false">Nhật ký</button>
+</nav>
+<section class="card tab-panel" data-panel="overview" role="tabpanel" aria-labelledby="connectionTitle">
 <div class="card-head"><div class="card-icon" aria-hidden="true">◉</div><div><h2 id="connectionTitle">Trạng thái kết nối</h2><p class="hint">Theo dõi Wi-Fi, Internet và Gemini Live</p></div></div>
 <p id="status">Đang kiểm tra trạng thái...</p>
 <p id="deviceStatus" role="status" aria-live="polite">Đang kiểm tra Wi-Fi, Internet và Gemini Live...</p>
 <div class="actions"><button id="retryGemini" class="secondary">Thử kết nối lại Gemini</button><button id="restartDevice" class="danger">↻ Khởi động lại ESP32</button></div>
 <p id="restartResult" class="hint" role="status" aria-live="polite"></p>
 </section>
-<section class="card" aria-labelledby="diagnosticsTitle">
+<section class="card tab-panel" data-panel="logs" role="tabpanel" aria-labelledby="diagnosticsTitle" hidden>
 <div class="card-head"><div class="card-icon" aria-hidden="true">≋</div><div><h2 id="diagnosticsTitle">Log chẩn đoán Gemini</h2><p class="hint">Tối đa 8 KB · Không lưu API Key hoặc dữ liệu âm thanh</p></div></div>
 <pre id="diagnosticLog" style="white-space:pre-wrap;overflow-wrap:anywhere;max-height:260px;overflow:auto;background:#0d0c19;border:1px solid #ffffff18;border-radius:12px;padding:12px;color:#d9d2f0;font:11px/1.55 ui-monospace,monospace">Đang tải log...</pre>
 <textarea id="diagnosticCopyFallback" readonly hidden aria-label="Log chẩn đoán để sao chép" style="width:100%;min-height:150px;margin-top:10px;padding:12px;border:1px solid #a477ff;border-radius:12px;background:#0d0c19;color:#f5f1ff;font:11px/1.55 ui-monospace,monospace"></textarea>
 <div class="actions"><button id="copyDiagnostic" class="secondary">Sao chép log</button><button id="clearDiagnostic" class="secondary">Xóa log</button></div>
 <p id="diagnosticResult" class="hint" role="status" aria-live="polite"></p>
 </section>
-<section class="card" aria-labelledby="geminiTitle">
+<section class="card tab-panel" data-panel="gemini" role="tabpanel" aria-labelledby="geminiTitle" hidden>
 <div class="card-head"><div class="card-icon" aria-hidden="true">✧</div><div><h2 id="geminiTitle">Cấu hình Gemini Live</h2><p class="hint">API Key được lưu an toàn trong bộ nhớ thiết bị</p></div></div>
 <label for="apiKey">Gemini API Key</label>
 <input id="apiKey" type="password" maxlength="256" autocomplete="new-password" autocapitalize="off" spellcheck="false" placeholder="Nhập API Key mới">
@@ -101,7 +111,7 @@ hr{border:0;border-top:1px solid #ffffff12;margin:18px 0}
 <div class="actions"><button id="save">Lưu API Key</button><button id="remove" class="secondary" hidden>Xóa API Key</button></div>
 <p id="result" role="status" aria-live="polite"></p>
 </section>
-<section class="card" aria-labelledby="otaTitle">
+<section class="card tab-panel" data-panel="ota" role="tabpanel" aria-labelledby="otaTitle" hidden>
 <div class="card-head"><div class="card-icon" aria-hidden="true">⇧</div><div><h2 id="otaTitle">Cập nhật Firmware OTA</h2><p class="hint">Cập nhật trực tiếp từ điện thoại, không cần cáp USB</p></div></div>
 <p id="firmwareStatus" role="status">Đang đọc phiên bản firmware...</p>
 <p class="hint">Chọn tệp BIN hoặc ZIP chỉ chứa một firmware ứng dụng BIN. Không tắt nguồn trong quá trình cập nhật.</p>
@@ -137,6 +147,18 @@ const copyDiagnosticButton = document.getElementById("copyDiagnostic");
 const clearDiagnosticButton = document.getElementById("clearDiagnostic");
 let otaMaxBytes = 0;
 let currentBuildNumber = 0;
+
+document.querySelectorAll("[data-tab]").forEach(button => {
+  button.addEventListener("click", () => {
+    const selected = button.dataset.tab;
+    document.querySelectorAll("[data-tab]").forEach(tab => {
+      tab.setAttribute("aria-selected", String(tab === button));
+    });
+    document.querySelectorAll("[data-panel]").forEach(panel => {
+      panel.hidden = panel.dataset.panel !== selected;
+    });
+  });
+});
 
 function formatBytes(bytes) {
   return (bytes / 1048576).toFixed(2) + " MB";
