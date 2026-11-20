@@ -40,13 +40,6 @@ constexpr char kSsidKey[] = "ssid";
 constexpr char kPasswordKey[] = "password";
 constexpr char kFirmwareBuildKey[] = "fw_build";
 
-std::string CurrentFirmwareBuildId() {
-    char id[64]{};
-    std::snprintf(id, sizeof(id), "%lu-%s-%s",
-                  static_cast<unsigned long>(chatai::firmware::kBuildNumber),
-                  __DATE__, __TIME__);
-    return id;
-}
 constexpr uint8_t kMaxReconnectAttempts = 5;
 constexpr size_t kMaxFormLength = 256;
 
@@ -197,7 +190,7 @@ void InternetCheckTask(void*) {
                     g_wifi_setup_state.store(5);
                 }
             }
-            if (g_provisioning_started.load()) StopProvisioning();
+            if (g_provisioning_started.load() && !g_connection_pending.load()) StopProvisioning();
         } else if (g_connection_pending.load() &&
                    g_wifi_setup_state.load() == 2 &&
                    (xTaskGetTickCount() - g_attempt_started_ticks.load()) > pdMS_TO_TICKS(30000)) {
@@ -208,8 +201,6 @@ void InternetCheckTask(void*) {
         vTaskDelay(pdMS_TO_TICKS(available ? 10000 : 5000));
     }
 }
-
-esp_err_t SaveCredentials(const std::string& ssid, const std::string& password);
 
 bool ReadCredentials(const char* name_space, const char* ssid_key,
                      const char* password_key, std::string& ssid,
