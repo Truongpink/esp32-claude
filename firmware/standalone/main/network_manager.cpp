@@ -29,6 +29,7 @@
 #include <esp_netif.h>
 #include <esp_random.h>
 #include <esp_wifi.h>
+#include <esp_netif.h>
 #include <lwip/ip4_addr.h>
 #include <nvs.h>
 
@@ -993,6 +994,38 @@ std::string NetworkManager::GetGatewayAddress() {
         ip_info.gw.addr == 0) return {};
     char address[16]{};
     std::snprintf(address, sizeof(address), IPSTR, IP2STR(&ip_info.gw));
+    return address;
+}
+
+
+std::string NetworkManager::GetSsid() {
+    if (!g_connected.load()) return {};
+    wifi_config_t config{};
+    if (esp_wifi_get_config(WIFI_IF_STA, &config) != ESP_OK) return {};
+    return std::string(reinterpret_cast<const char*>(config.sta.ssid));
+}
+
+int NetworkManager::GetRssi() {
+    if (!g_connected.load()) return 0;
+    wifi_ap_record_t record{};
+    return esp_wifi_sta_get_ap_info(&record) == ESP_OK ? record.rssi : 0;
+}
+
+std::string NetworkManager::GetDnsAddress() {
+    if (!g_connected.load() || g_sta_netif == nullptr) return {};
+    esp_netif_dns_info_t dns{};
+    if (esp_netif_get_dns_info(g_sta_netif, ESP_NETIF_DNS_MAIN, &dns) != ESP_OK) return {};
+    char address[16]{};
+    std::snprintf(address, sizeof(address), IPSTR, IP2STR(&dns.ip.u_addr.ip4));
+    return address;
+}
+
+std::string NetworkManager::GetSoftApIpAddress() {
+    if (g_ap_netif == nullptr || !g_provisioning_started.load()) return {};
+    esp_netif_ip_info_t info{};
+    if (esp_netif_get_ip_info(g_ap_netif, &info) != ESP_OK || info.ip.addr == 0) return {};
+    char address[16]{};
+    std::snprintf(address, sizeof(address), IPSTR, IP2STR(&info.ip));
     return address;
 }
 
