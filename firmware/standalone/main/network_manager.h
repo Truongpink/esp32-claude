@@ -18,6 +18,8 @@ public:
     static int GetRssi();
     static std::string GetDnsAddress();
     static std::string GetSoftApIpAddress();
+    static int GetDnsProbeState();
+    static int GetTcp443ProbeState();
     static bool IsProvisioningActive();
     static bool HasSavedCredentials();
     static std::string GetProvisioningSsid();
