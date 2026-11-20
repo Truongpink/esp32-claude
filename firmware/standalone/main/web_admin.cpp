@@ -930,29 +930,37 @@ esp_err_t FirmwareStatusHandler(httpd_req_t* request) {
     return SendJson(request, "200 OK", body);
 }
 esp_err_t DeviceStatusHandler(httpd_req_t* request) {
-    const bool wifi_connected = chatai::network::NetworkManager::IsConnected();
-    const bool internet_available = chatai::network::NetworkManager::IsInternetAvailable();
-    const bool key_configured = chatai::settings::HasGeminiApiKey();
-    const bool gemini_ready = chatai::gemini::IsReady();
-    const bool gemini_error = chatai::gemini::HasError();
-    const bool gemini_tls_fatal = chatai::gemini::IsTlsFatal();
+    cJSON* root = cJSON_CreateObject();
+    if (root == nullptr) return SendError(request, "500 Internal Server Error", "Không đủ bộ nhớ");
+    const bool wifi = chatai::network::NetworkManager::IsConnected();
+    cJSON_AddBoolToObject(root, "wifi_connected", wifi);
+    cJSON_AddBoolToObject(root, "internet_available", chatai::network::NetworkManager::IsInternetAvailable());
+    cJSON_AddBoolToObject(root, "key_configured", chatai::settings::HasGeminiApiKey());
+    cJSON_AddBoolToObject(root, "gemini_ready", chatai::gemini::IsReady());
+    cJSON_AddBoolToObject(root, "gemini_error", chatai::gemini::HasError());
+    cJSON_AddBoolToObject(root, "gemini_tls_fatal", chatai::gemini::IsTlsFatal());
+    const std::string ssid = chatai::network::NetworkManager::GetSsid();
     const std::string ip = chatai::network::NetworkManager::GetIpAddress();
     const std::string gateway = chatai::network::NetworkManager::GetGatewayAddress();
-
-    char body[448]{};
-    std::snprintf(body, sizeof(body),
-        "{\"wifi_connected\":%s,\"internet_available\":%s,"
-        "\"key_configured\":%s,\"gemini_ready\":%s,"
-        "\"gemini_error\":%s,\"gemini_tls_fatal\":%s,"
-        "\"ip\":\"%s\",\"gateway\":\"%s\",\"speaker_volume\":%d}",
-        wifi_connected ? "true" : "false",
-        internet_available ? "true" : "false",
-        key_configured ? "true" : "false",
-        gemini_ready ? "true" : "false",
-        gemini_error ? "true" : "false",
-        gemini_tls_fatal ? "true" : "false",
-        ip.c_str(), gateway.c_str(), chatai::audio::GetOutputVolume());
-    return SendJson(request, "200 OK", body);
+    const std::string dns = chatai::network::NetworkManager::GetDnsAddress();
+    const std::string ap_ip = chatai::network::NetworkManager::GetSoftApIpAddress();
+    cJSON_AddStringToObject(root, "ssid", ssid.c_str());
+    cJSON_AddStringToObject(root, "ip", ip.c_str());
+    cJSON_AddStringToObject(root, "gateway", gateway.c_str());
+    cJSON_AddStringToObject(root, "dns", dns.c_str());
+    cJSON_AddStringToObject(root, "softap_ip", ap_ip.c_str());
+    cJSON_AddNumberToObject(root, "rssi", chatai::network::NetworkManager::GetRssi());
+    cJSON_AddNumberToObject(root, "speaker_volume", chatai::audio::GetOutputVolume());
+    cJSON_AddNumberToObject(root, "free_heap", esp_get_free_heap_size());
+    cJSON_AddNumberToObject(root, "min_free_heap", esp_get_minimum_free_heap_size());
+    cJSON_AddNumberToObject(root, "uptime_seconds", esp_timer_get_time() / 1000000);
+    cJSON_AddNumberToObject(root, "build_number", chatai::firmware::kBuildNumber);
+    char* json = cJSON_PrintUnformatted(root);
+    cJSON_Delete(root);
+    if (json == nullptr) return SendError(request, "500 Internal Server Error", "Không thể tạo trạng thái thiết bị");
+    const esp_err_t result = SendJson(request, "200 OK", json);
+    cJSON_free(json);
+    return result;
 }
 
 esp_err_t DiagnosticsHandler(httpd_req_t* request) {
@@ -968,6 +976,56 @@ esp_err_t DiagnosticsClearHandler(httpd_req_t* request) {
     }
     chatai::diagnostics::Clear();
     return SendJson(request, "200 OK", "{\"message\":\"Đã xóa log.\"}");
+}
+
+esp_err_t GeminiSettingsHandler(httpd_req_t* request) {
+    cJSON* root = cJSON_CreateObject();
+    if (root == nullptr) return SendError(request, "500 Internal Server Error", "Không đủ bộ nhớ");
+    const std::string voice = chatai::settings::GetGeminiVoice();
+    const std::string prompt = chatai::settings::GetGeminiSystemPrompt();
+    cJSON_AddStringToObject(root, "voice", voice.c_str());
+    cJSON_AddStringToObject(root, "system_prompt", prompt.c_str());
+    cJSON_AddNumberToObject(root, "max_prompt_bytes", chatai::settings::GetMaxGeminiSystemPromptBytes());
+    char* json = cJSON_PrintUnformatted(root);
+    cJSON_Delete(root);
+    if (json == nullptr) return SendError(request, "500 Internal Server Error", "Không thể tạo cấu hình");
+    const esp_err_t result = SendJson(request, "200 OK", json);
+    cJSON_free(json);
+    return result;
+}
+
+esp_err_t GeminiVoicePostHandler(httpd_req_t* request) {
+    if (!IsAuthorizedMutation(request)) return SendError(request, "403 Forbidden", "Yêu cầu không hợp lệ");
+    std::string body;
+    if (!ReadBody(request, body)) return SendError(request, "400 Bad Request", "Dữ liệu giọng nói không hợp lệ");
+    cJSON* root = cJSON_ParseWithLength(body.c_str(), body.size());
+    const cJSON* item = cJSON_IsObject(root) ? cJSON_GetObjectItemCaseSensitive(root, "voice") : nullptr;
+    const std::string voice = cJSON_IsString(item) && item->valuestring ? item->valuestring : "";
+    if (root != nullptr) cJSON_Delete(root);
+    if (!chatai::settings::IsSupportedGeminiVoice(voice)) return SendError(request, "400 Bad Request", "Giọng nói Gemini Live không hợp lệ");
+    const esp_err_t result = chatai::settings::SaveGeminiVoice(voice);
+    if (result != ESP_OK) return SendError(request, "500 Internal Server Error", "Không thể lưu giọng nói vào NVS");
+    chatai::display::Notify("GEMINI", "Da luu giong noi");
+    if (chatai::settings::HasGeminiApiKey()) chatai::gemini::RequestReconnect();
+    return SendJson(request, "200 OK", "{\"message\":\"Đã lưu giọng nói. Phiên Gemini Live mới sẽ sử dụng lựa chọn này.\"}");
+}
+
+esp_err_t GeminiPromptPostHandler(httpd_req_t* request) {
+    if (!IsAuthorizedMutation(request)) return SendError(request, "403 Forbidden", "Yêu cầu không hợp lệ");
+    std::string body;
+    if (!ReadBody(request, body)) return SendError(request, "413 Payload Too Large", "Prompt vượt giới hạn dữ liệu");
+    cJSON* root = cJSON_ParseWithLength(body.c_str(), body.size());
+    const cJSON* item = cJSON_IsObject(root) ? cJSON_GetObjectItemCaseSensitive(root, "system_prompt") : nullptr;
+    const bool valid = cJSON_IsString(item) && item->valuestring != nullptr;
+    const std::string prompt = valid ? item->valuestring : "";
+    if (root != nullptr) cJSON_Delete(root);
+    if (!valid || prompt.empty()) return SendError(request, "400 Bad Request", "System Prompt không được để trống");
+    if (prompt.size() > chatai::settings::GetMaxGeminiSystemPromptBytes()) return SendError(request, "413 Payload Too Large", "System Prompt vượt quá 3000 byte UTF-8");
+    const esp_err_t result = chatai::settings::SaveGeminiSystemPrompt(prompt);
+    if (result != ESP_OK) return SendError(request, "500 Internal Server Error", "Không thể lưu System Prompt vào NVS");
+    chatai::display::Notify("GEMINI", "Da luu System Prompt");
+    if (chatai::settings::HasGeminiApiKey()) chatai::gemini::RequestReconnect();
+    return SendJson(request, "200 OK", "{\"message\":\"Đã lưu System Prompt. Phiên Gemini Live mới sẽ áp dụng.\"}");
 }
 
 esp_err_t GeminiStatusHandler(httpd_req_t* request) {
