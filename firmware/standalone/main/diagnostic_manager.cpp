@@ -131,8 +131,11 @@ std::string Get() {
 }
 
 void Clear() {
-    std::lock_guard<std::mutex> lock(g_mutex);
-    g_log.clear();
+    {
+        std::lock_guard<std::mutex> lock(g_mutex);
+        g_log.clear();
+    }
+    ClearCrashContext();
 }
 
 void SetCrashContext(const char* stage, const char* detail) {
