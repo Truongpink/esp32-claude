@@ -1290,6 +1290,21 @@ esp_err_t RegisterRoutes(httpd_handle_t server, const std::string& csrf_token) {
     status_uri.method = HTTP_GET;
     status_uri.handler = GeminiStatusHandler;
 
+    httpd_uri_t gemini_settings_uri{};
+    gemini_settings_uri.uri = "/api/gemini/settings";
+    gemini_settings_uri.method = HTTP_GET;
+    gemini_settings_uri.handler = GeminiSettingsHandler;
+
+    httpd_uri_t gemini_voice_uri{};
+    gemini_voice_uri.uri = "/api/gemini/voice";
+    gemini_voice_uri.method = HTTP_POST;
+    gemini_voice_uri.handler = GeminiVoicePostHandler;
+
+    httpd_uri_t gemini_prompt_uri{};
+    gemini_prompt_uri.uri = "/api/gemini/prompt";
+    gemini_prompt_uri.method = HTTP_POST;
+    gemini_prompt_uri.handler = GeminiPromptPostHandler;
+
     httpd_uri_t device_status_uri{};
     device_status_uri.uri = "/api/device/status";
     device_status_uri.method = HTTP_GET;
@@ -1343,6 +1358,9 @@ esp_err_t RegisterRoutes(httpd_handle_t server, const std::string& csrf_token) {
     esp_err_t result = httpd_register_uri_handler(server, &admin_uri);
     if (result == ESP_OK) result = httpd_register_uri_handler(server, &firmware_status_uri);
     if (result == ESP_OK) result = httpd_register_uri_handler(server, &status_uri);
+    if (result == ESP_OK) result = httpd_register_uri_handler(server, &gemini_settings_uri);
+    if (result == ESP_OK) result = httpd_register_uri_handler(server, &gemini_voice_uri);
+    if (result == ESP_OK) result = httpd_register_uri_handler(server, &gemini_prompt_uri);
     if (result == ESP_OK) result = httpd_register_uri_handler(server, &audio_volume_uri);
     if (result == ESP_OK) result = httpd_register_uri_handler(server, &wifi_connect_uri);
     if (result == ESP_OK) result = httpd_register_uri_handler(server, &device_status_uri);
