@@ -8,7 +8,7 @@ This document describes the standalone ESP32-S3 client's direct Gemini Live conn
   `wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent`
 - Authenticate with the API Key stored in NVS. Never log the full credential-bearing URL or API Key.
 - Gemini 3.8 Live uses the documented v1beta WebSocket endpoint.
-- Set `responseModalities: ["AUDIO"]` directly inside the `setup` object (not inside `generationConfig`).
+- Set `generationConfig.responseModalities: ["AUDIO"]` inside `setup.generationConfig` (not directly inside `setup`).
 - Include the Vietnamese system instruction in the `setup` message.
 - Wait for `setupComplete` before sending microphone audio.
 - The configured model is sent as `models/<model-id>`.
