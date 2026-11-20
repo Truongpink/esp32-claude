@@ -14,6 +14,10 @@ public:
     static bool IsInternetAvailable();
     static std::string GetIpAddress();
     static std::string GetGatewayAddress();
+    static std::string GetSsid();
+    static int GetRssi();
+    static std::string GetDnsAddress();
+    static std::string GetSoftApIpAddress();
     static bool IsProvisioningActive();
     static bool HasSavedCredentials();
     static std::string GetProvisioningSsid();
