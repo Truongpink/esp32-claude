@@ -70,7 +70,7 @@ hr{border:0;border-top:1px solid #ffffff12;margin:18px 0}
 #otaFileInfo{margin:9px 0}
 .progress{height:8px;background:#ffffff12;border-radius:20px;overflow:hidden;margin-top:13px}
 #otaProgress{height:100%;width:0;background:linear-gradient(90deg,#9b5cff,#55d6c2);transition:width .12s}
-.tabbar{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:7px;padding:7px;margin:0 0 16px;border:1px solid #ffffff14;border-radius:16px;background:#100f20;position:sticky;top:8px;z-index:5;backdrop-filter:blur(14px)}
+.tabbar{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:7px;padding:7px;margin:0 0 16px;border:1px solid #ffffff14;border-radius:16px;background:#100f20;position:sticky;top:8px;z-index:5;backdrop-filter:blur(14px)}
 .tabbar button{min-width:0;padding:11px 5px;border-radius:11px;background:transparent;border:1px solid transparent;box-shadow:none;color:#aaa2c5;font-size:12px;white-space:nowrap}
 .tabbar button[aria-selected="true"]{background:linear-gradient(135deg,#7043c9,#4b3291);border-color:#b89aff55;color:#fff}
 .tab-panel[hidden]{display:none}
@@ -86,6 +86,7 @@ hr{border:0;border-top:1px solid #ffffff12;margin:18px 0}
 </header>
 <nav class="tabbar" role="tablist" aria-label="Các mục quản trị">
 <button type="button" role="tab" data-tab="overview" aria-selected="true">Tổng quan</button>
+<button type="button" role="tab" data-tab="wifi" aria-selected="false">Wi-Fi</button>
 <button type="button" role="tab" data-tab="gemini" aria-selected="false">Gemini AI</button>
 <button type="button" role="tab" data-tab="audio" aria-selected="false">Âm thanh</button>
 <button type="button" role="tab" data-tab="ota" aria-selected="false">Cập nhật</button>
@@ -97,6 +98,17 @@ hr{border:0;border-top:1px solid #ffffff12;margin:18px 0}
 <p id="deviceStatus" role="status" aria-live="polite">Đang kiểm tra Wi-Fi, Internet và Gemini Live...</p>
 <div class="actions"><button id="retryGemini" class="secondary">Thử kết nối lại Gemini</button><button id="restartDevice" class="danger">↻ Khởi động lại ESP32</button></div>
 <p id="restartResult" class="hint" role="status" aria-live="polite"></p>
+</section>
+<section class="card tab-panel" data-panel="wifi" role="tabpanel" aria-labelledby="wifiTitle" hidden>
+<div class="card-head"><div class="card-icon" aria-hidden="true">⌁</div><div><h2 id="wifiTitle">Cấu hình Wi-Fi</h2><p class="hint">Quét mạng, đổi Wi-Fi và xác minh Internet trước khi lưu</p></div></div>
+<p id="wifiAdminStatus" class="hint" role="status" aria-live="polite">Đang đọc trạng thái Wi-Fi...</p>
+<label for="wifiSsid">Tên mạng Wi-Fi (SSID)</label>
+<select id="wifiSsid" style="width:100%;padding:13px;border:1px solid #ffffff20;border-radius:12px;background:#0d0c19;color:#f5f1ff;font:inherit"><option value="">Chạm Quét Wi-Fi để tìm mạng</option></select>
+<div class="actions"><button type="button" id="scanAdminWifi" class="secondary">Quét Wi-Fi</button></div>
+<label for="wifiPassword">Mật khẩu Wi-Fi</label>
+<div style="display:flex;gap:8px"><input id="wifiPassword" type="password" maxlength="64" autocomplete="current-password" placeholder="Nhập mật khẩu Wi-Fi" style="flex:1;min-width:0"><button type="button" id="toggleWifiPassword" class="secondary">Hiện</button></div>
+<div class="actions"><button type="button" id="connectAdminWifi">Lưu và kết nối</button></div>
+<p class="hint">Thông tin Wi-Fi chỉ được lưu vào NVS sau khi thiết bị kết nối router, nhận IP và xác minh DNS/TCP 443 thành công. SoftAP cấu hình được giữ trong lúc thử kết nối.</p>
 </section>
 <section class="card tab-panel" data-panel="logs" role="tabpanel" aria-labelledby="diagnosticsTitle" hidden>
 <div class="card-head"><div class="card-icon" aria-hidden="true">≋</div><div><h2 id="diagnosticsTitle">Log chẩn đoán Gemini</h2><p class="hint">Tối đa 8 KB · Không lưu API Key hoặc dữ liệu âm thanh</p></div></div>
@@ -159,6 +171,13 @@ const speakerVolumeInput = document.getElementById("speakerVolume");
 const speakerVolumeValue = document.getElementById("speakerVolumeValue");
 const saveSpeakerVolumeButton = document.getElementById("saveSpeakerVolume");
 const audioResult = document.getElementById("audioResult");
+const wifiSsidInput = document.getElementById("wifiSsid");
+const wifiPasswordInput = document.getElementById("wifiPassword");
+const wifiAdminStatus = document.getElementById("wifiAdminStatus");
+const scanAdminWifiButton = document.getElementById("scanAdminWifi");
+const connectAdminWifiButton = document.getElementById("connectAdminWifi");
+const toggleWifiPasswordButton = document.getElementById("toggleWifiPassword");
+let wifiPollAttempts = 0;
 let otaMaxBytes = 0;
 let currentBuildNumber = 0;
 
@@ -192,6 +211,77 @@ saveSpeakerVolumeButton.addEventListener("click", async () => {
   } catch (error) {
     audioResult.textContent = error.message;
   } finally { saveSpeakerVolumeButton.disabled = false; }
+});
+
+async function scanAdminWifi() {
+  scanAdminWifiButton.disabled = true;
+  wifiAdminStatus.textContent = "Đang quét các mạng Wi-Fi...";
+  try {
+    const response = await fetch("/api/wifi/scan", {cache:"no-store"});
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(data.error || ("Quét Wi-Fi thất bại (HTTP " + response.status + ")"));
+    const previous = wifiSsidInput.value;
+    wifiSsidInput.replaceChildren();
+    (data.networks || []).forEach(network => {
+      const option = document.createElement("option");
+      option.value = network.ssid;
+      option.textContent = network.ssid + " · " + network.rssi + " dBm";
+      wifiSsidInput.appendChild(option);
+    });
+    if (!wifiSsidInput.options.length) {
+      const option = document.createElement("option");
+      option.value = "";
+      option.textContent = "Không tìm thấy mạng Wi-Fi";
+      wifiSsidInput.appendChild(option);
+    } else if (Array.from(wifiSsidInput.options).some(option => option.value === previous)) {
+      wifiSsidInput.value = previous;
+    }
+    wifiAdminStatus.textContent = "Đã tìm thấy " + (data.networks || []).length + " mạng Wi-Fi.";
+  } catch (error) {
+    wifiAdminStatus.textContent = error.message;
+  } finally { scanAdminWifiButton.disabled = false; }
+}
+scanAdminWifiButton.addEventListener("click", scanAdminWifi);
+toggleWifiPasswordButton.addEventListener("click", () => {
+  const visible = wifiPasswordInput.type === "password";
+  wifiPasswordInput.type = visible ? "text" : "password";
+  toggleWifiPasswordButton.textContent = visible ? "Ẩn" : "Hiện";
+});
+async function pollAdminWifiStatus() {
+  try {
+    const response = await fetch("/api/wifi/status", {cache:"no-store"});
+    if (!response.ok) throw new Error("Không đọc được trạng thái Wi-Fi (HTTP " + response.status + ")");
+    const state = await response.json();
+    wifiAdminStatus.textContent = state.message + (state.ip ? " IP: " + state.ip : "");
+    if ((state.state === 1 || state.state === 2 || state.state === 5) && wifiPollAttempts++ < 60) {
+      setTimeout(pollAdminWifiStatus, 1500);
+    } else if (state.state === 3) {
+      wifiPasswordInput.value = "";
+      await refreshDeviceStatus();
+      wifiAdminStatus.textContent = state.message + (state.ip ? " IP: " + state.ip : "");
+    }
+  } catch (error) { wifiAdminStatus.textContent = error.message; }
+}
+connectAdminWifiButton.addEventListener("click", async () => {
+  const ssid = wifiSsidInput.value;
+  const password = wifiPasswordInput.value;
+  if (!ssid) { wifiAdminStatus.textContent = "Anh hãy chọn mạng Wi-Fi trước."; return; }
+  if (password.length > 64) { wifiAdminStatus.textContent = "Mật khẩu Wi-Fi vượt quá 64 ký tự."; return; }
+  connectAdminWifiButton.disabled = true;
+  wifiPollAttempts = 0;
+  wifiAdminStatus.textContent = "Đang gửi cấu hình Wi-Fi...";
+  try {
+    const response = await fetch("/api/wifi/connect", {
+      method:"POST", cache:"no-store",
+      headers:{"Content-Type":"application/json","X-ChatAI-CSRF":csrfToken},
+      body:JSON.stringify({ssid,password})
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(data.error || ("Không gửi được cấu hình Wi-Fi (HTTP " + response.status + ")"));
+    wifiAdminStatus.textContent = data.message || "Đã nhận cấu hình. Đang kết nối router...";
+    pollAdminWifiStatus();
+  } catch (error) { wifiAdminStatus.textContent = error.message; }
+  finally { connectAdminWifiButton.disabled = false; }
 });
 
 function formatBytes(bytes) {
@@ -852,6 +942,33 @@ esp_err_t AudioVolumePostHandler(httpd_req_t* request) {
     return SendJson(request, "200 OK", "{\"message\":\"Đã lưu âm lượng loa.\"}");
 }
 
+esp_err_t WifiConnectAdminHandler(httpd_req_t* request) {
+    if (!IsAuthorizedMutation(request)) {
+        return SendError(request, "403 Forbidden", "Yêu cầu không hợp lệ");
+    }
+    std::string body;
+    if (!ReadBody(request, body)) {
+        return SendError(request, "400 Bad Request", "Dữ liệu Wi-Fi không hợp lệ");
+    }
+    cJSON* root = cJSON_ParseWithLength(body.c_str(), body.size());
+    const cJSON* ssid_item = cJSON_IsObject(root)
+        ? cJSON_GetObjectItemCaseSensitive(root, "ssid") : nullptr;
+    const cJSON* password_item = cJSON_IsObject(root)
+        ? cJSON_GetObjectItemCaseSensitive(root, "password") : nullptr;
+    const bool valid = cJSON_IsString(ssid_item) && cJSON_IsString(password_item) &&
+        ssid_item->valuestring != nullptr && password_item->valuestring != nullptr &&
+        std::strlen(ssid_item->valuestring) > 0 && std::strlen(ssid_item->valuestring) <= 32 &&
+        std::strlen(password_item->valuestring) <= 64;
+    const std::string ssid = valid ? ssid_item->valuestring : "";
+    const std::string password = valid ? password_item->valuestring : "";
+    if (root != nullptr) cJSON_Delete(root);
+    if (!valid) return SendError(request, "400 Bad Request", "SSID hoặc mật khẩu Wi-Fi không hợp lệ");
+    const esp_err_t result = chatai::network::NetworkManager::Connect(ssid, password);
+    if (result != ESP_OK) return SendError(request, "503 Service Unavailable", "Không thể bắt đầu kết nối Wi-Fi");
+    chatai::display::Notify("WI-FI", "Dang ket noi");
+    return SendJson(request, "200 OK", "{\"message\":\"Đã nhận cấu hình Wi-Fi. Đang kết nối router...\"}");
+}
+
 esp_err_t GeminiReconnectHandler(httpd_req_t* request) {
     if (!IsAuthorizedMutation(request)) {
         return SendError(request, "403 Forbidden", "Yêu cầu không hợp lệ");
@@ -1035,6 +1152,11 @@ esp_err_t RegisterRoutes(httpd_handle_t server, const std::string& csrf_token) {
     audio_volume_uri.method = HTTP_POST;
     audio_volume_uri.handler = AudioVolumePostHandler;
 
+    httpd_uri_t wifi_connect_uri{};
+    wifi_connect_uri.uri = "/api/wifi/connect";
+    wifi_connect_uri.method = HTTP_POST;
+    wifi_connect_uri.handler = WifiConnectAdminHandler;
+
     httpd_uri_t reconnect_uri{};
     reconnect_uri.uri = "/api/gemini/reconnect";
     reconnect_uri.method = HTTP_POST;
@@ -1074,6 +1196,7 @@ esp_err_t RegisterRoutes(httpd_handle_t server, const std::string& csrf_token) {
     if (result == ESP_OK) result = httpd_register_uri_handler(server, &firmware_status_uri);
     if (result == ESP_OK) result = httpd_register_uri_handler(server, &status_uri);
     if (result == ESP_OK) result = httpd_register_uri_handler(server, &audio_volume_uri);
+    if (result == ESP_OK) result = httpd_register_uri_handler(server, &wifi_connect_uri);
     if (result == ESP_OK) result = httpd_register_uri_handler(server, &device_status_uri);
     if (result == ESP_OK) result = httpd_register_uri_handler(server, &reconnect_uri);
     if (result == ESP_OK) result = httpd_register_uri_handler(server, &restart_uri);
