@@ -66,6 +66,21 @@ bool g_sntp_sync_confirmed = false;
 std::atomic<uint32_t> g_audio_epoch{0};
 std::atomic<bool> g_audio_response_reported{false};
 std::atomic<bool> g_audio_input_reported{false};
+std::atomic<uint32_t> g_ws_session_start_tick{0};
+std::atomic<uint32_t> g_ws_ping_rx_count{0};
+std::atomic<uint32_t> g_ws_pong_rx_count{0};
+std::atomic<uint32_t> g_ws_last_pong_tick{0};
+std::atomic<uint32_t> g_ws_app_tx_count{0};
+std::atomic<uint32_t> g_ws_last_app_tx_tick{0};
+std::atomic<uint32_t> g_ws_audio_tx_count{0};
+std::atomic<uint32_t> g_ws_last_audio_tx_tick{0};
+std::atomic<uint32_t> g_ws_stream_end_count{0};
+std::atomic<uint32_t> g_ws_last_stream_end_tick{0};
+std::atomic<uint32_t> g_ws_server_content_count{0};
+std::atomic<uint32_t> g_ws_last_server_content_tick{0};
+std::atomic<uint32_t> g_ws_audio_rx_count{0};
+std::atomic<uint32_t> g_ws_last_audio_rx_tick{0};
+std::atomic<bool> g_ws_summary_reported{false};
 std::atomic<bool> g_speaker_started_reported{false};
 std::atomic<bool> g_auth_reported{false};
 std::atomic<bool> g_tls_attempt_reported{false};
@@ -102,6 +117,100 @@ std::mutex g_send_mutex;
 
 bool ShouldListen() {
     return g_chat_enabled.load() || g_push_to_talk.load();
+}
+
+uint32_t ElapsedSeconds(uint32_t now, uint32_t then) {
+    return (now - then) / configTICK_RATE_HZ;
+}
+
+void ResetWebSocketSessionMetrics() {
+    g_ws_session_start_tick.store(static_cast<uint32_t>(xTaskGetTickCount()));
+    g_ws_ping_rx_count.store(0);
+    g_ws_pong_rx_count.store(0);
+    g_ws_last_pong_tick.store(0);
+    g_ws_app_tx_count.store(0);
+    g_ws_last_app_tx_tick.store(0);
+    g_ws_audio_tx_count.store(0);
+    g_ws_last_audio_tx_tick.store(0);
+    g_ws_stream_end_count.store(0);
+    g_ws_last_stream_end_tick.store(0);
+    g_ws_server_content_count.store(0);
+    g_ws_last_server_content_tick.store(0);
+    g_ws_audio_rx_count.store(0);
+    g_ws_last_audio_rx_tick.store(0);
+    g_ws_summary_reported.store(false);
+}
+
+void ReportWebSocketSessionSummary(const char* source) {
+    if (g_ws_summary_reported.exchange(true)) return;
+
+    const uint32_t now = static_cast<uint32_t>(xTaskGetTickCount());
+    const uint32_t started = g_ws_session_start_tick.load();
+    const uint32_t pong_count = g_ws_pong_rx_count.load();
+    const uint32_t app_tx_count = g_ws_app_tx_count.load();
+    const uint32_t audio_tx_count = g_ws_audio_tx_count.load();
+    const uint32_t stream_end_count = g_ws_stream_end_count.load();
+    const uint32_t server_content_count = g_ws_server_content_count.load();
+    const uint32_t audio_rx_count = g_ws_audio_rx_count.load();
+    const int pong_age = pong_count > 0
+        ? static_cast<int>(ElapsedSeconds(now, g_ws_last_pong_tick.load())) : -1;
+    const int app_tx_age = app_tx_count > 0
+        ? static_cast<int>(ElapsedSeconds(now, g_ws_last_app_tx_tick.load())) : -1;
+    const int audio_tx_age = audio_tx_count > 0
+        ? static_cast<int>(ElapsedSeconds(now, g_ws_last_audio_tx_tick.load())) : -1;
+    const int stream_end_age = stream_end_count > 0
+        ? static_cast<int>(ElapsedSeconds(now, g_ws_last_stream_end_tick.load())) : -1;
+    const int server_content_age = server_content_count > 0
+        ? static_cast<int>(ElapsedSeconds(now, g_ws_last_server_content_tick.load())) : -1;
+    const int audio_rx_age = audio_rx_count > 0
+        ? static_cast<int>(ElapsedSeconds(now, g_ws_last_audio_rx_tick.load())) : -1;
+
+    char detail[384]{};
+    std::snprintf(detail, sizeof(detail),
+                  "source=%s session_s=%lu ping_rx=%lu pong_rx=%lu pong_age_s=%d "
+                  "client_ping_tx=library_internal_not_exposed ping_interval_s=20 "
+                  "app_tx=%lu app_tx_age_s=%d audio_tx=%lu audio_tx_age_s=%d "
+                  "audioStreamEnd=%lu stream_end_age_s=%d server_content=%lu "
+                  "server_content_age_s=%d audio_rx=%lu audio_rx_age_s=%d",
+                  source != nullptr ? source : "unknown",
+                  static_cast<unsigned long>(ElapsedSeconds(now, started)),
+                  static_cast<unsigned long>(g_ws_ping_rx_count.load()),
+                  static_cast<unsigned long>(pong_count), pong_age,
+                  static_cast<unsigned long>(app_tx_count), app_tx_age,
+                  static_cast<unsigned long>(audio_tx_count), audio_tx_age,
+                  static_cast<unsigned long>(stream_end_count), stream_end_age,
+                  static_cast<unsigned long>(server_content_count), server_content_age,
+                  static_cast<unsigned long>(audio_rx_count), audio_rx_age);
+    chatai::diagnostics::Add("WS_SESSION", "INFO", detail);
+}
+
+void ReportWebSocketCloseFrame(const esp_websocket_event_data_t* event) {
+    if (event == nullptr) return;
+
+    char reason[97]{};
+    int reason_length = 0;
+    // RFC 6455 CLOSE payload starts with a two-byte status code, followed by
+    // an optional UTF-8 reason. Keep only bounded printable ASCII in diagnostics.
+    if (event->data_ptr != nullptr && event->payload_offset == 0 &&
+        event->data_len >= 2 && event->payload_len >= 2) {
+        const int available = std::min(event->data_len, event->payload_len) - 2;
+        const int copy_length = std::min(available, static_cast<int>(sizeof(reason) - 1));
+        for (int i = 0; i < copy_length; ++i) {
+            const unsigned char value =
+                static_cast<unsigned char>(event->data_ptr[i + 2]);
+            reason[i] = value >= 0x20 && value <= 0x7e
+                ? static_cast<char>(value) : '?';
+            ++reason_length;
+        }
+    }
+
+    char detail[192]{};
+    std::snprintf(detail, sizeof(detail),
+                  "source=received_close_frame close_code=%d payload_len=%d "
+                  "reason_len_logged=%d reason=\"%s\"",
+                  event->close_status_code, event->payload_len,
+                  reason_length, reason_length > 0 ? reason : "empty_or_unavailable");
+    chatai::diagnostics::Add("WS_CLOSE", "INFO", detail);
 }
 
 void ReportTlsFailure(const char* detail, int error_code, uint32_t cert_flags) {
@@ -454,6 +563,8 @@ void QueueServerAudio(const cJSON* inline_data) {
         std::free(chunk);
         ESP_LOGW(kTag, "Gemini playback queue full; dropping audio chunk");
     } else {
+        g_ws_audio_rx_count.fetch_add(1);
+        g_ws_last_audio_rx_tick.store(static_cast<uint32_t>(xTaskGetTickCount()));
         if (!g_audio_response_reported.exchange(true))
             chatai::diagnostics::Add("AUDIO_OUT", "OK", "Gemini PCM16 24000 Hz response received");
         g_speaking.store(true);
@@ -484,6 +595,8 @@ void HandleServerMessage(const std::string& message) {
     const cJSON* server_content =
         cJSON_GetObjectItemCaseSensitive(root, "serverContent");
     if (cJSON_IsObject(server_content)) {
+        g_ws_server_content_count.fetch_add(1);
+        g_ws_last_server_content_tick.store(static_cast<uint32_t>(xTaskGetTickCount()));
         const cJSON* interrupted =
             cJSON_GetObjectItemCaseSensitive(server_content, "interrupted");
         if (cJSON_IsTrue(interrupted)) {
@@ -663,7 +776,10 @@ void WebSocketEventHandler(void* handler_arg, esp_event_base_t, int32_t event_id
             g_incoming_message.clear();
             g_incoming_frame_bytes = 0;
             g_incoming_type = IncomingMessageType::kNone;
+            ResetWebSocketSessionMetrics();
             ESP_LOGI(kTag, "Gemini Live WebSocket connected; sending setup");
+            chatai::diagnostics::Add("WS_KEEPALIVE", "INFO",
+                "client_ping_interval_s=20; outgoing Ping is managed internally by esp_websocket_client");
             chatai::diagnostics::Add("WS", "OK", "WebSocket handshake completed");
             chatai::diagnostics::Add("SETUP", "INFO", "setup request sending");
 
@@ -674,6 +790,8 @@ void WebSocketEventHandler(void* handler_arg, esp_event_base_t, int32_t event_id
                     g_client, setup_message.c_str(), setup_message.size(), pdMS_TO_TICKS(5000))
                 : -1;
             if (sent == static_cast<int>(setup_message.size())) {
+                g_ws_app_tx_count.fetch_add(1);
+                g_ws_last_app_tx_tick.store(static_cast<uint32_t>(xTaskGetTickCount()));
                 chatai::diagnostics::Add("SETUP", "INFO", "setup message sent; waiting for setupComplete");
             }
             if (sent != static_cast<int>(setup_message.size())) {
@@ -707,14 +825,22 @@ void WebSocketEventHandler(void* handler_arg, esp_event_base_t, int32_t event_id
                 chatai::diagnostics::Add("WS_RX", "INFO", rx_detail);
             }
 
-            // Control frames can interleave fragmented data. The WebSocket
-            // client handles PING/PONG/CLOSE; ignore them without resetting data.
-            if (opcode == 0x8 || opcode == 0x9 || opcode == 0xA) {
-                if (setup_diagnostics) {
-                    chatai::diagnostics::Add("WS_RX", "INFO",
-                        opcode == 0x8 ? "ignored CLOSE control frame" :
-                        opcode == 0x9 ? "ignored PING control frame" :
-                                        "ignored PONG control frame");
+            // Control frames can interleave fragmented data. Record their
+            // metadata without feeding them into Gemini JSON message assembly.
+            if (opcode == 0x8) {
+                ReportWebSocketCloseFrame(event);
+                break;
+            }
+            if (opcode == 0x9) {
+                g_ws_ping_rx_count.fetch_add(1);
+                break;
+            }
+            if (opcode == 0xA) {
+                const uint32_t count = g_ws_pong_rx_count.fetch_add(1);
+                g_ws_last_pong_tick.store(static_cast<uint32_t>(xTaskGetTickCount()));
+                if (count == 0) {
+                    chatai::diagnostics::Add("WS_PONG", "OK",
+                        "first PONG received; subsequent PONGs counted for session summary");
                 }
                 break;
             }
@@ -822,6 +948,7 @@ void WebSocketEventHandler(void* handler_arg, esp_event_base_t, int32_t event_id
             g_client_failed.store(true);
             g_audio_epoch.fetch_add(1);
             ClearAudioQueue();
+            ReportWebSocketSessionSummary("transport_disconnect");
             ReportWebSocketDisconnectError(event);
             if (!g_connection_failure_reported.exchange(true)) {
                 ESP_LOGW(kTag, "Gemini Live WebSocket disconnected");
@@ -841,9 +968,12 @@ void WebSocketEventHandler(void* handler_arg, esp_event_base_t, int32_t event_id
             if (!g_connection_failure_reported.exchange(true)) {
                 const int close_code = event != nullptr ? event->close_status_code : 0;
                 ESP_LOGW(kTag, "Gemini Live WebSocket closed; code=%d", close_code);
-                char detail[64]{};
-                std::snprintf(detail, sizeof(detail), "close_code=%d", close_code);
+                char detail[96]{};
+                std::snprintf(detail, sizeof(detail),
+                              "close_code=%d close_source=received_frame_or_client_close",
+                              close_code);
                 chatai::diagnostics::Add("WS", "FAIL", detail);
+                ReportWebSocketSessionSummary("clean_close");
                 NotifyConnectionError("GEMINI", "Mat ket noi WSS");
             }
             break;
@@ -891,8 +1021,14 @@ void MicrophoneWorker(void*) {
                     "{\"realtimeInput\":{\"audioStreamEnd\":true}}";
                 std::lock_guard<std::mutex> lock(g_send_mutex);
                 if (g_client != nullptr && esp_websocket_client_is_connected(g_client)) {
-                    esp_websocket_client_send_text(g_client, kAudioStreamEnd,
+                    const int sent = esp_websocket_client_send_text(g_client, kAudioStreamEnd,
                         sizeof(kAudioStreamEnd) - 1, pdMS_TO_TICKS(1000));
+                    if (sent == static_cast<int>(sizeof(kAudioStreamEnd) - 1)) {
+                        g_ws_app_tx_count.fetch_add(1);
+                        g_ws_last_app_tx_tick.store(static_cast<uint32_t>(xTaskGetTickCount()));
+                        g_ws_stream_end_count.fetch_add(1);
+                        g_ws_last_stream_end_tick.store(static_cast<uint32_t>(xTaskGetTickCount()));
+                    }
                 }
             }
             audio_stream_active = false;
@@ -976,6 +1112,11 @@ void MicrophoneWorker(void*) {
             if (sent != message_size) {
                 ESP_LOGW(kTag, "Microphone audio send was incomplete");
             } else {
+                const uint32_t sent_tick = static_cast<uint32_t>(xTaskGetTickCount());
+                g_ws_app_tx_count.fetch_add(1);
+                g_ws_last_app_tx_tick.store(sent_tick);
+                g_ws_audio_tx_count.fetch_add(1);
+                g_ws_last_audio_tx_tick.store(sent_tick);
                 audio_stream_active = true;
                 if (!g_audio_input_reported.exchange(true))
                     chatai::diagnostics::Add("AUDIO_IN", "OK", "microphone PCM sent to Gemini Live");
