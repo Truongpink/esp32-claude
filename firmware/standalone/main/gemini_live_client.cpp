@@ -565,8 +565,10 @@ void QueueServerAudio(const cJSON* inline_data) {
     } else {
         g_ws_audio_rx_count.fetch_add(1);
         g_ws_last_audio_rx_tick.store(static_cast<uint32_t>(xTaskGetTickCount()));
-        if (!g_audio_response_reported.exchange(true))
-            chatai::diagnostics::Add("AUDIO_OUT", "OK", "Gemini PCM16 24000 Hz response received");
+        if (!g_audio_response_reported.exchange(true)) {
+            chatai::diagnostics::SetCrashContext("GEMINI_AUDIO_RX", "first PCM16 24000 Hz response decoded");
+            chatai::diagnostics::Add("GEMINI_AUDIO_RX", "OK", "Gemini PCM16 24000 Hz response decoded and queued");
+        }
         g_speaking.store(true);
     }
 }
@@ -987,6 +989,7 @@ void MicrophoneWorker(void*) {
     bool listen_state_initialized = false;
     bool last_should_listen = false;
     bool microphone_read_reported = false;
+    bool microphone_read_attempt_recorded = false;
     int16_t pcm[kMicChunkSamples]{};
     unsigned char encoded[900]{};
     char message[1200]{};
@@ -1047,6 +1050,7 @@ void MicrophoneWorker(void*) {
                           static_cast<unsigned long>(heap_caps_get_free_size(MALLOC_CAP_8BIT)),
                           static_cast<unsigned>(uxTaskGetStackHighWaterMark(nullptr)));
             chatai::diagnostics::Add("MIC_ENABLE", "INFO", enable_detail);
+            chatai::diagnostics::SetCrashContext("MIC_ENABLE_BEGIN", enable_detail);
             const esp_err_t enable_result = chatai::audio::EnableMicrophone(true);
             if (enable_result != ESP_OK) {
                 if (!microphone_error_reported) {
@@ -1060,6 +1064,8 @@ void MicrophoneWorker(void*) {
             microphone_enabled = true;
             microphone_error_reported = false;
             microphone_read_reported = false;
+            microphone_read_attempt_recorded = false;
+            chatai::diagnostics::SetCrashContext("MIC_ENABLED", "I2S RX channel enabled");
             ESP_LOGI(kTag, "Microphone streaming started: PCM16 mono 16 kHz");
             char detail[128]{};
             std::snprintf(detail, sizeof(detail),
@@ -1070,6 +1076,10 @@ void MicrophoneWorker(void*) {
         }
 
         size_t samples_read = 0;
+        if (!microphone_read_attempt_recorded) {
+            chatai::diagnostics::SetCrashContext("MIC_READ_BEGIN", "first I2S RX read");
+            microphone_read_attempt_recorded = true;
+        }
         const esp_err_t read_result = chatai::audio::ReadMicrophonePcm16(
             pcm, kMicChunkSamples, &samples_read, 100);
         if (read_result == ESP_ERR_TIMEOUT) continue;
@@ -1087,6 +1097,22 @@ void MicrophoneWorker(void*) {
                           static_cast<unsigned long>(samples_read),
                           static_cast<unsigned>(uxTaskGetStackHighWaterMark(nullptr)));
             chatai::diagnostics::Add("MIC_READ", "OK", detail);
+            int32_t peak = 0;
+            uint64_t absolute_sum = 0;
+            for (size_t i = 0; i < samples_read; ++i) {
+                const int32_t sample = pcm[i];
+                const int32_t magnitude = sample < 0 ? -sample : sample;
+                if (magnitude > peak) peak = magnitude;
+                absolute_sum += static_cast<uint32_t>(magnitude);
+            }
+            char level_detail[96]{};
+            std::snprintf(level_detail, sizeof(level_detail),
+                          "samples=%lu peak=%ld mean_abs=%lu",
+                          static_cast<unsigned long>(samples_read),
+                          static_cast<long>(peak),
+                          static_cast<unsigned long>(absolute_sum / samples_read));
+            chatai::diagnostics::Add("MIC_SAMPLE_LEVEL", "INFO", level_detail);
+            chatai::diagnostics::SetCrashContext("MIC_READ_OK", level_detail);
             microphone_read_reported = true;
         }
 
@@ -1124,8 +1150,10 @@ void MicrophoneWorker(void*) {
                 g_ws_audio_tx_count.fetch_add(1);
                 g_ws_last_audio_tx_tick.store(sent_tick);
                 audio_stream_active = true;
-                if (!g_audio_input_reported.exchange(true))
-                    chatai::diagnostics::Add("AUDIO_IN", "OK", "microphone PCM sent to Gemini Live");
+                if (!g_audio_input_reported.exchange(true)) {
+                    chatai::diagnostics::SetCrashContext("AUDIO_TX", "first microphone PCM chunk sent");
+                    chatai::diagnostics::Add("AUDIO_TX", "OK", "microphone PCM sent to Gemini Live");
+                }
             }
         }
     }
@@ -1134,6 +1162,7 @@ void MicrophoneWorker(void*) {
 void SpeakerWorker(void*) {
     AudioChunk* chunk = nullptr;
     bool speaker_enabled = false;
+    bool speaker_write_reported = false;
 
     while (true) {
         if (g_audio_queue == nullptr ||
@@ -1155,6 +1184,7 @@ void SpeakerWorker(void*) {
         }
 
         if (!speaker_enabled) {
+            chatai::diagnostics::SetCrashContext("SPEAKER_ENABLE_BEGIN", "enabling I2S TX");
             const esp_err_t enable_result = chatai::audio::EnableSpeaker(true);
             if (enable_result != ESP_OK) {
                 g_error.store(true);
@@ -1164,8 +1194,9 @@ void SpeakerWorker(void*) {
                 continue;
             }
             speaker_enabled = true;
+            chatai::diagnostics::SetCrashContext("SPEAKER_ENABLED", "I2S TX channel enabled");
             if (!g_speaker_started_reported.exchange(true))
-                chatai::diagnostics::Add("SPEAKER", "OK", "I2S playback started");
+                chatai::diagnostics::Add("SPEAKER_START", "OK", "I2S playback started");
         }
 
         g_speaking.store(true);
@@ -1174,6 +1205,14 @@ void SpeakerWorker(void*) {
             chunk->samples, chunk->sample_count, &samples_written, 100);
         if (write_result != ESP_OK || samples_written != chunk->sample_count) {
             ESP_LOGW(kTag, "Speaker write incomplete: %s", esp_err_to_name(write_result));
+            chatai::diagnostics::Add("SPEAKER_WRITE", "FAIL", esp_err_to_name(write_result));
+        } else if (!speaker_write_reported) {
+            char detail[96]{};
+            std::snprintf(detail, sizeof(detail), "first_write_samples=%lu",
+                          static_cast<unsigned long>(samples_written));
+            chatai::diagnostics::SetCrashContext("SPEAKER_WRITE_OK", detail);
+            chatai::diagnostics::Add("SPEAKER_WRITE", "OK", detail);
+            speaker_write_reported = true;
         }
         std::free(chunk);
         chunk = nullptr;
@@ -1369,9 +1408,9 @@ esp_err_t Initialize() {
     }
 
     BaseType_t result = xTaskCreate(
-        SpeakerWorker, "chatai_spk", 4096, nullptr, 5, nullptr);
+        SpeakerWorker, "chatai_spk", 6144, nullptr, 5, nullptr);
     if (result == pdPASS) {
-        result = xTaskCreate(MicrophoneWorker, "chatai_mic", 6144, nullptr, 5, nullptr);
+        result = xTaskCreate(MicrophoneWorker, "chatai_mic", 8192, nullptr, 5, nullptr);
     }
     if (result == pdPASS) {
         result = xTaskCreate(GeminiWorker, "chatai_gemini", 6144, nullptr, 5, nullptr);
