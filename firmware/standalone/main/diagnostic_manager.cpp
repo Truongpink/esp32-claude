@@ -1,6 +1,8 @@
 #include "diagnostic_manager.h"
 
 #include <atomic>
+#include <cstddef>
+#include <cstdint>
 #include <cstdio>
 #include <cstring>
 #include <ctime>
@@ -29,7 +31,7 @@ struct RetainedCrashContext {
     char stage[24];
     char detail[80];
 };
-RTC_NOINIT_ATTR RetainedCrashContext g_retained_crash_context{};
+RTC_NOINIT_ATTR RetainedCrashContext g_retained_crash_context;
 std::mutex g_crash_context_mutex;
 
 uint32_t CrashContextChecksum(const RetainedCrashContext& context) {
