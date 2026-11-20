@@ -12,6 +12,7 @@
 #include <cstdio>
 #include <cstring>
 #include <string>
+#include <mutex>
 #include <utility>
 #include <vector>
 
@@ -66,6 +67,15 @@ bool g_dns_started = false;
 std::atomic<int> g_last_ip_state{-1};
 std::atomic<int> g_last_dns_state{-1};
 std::atomic<int> g_last_tcp_state{-1};
+std::atomic<int> g_wifi_setup_state{0};
+std::atomic<int> g_wifi_disconnect_reason{0};
+std::atomic<bool> g_connection_pending{false};
+std::atomic<TickType_t> g_attempt_started_ticks{0};
+std::mutex g_pending_credentials_mutex;
+std::string g_pending_ssid;
+std::string g_pending_password;
+esp_err_t SaveCredentials(const std::string& ssid, const std::string& password);
+esp_err_t StopProvisioning();
 
 bool ProbeGeminiInternet() {
     if (g_sta_netif == nullptr) return false;
@@ -165,6 +175,36 @@ void InternetCheckTask(void*) {
                 chatai::diagnostics::Add("INTERNET", "FAIL", "DNS or TCP 443 probe failed");
             }
         }
+
+        if (available) {
+            if (g_connection_pending.load()) {
+                std::string ssid, password;
+                {
+                    std::lock_guard<std::mutex> lock(g_pending_credentials_mutex);
+                    ssid = g_pending_ssid;
+                    password = g_pending_password;
+                }
+                const esp_err_t save_result = SaveCredentials(ssid, password);
+                if (save_result == ESP_OK) {
+                    g_connection_pending.store(false);
+                    g_has_credentials.store(true);
+                    g_wifi_setup_state.store(3);
+                    chatai::diagnostics::Add("WIFI", "OK", "Credentials saved after Internet verification");
+                    chatai::display::Notify("WI-FI", "Da co Internet");
+                } else {
+                    ESP_LOGE(kTag, "Could not save verified Wi-Fi credentials: %s",
+                             esp_err_to_name(save_result));
+                    g_wifi_setup_state.store(5);
+                }
+            }
+            if (g_provisioning_started.load()) StopProvisioning();
+        } else if (g_connection_pending.load() &&
+                   g_wifi_setup_state.load() == 2 &&
+                   (xTaskGetTickCount() - g_attempt_started_ticks.load()) > pdMS_TO_TICKS(30000)) {
+            g_wifi_setup_state.store(5);
+            chatai::display::Notify("WI-FI", "Chua co Internet");
+        }
+
         vTaskDelay(pdMS_TO_TICKS(available ? 10000 : 5000));
     }
 }
@@ -205,30 +245,8 @@ bool ReadCredentials(const char* name_space, const char* ssid_key,
 esp_err_t EraseCredentialNamespace(const char* name_space);
 
 bool LoadCredentials(std::string& ssid, std::string& password) {
-    nvs_handle_t handle;
-    if (nvs_open(kNvsNamespace, NVS_READONLY, &handle) != ESP_OK) {
-        EraseCredentialNamespace("wifi");
-        return false;
-    }
-
-    size_t build_id_size = 0;
-    esp_err_t marker_result = nvs_get_str(handle, kFirmwareBuildKey, nullptr, &build_id_size);
-    std::string saved_build_id;
-    if (marker_result == ESP_OK && build_id_size > 1 && build_id_size <= 64) {
-        saved_build_id.resize(build_id_size);
-        marker_result = nvs_get_str(handle, kFirmwareBuildKey, saved_build_id.data(),
-                                    &build_id_size);
-        if (marker_result == ESP_OK) saved_build_id.resize(build_id_size - 1);
-    }
-    nvs_close(handle);
-    if (marker_result != ESP_OK || saved_build_id != CurrentFirmwareBuildId()) {
-        EraseCredentialNamespace(kNvsNamespace);
-        EraseCredentialNamespace("wifi");
-        ESP_LOGI(kTag, "Firmware build changed; saved Wi-Fi credentials require setup again");
-        return false;
-    }
-
-    // Never reuse credentials left by the previous Xiaozhi firmware.
+    // Preserve ChatAI credentials across firmware updates. Do not import
+    // legacy credentials from the previous Xiaozhi namespace.
     EraseCredentialNamespace("wifi");
     return ReadCredentials(kNvsNamespace, kSsidKey, kPasswordKey, ssid, password);
 }
@@ -274,10 +292,6 @@ esp_err_t SaveCredentials(const std::string& ssid, const std::string& password) 
     if (result != ESP_OK) return result;
     result = nvs_set_str(handle, kSsidKey, ssid.c_str());
     if (result == ESP_OK) result = nvs_set_str(handle, kPasswordKey, password.c_str());
-    if (result == ESP_OK) {
-        const std::string build_id = CurrentFirmwareBuildId();
-        result = nvs_set_str(handle, kFirmwareBuildKey, build_id.c_str());
-    }
     if (result == ESP_OK) result = nvs_commit(handle);
     nvs_close(handle);
     return result;
@@ -409,7 +423,7 @@ void DnsServerTask(void* argument) {
             const uint8_t answer[] = {
                 0xc0, 0x0c, 0x00, 0x01, 0x00, 0x01,
                 0x00, 0x00, 0x00, 0x3c, 0x00, 0x04,
-                192, 168, 4, 1
+                192, 168, 50, 1
             };
             std::memcpy(response + response_size, answer, sizeof(answer));
             response_size += sizeof(answer);
@@ -533,7 +547,7 @@ a{color:#c4a5ff;text-decoration:none;font-size:13px}
 <section class="card">
 <h2>Kết nối Wi-Fi nhà anh</h2>
 <p>Chọn mạng Wi-Fi, nhập mật khẩu rồi lưu để thiết bị kết nối Internet và khởi chạy Gemini Live.</p>
-<form method="post" action="/wifi">
+<form id="wifiForm" method="post" action="/wifi">
 <input type="hidden" name="token" value=")html" + g_form_token + R"html(">
 <label for="ssid">Tên mạng Wi-Fi (SSID)</label>
 <select id="ssid" name="ssid" required><option value="">Đang tìm mạng Wi-Fi...</option></select>
@@ -543,6 +557,7 @@ a{color:#c4a5ff;text-decoration:none;font-size:13px}
 <div class="actions"><button type="submit">Lưu và kết nối</button></div>
 </form>
 <p id="scanStatus" role="status" aria-live="polite">Đang quét các mạng Wi-Fi xung quanh...</p>
+<p id="wifiStatus" role="status" aria-live="polite"></p>
 <p><a href="/admin">Mở trang quản trị ChatAI TPIOS</a></p>
 </section>
 </main>
@@ -575,6 +590,31 @@ async function scanWifi(){
   }catch(error){status.textContent=error.message;}
 }
 document.getElementById("scanWifi").addEventListener("click",scanWifi);
+const form=document.getElementById("wifiForm");
+const wifiStatus=document.getElementById("wifiStatus");
+form.addEventListener("submit",async event=>{
+  event.preventDefault();
+  wifiStatus.textContent="Đang gửi cấu hình Wi-Fi...";
+  try{
+    const response=await fetch("/wifi",{method:"POST",headers:{"Content-Type":"application/x-www-form-urlencoded"},body:new URLSearchParams(new FormData(form))});
+    if(!response.ok)throw new Error("Không gửi được cấu hình Wi-Fi (HTTP "+response.status+")");
+    wifiStatus.textContent="Đã nhận thông tin. Đang kết nối router...";
+    pollWifiStatus();
+  }catch(error){wifiStatus.textContent=error.message;}
+});
+async function pollWifiStatus(){
+  try{
+    const response=await fetch("/api/wifi/status",{cache:"no-store"});
+    if(!response.ok)throw new Error("Không đọc được trạng thái Wi-Fi");
+    const state=await response.json();
+    wifiStatus.textContent=state.message;
+    if(state.state===1||state.state===2)setTimeout(pollWifiStatus,1500);
+    else if(state.state===3)wifiStatus.textContent=state.message+" IP: "+state.ip;
+  }catch(error){
+    wifiStatus.textContent=error.message;
+    setTimeout(pollWifiStatus,3000);
+  }
+}
 scanWifi();
 </script>
 </body>
@@ -606,13 +646,41 @@ esp_err_t WifiPostHandler(httpd_req_t* request) {
         return ESP_FAIL;
     }
 
-    chatai::display::Notify("WI-FI", "Đang kết nối");
-    httpd_resp_set_type(request, "text/html; charset=utf-8");
-    return httpd_resp_sendstr(request,
-        "<!doctype html><html lang=\"vi\"><meta charset=\"utf-8\">"
-        "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">"
-        "<body style=\"font:16px sans-serif;padding:24px\"><h2>Đã lưu Wi-Fi</h2>"
-        "<p>ChatAI đang kết nối. Vui lòng chờ thiết bị vào mạng.</p></body></html>");
+    chatai::display::Notify("WI-FI", "Dang ket noi");
+    httpd_resp_set_type(request, "application/json; charset=utf-8");
+    httpd_resp_set_hdr(request, "Cache-Control", "no-store");
+    return httpd_resp_sendstr(request, "{\\"accepted\\":true}");
+}
+
+esp_err_t WifiStatusHandler(httpd_req_t* request) {
+    const int state = g_wifi_setup_state.load();
+    const int reason = g_wifi_disconnect_reason.load();
+    const char* message = "Chưa cấu hình Wi-Fi.";
+    switch (state) {
+        case 1: message = "Đang kết nối router Wi-Fi..."; break;
+        case 2: message = "Đã nhận IP từ router; đang kiểm tra DNS và Internet..."; break;
+        case 3: message = "Đã kết nối Internet thành công."; break;
+        case 4:
+            if (reason == WIFI_REASON_AUTH_FAIL ||
+                reason == WIFI_REASON_4WAY_HANDSHAKE_TIMEOUT) {
+                message = "Sai mật khẩu Wi-Fi hoặc router từ chối xác thực. Anh kiểm tra mật khẩu và thử lại.";
+            } else if (reason == WIFI_REASON_NO_AP_FOUND) {
+                message = "Không tìm thấy mạng Wi-Fi đã chọn. Anh kiểm tra SSID và thử lại.";
+            } else {
+                message = "Router không chấp nhận kết nối Wi-Fi. Anh kiểm tra mạng và thử lại.";
+            }
+            break;
+        case 5: message = "Đã kết nối router nhưng chưa truy cập được Internet. Điểm truy cập cấu hình vẫn hoạt động; thiết bị sẽ tiếp tục kiểm tra."; break;
+        default: break;
+    }
+    const std::string ip = chatai::network::NetworkManager::GetIpAddress();
+    char body[384]{};
+    std::snprintf(body, sizeof(body),
+                  "{\\"state\\":%d,\\"message\\":\\"%s\\",\\"ip\\":\\"%s\\"}",
+                  state, message, ip.c_str());
+    httpd_resp_set_type(request, "application/json; charset=utf-8");
+    httpd_resp_set_hdr(request, "Cache-Control", "no-store");
+    return httpd_resp_sendstr(request, body);
 }
 
 esp_err_t StartHttpServer() {
@@ -639,6 +707,11 @@ esp_err_t StartHttpServer() {
     wifi_scan_uri.method = HTTP_GET;
     wifi_scan_uri.handler = WifiScanHandler;
 
+    httpd_uri_t wifi_status_uri{};
+    wifi_status_uri.uri = "/api/wifi/status";
+    wifi_status_uri.method = HTTP_GET;
+    wifi_status_uri.handler = WifiStatusHandler;
+
     httpd_uri_t captive_uri{};
     captive_uri.uri = "/*";
     captive_uri.method = HTTP_GET;
@@ -647,6 +720,7 @@ esp_err_t StartHttpServer() {
     result = httpd_register_uri_handler(g_http_server, &root_uri);
     if (result == ESP_OK) result = httpd_register_uri_handler(g_http_server, &wifi_uri);
     if (result == ESP_OK) result = httpd_register_uri_handler(g_http_server, &wifi_scan_uri);
+    if (result == ESP_OK) result = httpd_register_uri_handler(g_http_server, &wifi_status_uri);
     if (result == ESP_OK) result = chatai::web_admin::RegisterRoutes(g_http_server, g_form_token);
     if (result == ESP_OK) result = httpd_register_uri_handler(g_http_server, &captive_uri);
     if (result != ESP_OK) {
@@ -668,8 +742,20 @@ esp_err_t StartProvisioning() {
         }
     }
 
+    esp_netif_ip_info_t ap_ip_info{};
+    IP4_ADDR(&ap_ip_info.ip, 192, 168, 50, 1);
+    IP4_ADDR(&ap_ip_info.gw, 192, 168, 50, 1);
+    IP4_ADDR(&ap_ip_info.netmask, 255, 255, 255, 0);
+    esp_netif_dhcps_stop(g_ap_netif);
+    esp_err_t result = esp_netif_set_ip_info(g_ap_netif, &ap_ip_info);
+    if (result == ESP_OK) result = esp_netif_dhcps_start(g_ap_netif);
+    if (result != ESP_OK) {
+        g_provisioning_started.store(false);
+        return result;
+    }
+
     uint8_t mac[6]{};
-    esp_err_t result = esp_read_mac(mac, ESP_MAC_WIFI_SOFTAP);
+    result = esp_read_mac(mac, ESP_MAC_WIFI_SOFTAP);
     if (result != ESP_OK) {
         g_provisioning_started.store(false);
         return result;
@@ -720,6 +806,15 @@ void EventHandler(void*, esp_event_base_t event_base, int32_t event_id, void* ev
     if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_DISCONNECTED) {
         g_connected.store(false);
         g_internet_available.store(false);
+        const auto* disconnected = static_cast<const wifi_event_sta_disconnected_t*>(event_data);
+        const int reason = disconnected != nullptr ? disconnected->reason : 0;
+        if (g_connection_pending.exchange(false)) {
+            g_wifi_disconnect_reason.store(reason);
+            g_wifi_setup_state.store(4);
+            chatai::diagnostics::Add("WIFI", "FAIL", "Wi-Fi credentials rejected or router unavailable");
+            chatai::display::Notify("WI-FI", "Ket noi that bai");
+            return;
+        }
         if (g_has_credentials && g_reconnect_attempts < kMaxReconnectAttempts) {
             ++g_reconnect_attempts;
             ESP_LOGW(kTag, "Wi-Fi disconnected; reconnect attempt %u/%u",
@@ -748,8 +843,11 @@ void EventHandler(void*, esp_event_base_t event_base, int32_t event_id, void* ev
         ESP_LOGI(kTag, "Wi-Fi received IPv4: " IPSTR " gateway: " IPSTR,
                  IP2STR(&event->ip_info.ip), IP2STR(&event->ip_info.gw));
         chatai::diagnostics::Add("WIFI", "OK", "STA connected and received IPv4 address");
-        if (g_provisioning_started.load()) StopProvisioning();
-        chatai::display::Notify("WI-FI", "Đã kết nối mạng");
+        if (g_connection_pending.load()) {
+            g_wifi_setup_state.store(2);
+            g_attempt_started_ticks.store(xTaskGetTickCount());
+            chatai::display::Notify("WI-FI", "Dang kiem tra Internet");
+        }
         return;
     }
 
@@ -861,13 +959,19 @@ esp_err_t NetworkManager::Connect(
     config.sta.pmf_cfg.required = false;
 
     g_has_credentials.store(false);
+    g_connection_pending.store(false);
     esp_wifi_disconnect();
     esp_err_t result = esp_wifi_set_config(WIFI_IF_STA, &config);
     if (result != ESP_OK) return result;
-    result = SaveCredentials(ssid, password);
-    if (result != ESP_OK) return result;
-
-    g_has_credentials.store(true);
+    {
+        std::lock_guard<std::mutex> lock(g_pending_credentials_mutex);
+        g_pending_ssid = ssid;
+        g_pending_password = password;
+    }
+    g_wifi_disconnect_reason.store(0);
+    g_wifi_setup_state.store(1);
+    g_connection_pending.store(true);
+    g_attempt_started_ticks.store(xTaskGetTickCount());
     g_reconnect_attempts = 0;
     g_connected.store(false);
     g_internet_available.store(false);
