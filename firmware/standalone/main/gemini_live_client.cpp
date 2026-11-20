@@ -1036,7 +1036,10 @@ void MicrophoneWorker(void*) {
             }
             audio_stream_active = false;
             if (microphone_enabled) {
-                chatai::audio::EnableMicrophone(false);
+                const esp_err_t stop_result = chatai::audio::EnableMicrophone(false);
+                chatai::diagnostics::Add("MIC_STOP",
+                    stop_result == ESP_OK ? "OK" : "FAIL",
+                    stop_result == ESP_OK ? "I2S RX disabled" : esp_err_to_name(stop_result));
                 microphone_enabled = false;
             }
             vTaskDelay(pdMS_TO_TICKS(50));
@@ -1056,6 +1059,8 @@ void MicrophoneWorker(void*) {
                 if (!microphone_error_reported) {
                     ESP_LOGE(kTag, "Could not enable microphone: %s",
                              esp_err_to_name(enable_result));
+                    chatai::diagnostics::SetCrashContext("MIC_ENABLE_FAIL", esp_err_to_name(enable_result));
+                    chatai::diagnostics::Add("MIC_ENABLE", "FAIL", esp_err_to_name(enable_result));
                     microphone_error_reported = true;
                 }
                 vTaskDelay(pdMS_TO_TICKS(1000));
@@ -1085,6 +1090,11 @@ void MicrophoneWorker(void*) {
         if (read_result == ESP_ERR_TIMEOUT) continue;
         if (read_result != ESP_OK || samples_read == 0) {
             ESP_LOGW(kTag, "Microphone read failed: %s", esp_err_to_name(read_result));
+            if (!microphone_error_reported) {
+                chatai::diagnostics::SetCrashContext("MIC_READ_FAIL", esp_err_to_name(read_result));
+                chatai::diagnostics::Add("MIC_READ", "FAIL", esp_err_to_name(read_result));
+                microphone_error_reported = true;
+            }
             chatai::audio::EnableMicrophone(false);
             microphone_enabled = false;
             vTaskDelay(pdMS_TO_TICKS(250));
@@ -1163,6 +1173,7 @@ void SpeakerWorker(void*) {
     AudioChunk* chunk = nullptr;
     bool speaker_enabled = false;
     bool speaker_write_reported = false;
+    bool speaker_write_error_reported = false;
 
     while (true) {
         if (g_audio_queue == nullptr ||
@@ -1188,6 +1199,8 @@ void SpeakerWorker(void*) {
             const esp_err_t enable_result = chatai::audio::EnableSpeaker(true);
             if (enable_result != ESP_OK) {
                 g_error.store(true);
+                chatai::diagnostics::SetCrashContext("SPEAKER_ENABLE_FAIL", esp_err_to_name(enable_result));
+                chatai::diagnostics::Add("SPEAKER_START", "FAIL", esp_err_to_name(enable_result));
                 ESP_LOGE(kTag, "Could not enable speaker: %s", esp_err_to_name(enable_result));
                 std::free(chunk);
                 chunk = nullptr;
@@ -1205,7 +1218,10 @@ void SpeakerWorker(void*) {
             chunk->samples, chunk->sample_count, &samples_written, 100);
         if (write_result != ESP_OK || samples_written != chunk->sample_count) {
             ESP_LOGW(kTag, "Speaker write incomplete: %s", esp_err_to_name(write_result));
-            chatai::diagnostics::Add("SPEAKER_WRITE", "FAIL", esp_err_to_name(write_result));
+            if (!speaker_write_error_reported) {
+                chatai::diagnostics::Add("SPEAKER_WRITE", "FAIL", esp_err_to_name(write_result));
+                speaker_write_error_reported = true;
+            }
         } else if (!speaker_write_reported) {
             char detail[96]{};
             std::snprintf(detail, sizeof(detail), "first_write_samples=%lu",
@@ -1213,6 +1229,7 @@ void SpeakerWorker(void*) {
             chatai::diagnostics::SetCrashContext("SPEAKER_WRITE_OK", detail);
             chatai::diagnostics::Add("SPEAKER_WRITE", "OK", detail);
             speaker_write_reported = true;
+            speaker_write_error_reported = false;
         }
         std::free(chunk);
         chunk = nullptr;
