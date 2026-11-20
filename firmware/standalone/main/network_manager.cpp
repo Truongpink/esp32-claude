@@ -461,9 +461,9 @@ esp_err_t StartDnsServer() {
 }
 
 esp_err_t WifiScanHandler(httpd_req_t* request) {
-    if (!g_provisioning_started.load()) {
+    if (!g_provisioning_started.load() && !g_connected.load()) {
         httpd_resp_set_status(request, "503 Service Unavailable");
-        return httpd_resp_sendstr(request, "{\"error\":\"Chế độ cấu hình Wi-Fi không hoạt động\"}");
+        return httpd_resp_sendstr(request, "{\"error\":\"Wi-Fi chưa sẵn sàng để quét mạng\"}");
     }
     wifi_scan_config_t scan_config{};
     scan_config.show_hidden = false;
@@ -677,7 +677,7 @@ esp_err_t WifiStatusHandler(httpd_req_t* request) {
 esp_err_t StartHttpServer() {
     if (g_http_server != nullptr) return ESP_OK;
     httpd_config_t config = HTTPD_DEFAULT_CONFIG();
-    config.max_uri_handlers = 16;
+    config.max_uri_handlers = 18;
     config.lru_purge_enable = true;
     config.uri_match_fn = httpd_uri_match_wildcard;
     esp_err_t result = httpd_start(&g_http_server, &config);
