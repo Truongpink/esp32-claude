@@ -652,7 +652,8 @@ esp_err_t WifiStatusHandler(httpd_req_t* request) {
         case 3: message = "Đã kết nối Internet thành công."; break;
         case 4:
             if (reason == WIFI_REASON_AUTH_FAIL ||
-                reason == WIFI_REASON_4WAY_HANDSHAKE_TIMEOUT) {
+                reason == WIFI_REASON_4WAY_HANDSHAKE_TIMEOUT ||
+                reason == WIFI_REASON_HANDSHAKE_TIMEOUT) {
                 message = "Sai mật khẩu Wi-Fi hoặc router từ chối xác thực. Anh kiểm tra mật khẩu và thử lại.";
             } else if (reason == WIFI_REASON_NO_AP_FOUND) {
                 message = "Không tìm thấy mạng Wi-Fi đã chọn. Anh kiểm tra SSID và thử lại.";
