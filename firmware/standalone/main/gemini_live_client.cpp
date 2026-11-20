@@ -265,19 +265,36 @@ bool ProbeGeminiTls() {
             error_handle, &mbedtls_error, &cert_flags);
     }
 
+    // esp_tls_get_and_clear_last_error() stores the MbedTLS stack code
+    // as a positive value; mbedtls_strerror() expects the original negative code.
+    const int normalized_mbedtls_error =
+        mbedtls_error > 0 ? -mbedtls_error : mbedtls_error;
     char mbedtls_message[112]{};
-    if (mbedtls_error != 0) {
-        mbedtls_strerror(mbedtls_error, mbedtls_message, sizeof(mbedtls_message));
+    if (normalized_mbedtls_error != 0) {
+        mbedtls_strerror(normalized_mbedtls_error, mbedtls_message,
+                         sizeof(mbedtls_message));
     } else {
         std::snprintf(mbedtls_message, sizeof(mbedtls_message), "not reported");
     }
 
-    char detail[288]{};
+    const size_t internal_free =
+        heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+    const size_t internal_largest =
+        heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+    const std::time_t system_time = std::time(nullptr);
+
+    char detail[416]{};
     std::snprintf(detail, sizeof(detail),
-                  "host=%s result=%d esp=%s(0x%08x) mbedtls_code=%d text=%s cert_flags=0x%x",
+                  "host=%s result=%d esp=%s(0x%08x) mbedtls_raw=%d normalized=%d "
+                  "text=%s cert_flags=0x%x internal_free=%lu internal_largest=%lu "
+                  "unix_time=%lld",
                   kGeminiHost, connected, esp_err_to_name(tls_error),
                   static_cast<unsigned>(tls_error), mbedtls_error,
-                  mbedtls_message, static_cast<unsigned>(cert_flags));
+                  normalized_mbedtls_error, mbedtls_message,
+                  static_cast<unsigned>(cert_flags),
+                  static_cast<unsigned long>(internal_free),
+                  static_cast<unsigned long>(internal_largest),
+                  static_cast<long long>(system_time));
     ESP_LOGE(kTag, "Independent Gemini TLS probe failed: %s", detail);
     chatai::diagnostics::Add("TLS_PROBE", "FAIL", detail);
     esp_tls_conn_destroy(tls);
