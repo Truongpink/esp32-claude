@@ -179,7 +179,7 @@ void RestorePreviousCrashContext() {
 
     char detail[144]{};
     std::snprintf(detail, sizeof(detail),
-                  "previous_reset_reason=%d last_stage=%s sequence=%lu %s",
+                  "previous_reset_reason=%d last_stage=%.23s sequence=%lu %.60s",
                   static_cast<int>(reason), previous.stage,
                   static_cast<unsigned long>(previous.sequence), previous.detail);
     Add("PREVIOUS_BOOT", "WARN", detail);
