@@ -1041,6 +1041,12 @@ void MicrophoneWorker(void*) {
         }
 
         if (!microphone_enabled) {
+            char enable_detail[128]{};
+            std::snprintf(enable_detail, sizeof(enable_detail),
+                          "attempt=enable_i2s_rx heap_free=%lu stack_watermark=%u",
+                          static_cast<unsigned long>(heap_caps_get_free_size(MALLOC_CAP_8BIT)),
+                          static_cast<unsigned>(uxTaskGetStackHighWaterMark(nullptr)));
+            chatai::diagnostics::Add("MIC_ENABLE", "INFO", enable_detail);
             const esp_err_t enable_result = chatai::audio::EnableMicrophone(true);
             if (enable_result != ESP_OK) {
                 if (!microphone_error_reported) {
@@ -1398,7 +1404,14 @@ bool HasError() {
 
 void SetChatEnabled(bool enabled) { g_chat_enabled.store(enabled); }
 bool IsChatEnabled() { return g_chat_enabled.load(); }
-void SetPushToTalk(bool pressed) { g_push_to_talk.store(pressed); }
+void SetPushToTalk(bool pressed) {
+    const bool was_pressed = g_push_to_talk.exchange(pressed);
+    if (pressed && !was_pressed && !g_ready.load()) {
+        chatai::diagnostics::Add("PTT", "INFO",
+            "press detected while Gemini is not ready; requesting one reconnect");
+        RequestReconnect();
+    }
+}
 bool IsListening() { return ShouldListen(); }
 
 void RequestReconnect() {
