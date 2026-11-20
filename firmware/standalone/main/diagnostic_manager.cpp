@@ -150,7 +150,21 @@ void SetCrashContext(const char* stage, const char* detail) {
     g_retained_crash_context = next;
 }
 
+void ClearCrashContext() {
+    std::lock_guard<std::mutex> lock(g_crash_context_mutex);
+    g_retained_crash_context.magic = 0;
+    g_retained_crash_context.checksum = 0;
+}
+
 void RestorePreviousCrashContext() {
+    const esp_reset_reason_t reason = esp_reset_reason();
+    if (reason != ESP_RST_PANIC && reason != ESP_RST_INT_WDT &&
+        reason != ESP_RST_TASK_WDT && reason != ESP_RST_WDT &&
+        reason != ESP_RST_SW) {
+        ClearCrashContext();
+        return;
+    }
+
     RetainedCrashContext previous{};
     {
         std::lock_guard<std::mutex> lock(g_crash_context_mutex);
@@ -163,7 +177,7 @@ void RestorePreviousCrashContext() {
     char detail[144]{};
     std::snprintf(detail, sizeof(detail),
                   "previous_reset_reason=%d last_stage=%s sequence=%lu %s",
-                  static_cast<int>(esp_reset_reason()), previous.stage,
+                  static_cast<int>(reason), previous.stage,
                   static_cast<unsigned long>(previous.sequence), previous.detail);
     Add("PREVIOUS_BOOT", "WARN", detail);
 }
