@@ -49,7 +49,7 @@ void Add(const char* stage, const char* result, const char* detail) {
     if (epoch_valid) {
         line = "[";
         line += ict_timestamp;
-        line += " ICT][\";
+        line += " ICT][";
         line += utc_timestamp;
         line += " UTC][UNIX=";
         line += std::to_string(static_cast<long long>(now));
