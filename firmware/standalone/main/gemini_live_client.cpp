@@ -96,6 +96,7 @@ std::mutex g_event_mutex;
 esp_websocket_client_handle_t g_client = nullptr;
 QueueHandle_t g_audio_queue = nullptr;
 std::string g_incoming_message;
+size_t g_incoming_frame_bytes = 0;
 bool g_receiving_text = false;
 bool g_missing_key_reported = false;
 std::mutex g_send_mutex;
@@ -668,6 +669,7 @@ void WebSocketEventHandler(void* handler_arg, esp_event_base_t, int32_t event_id
             g_client_failed.store(false);
             g_connection_failure_reported.store(false);
             g_incoming_message.clear();
+            g_incoming_frame_bytes = 0;
             g_receiving_text = false;
             ESP_LOGI(kTag, "Gemini Live WebSocket connected; sending setup");
             chatai::diagnostics::Add("WS", "OK", "WebSocket handshake completed");
@@ -693,33 +695,87 @@ void WebSocketEventHandler(void* handler_arg, esp_event_base_t, int32_t event_id
             break;
         }
 
-        case WEBSOCKET_EVENT_DATA:
-            if (event == nullptr || event->data_ptr == nullptr ||
-                event->data_len <= 0 || event->payload_len <= 0 ||
+        case WEBSOCKET_EVENT_DATA: {
+            if (event == nullptr) {
+                if (g_waiting_setup.load()) {
+                    chatai::diagnostics::Add("WS_RX", "WARN", "DATA event without metadata");
+                }
+                break;
+            }
+
+            const bool setup_diagnostics = g_waiting_setup.load();
+            if (setup_diagnostics) {
+                char rx_detail[128]{};
+                std::snprintf(rx_detail, sizeof(rx_detail),
+                              "opcode=0x%02x bytes=%d payload=%d offset=%d fin=%d",
+                              event->op_code, event->data_len, event->payload_len,
+                              event->payload_offset, event->fin ? 1 : 0);
+                ESP_LOGI(kTag, "WebSocket RX: %s", rx_detail);
+                chatai::diagnostics::Add("WS_RX", "INFO", rx_detail);
+            }
+
+            if (event->data_ptr == nullptr || event->data_len <= 0 ||
+                event->payload_len <= 0 || event->payload_offset < 0 ||
                 event->payload_len > static_cast<int>(kMaxIncomingMessage) ||
-                event->payload_offset < 0) break;
+                event->payload_offset > event->payload_len ||
+                event->data_len > event->payload_len - event->payload_offset) {
+                g_incoming_message.clear();
+                g_incoming_frame_bytes = 0;
+                g_receiving_text = false;
+                if (setup_diagnostics) {
+                    chatai::diagnostics::Add("WS_RX", "WARN", "invalid DATA payload bounds; assembly reset");
+                }
+                break;
+            }
 
             if (event->payload_offset == 0) {
-                g_incoming_message.clear();
-                g_receiving_text = event->op_code == 0x1;
+                g_incoming_frame_bytes = 0;
+                if (event->op_code == 0x1) {
+                    g_incoming_message.clear();
+                    g_receiving_text = true;
+                } else if (event->op_code != 0x0 || !g_receiving_text) {
+                    g_incoming_message.clear();
+                    g_receiving_text = false;
+                    if (setup_diagnostics) {
+                        chatai::diagnostics::Add("WS_RX", "WARN", "ignored non-text or unexpected continuation frame");
+                    }
+                    break;
+                }
             }
 
             if (!g_receiving_text ||
-                static_cast<size_t>(event->payload_offset) != g_incoming_message.size() ||
+                static_cast<size_t>(event->payload_offset) != g_incoming_frame_bytes ||
                 g_incoming_message.size() + static_cast<size_t>(event->data_len) >
                     kMaxIncomingMessage) {
                 g_incoming_message.clear();
+                g_incoming_frame_bytes = 0;
                 g_receiving_text = false;
+                if (setup_diagnostics) {
+                    chatai::diagnostics::Add("WS_RX", "WARN", "payload offset/size mismatch; assembly reset");
+                }
                 break;
             }
 
             g_incoming_message.append(event->data_ptr, static_cast<size_t>(event->data_len));
-            if (event->fin) {
+            g_incoming_frame_bytes += static_cast<size_t>(event->data_len);
+
+            const bool frame_complete =
+                g_incoming_frame_bytes == static_cast<size_t>(event->payload_len);
+            if (frame_complete && event->fin) {
+                if (setup_diagnostics) {
+                    char message_detail[80]{};
+                    std::snprintf(message_detail, sizeof(message_detail),
+                                  "complete text message bytes=%lu",
+                                  static_cast<unsigned long>(g_incoming_message.size()));
+                    chatai::diagnostics::Add("WS_RX", "OK", message_detail);
+                }
                 HandleServerMessage(g_incoming_message);
                 g_incoming_message.clear();
+                g_incoming_frame_bytes = 0;
                 g_receiving_text = false;
             }
             break;
+        }
 
         case WEBSOCKET_EVENT_ERROR:
             // The ERROR event is preliminary; esp_websocket_client fills transport
