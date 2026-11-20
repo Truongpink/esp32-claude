@@ -5,6 +5,8 @@
 #include <esp_ota_ops.h>
 #include <esp_partition.h>
 #include <esp_system.h>
+#include <esp_heap_caps.h>
+#include <esp_random.h>
 #include <mdns.h>
 #include <nvs_flash.h>
 
@@ -15,6 +17,7 @@
 #include "gemini_settings.h"
 #include "firmware_info.h"
 #include "button_manager.h"
+#include "diagnostic_manager.h"
 
 namespace {
 constexpr char kTag[] = "ChatAI";
@@ -43,6 +46,36 @@ esp_err_t InitializeMdns() {
 
     ESP_LOGI(kTag, "Web Admin local address: http://chatai.local/");
     return ESP_OK;
+}
+
+const char* ResetReasonName(esp_reset_reason_t reason) {
+    switch (reason) {
+        case ESP_RST_UNKNOWN: return "UNKNOWN";
+        case ESP_RST_POWERON: return "POWERON";
+        case ESP_RST_EXT: return "EXTERNAL";
+        case ESP_RST_SW: return "SOFTWARE";
+        case ESP_RST_PANIC: return "PANIC";
+        case ESP_RST_INT_WDT: return "INT_WATCHDOG";
+        case ESP_RST_TASK_WDT: return "TASK_WATCHDOG";
+        case ESP_RST_WDT: return "WATCHDOG";
+        case ESP_RST_DEEPSLEEP: return "DEEP_SLEEP";
+        case ESP_RST_BROWNOUT: return "BROWNOUT";
+        case ESP_RST_SDIO: return "SDIO";
+        default: return "OTHER";
+    }
+}
+
+void ReportBootDiagnostics() {
+    const esp_reset_reason_t reason = esp_reset_reason();
+    const size_t free_heap = heap_caps_get_free_size(MALLOC_CAP_8BIT);
+    const size_t min_free_heap = heap_caps_get_minimum_free_size(MALLOC_CAP_8BIT);
+    char detail[160]{};
+    std::snprintf(detail, sizeof(detail),
+                  "boot_id=%08lx reset_reason=%s(%d) free_heap=%lu min_free_heap=%lu",
+                  static_cast<unsigned long>(esp_random()), ResetReasonName(reason),
+                  static_cast<int>(reason), static_cast<unsigned long>(free_heap),
+                  static_cast<unsigned long>(min_free_heap));
+    chatai::diagnostics::Add("BOOT", "INFO", detail);
 }
 
 bool InitializePlatform() {
@@ -116,6 +149,7 @@ void RestartIfOtaImageIsPending() {
 }  // namespace
 
 extern "C" void app_main(void) {
+    ReportBootDiagnostics();
     ESP_LOGI(kTag, "ChatAI TPIOS standalone firmware starting");
     ESP_LOGI(kTag, "Firmware Build #%lu",
              static_cast<unsigned long>(chatai::firmware::kBuildNumber));
