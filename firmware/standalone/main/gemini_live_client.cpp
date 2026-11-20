@@ -854,6 +854,9 @@ void WebSocketEventHandler(void* handler_arg, esp_event_base_t, int32_t event_id
 }
 
 void MicrophoneWorker(void*) {
+    bool listen_state_initialized = false;
+    bool last_should_listen = false;
+    bool microphone_read_reported = false;
     int16_t pcm[kMicChunkSamples]{};
     unsigned char encoded[900]{};
     char message[1200]{};
@@ -862,6 +865,19 @@ void MicrophoneWorker(void*) {
     bool audio_stream_active = false;
 
     while (true) {
+        const bool should_listen = ShouldListen();
+        if (!listen_state_initialized || should_listen != last_should_listen) {
+            char detail[144]{};
+            std::snprintf(detail, sizeof(detail),
+                          "state=%s chat_enabled=%d ptt_pressed=%d gemini_ready=%d stack_watermark=%u",
+                          should_listen ? "LISTENING_REQUESTED" : "IDLE",
+                          g_chat_enabled.load() ? 1 : 0, g_push_to_talk.load() ? 1 : 0,
+                          g_ready.load() ? 1 : 0,
+                          static_cast<unsigned>(uxTaskGetStackHighWaterMark(nullptr)));
+            chatai::diagnostics::Add("LISTEN", "INFO", detail);
+            last_should_listen = should_listen;
+            listen_state_initialized = true;
+        }
         bool transport_ready = g_ready.load() &&
             chatai::network::NetworkManager::IsInternetAvailable();
         {
@@ -869,7 +885,7 @@ void MicrophoneWorker(void*) {
             transport_ready = transport_ready && g_client != nullptr &&
                 esp_websocket_client_is_connected(g_client);
         }
-        if (!transport_ready || !ShouldListen()) {
+        if (!transport_ready || !should_listen) {
             if (audio_stream_active && transport_ready) {
                 static constexpr char kAudioStreamEnd[] =
                     "{\"realtimeInput\":{\"audioStreamEnd\":true}}";
@@ -901,8 +917,14 @@ void MicrophoneWorker(void*) {
             }
             microphone_enabled = true;
             microphone_error_reported = false;
+            microphone_read_reported = false;
             ESP_LOGI(kTag, "Microphone streaming started: PCM16 mono 16 kHz");
-            chatai::diagnostics::Add("AUDIO_IN", "OK", "PCM16 mono 16000 Hz streaming");
+            char detail[128]{};
+            std::snprintf(detail, sizeof(detail),
+                          "I2S RX enabled; heap_free=%lu stack_watermark=%u",
+                          static_cast<unsigned long>(heap_caps_get_free_size(MALLOC_CAP_8BIT)),
+                          static_cast<unsigned>(uxTaskGetStackHighWaterMark(nullptr)));
+            chatai::diagnostics::Add("MIC_START", "OK", detail);
         }
 
         size_t samples_read = 0;
@@ -915,6 +937,15 @@ void MicrophoneWorker(void*) {
             microphone_enabled = false;
             vTaskDelay(pdMS_TO_TICKS(250));
             continue;
+        }
+        if (!microphone_read_reported) {
+            char detail[112]{};
+            std::snprintf(detail, sizeof(detail),
+                          "first_read_samples=%lu stack_watermark=%u",
+                          static_cast<unsigned long>(samples_read),
+                          static_cast<unsigned>(uxTaskGetStackHighWaterMark(nullptr)));
+            chatai::diagnostics::Add("MIC_READ", "OK", detail);
+            microphone_read_reported = true;
         }
 
         size_t encoded_size = 0;
