@@ -111,6 +111,8 @@ select,input[type=text]{width:100%;min-width:0;padding:13px;border:1px solid #ff
 <div class="metric"><span>Địa chỉ IP</span><strong id="dashIp">—</strong></div>
 <div class="metric"><span>Gateway / DNS</span><strong id="dashGateway">—</strong></div>
 <div class="metric"><span>Internet</span><strong id="dashInternet">—</strong></div>
+<div class="metric"><span>Kiểm tra DNS</span><strong id="dashDnsProbe">—</strong></div>
+<div class="metric"><span>TCP 443</span><strong id="dashTcpProbe">—</strong></div>
 <div class="metric"><span>SoftAP</span><strong id="dashAp">—</strong></div>
 <div class="metric"><span>Gemini Live</span><strong id="dashGemini">—</strong></div>
 <div class="metric"><span>API Key</span><strong id="dashKey">—</strong></div>
@@ -726,6 +728,8 @@ async function refreshDeviceStatus() {
    document.getElementById("dashIp").textContent = data.ip || "Chưa có IP";
    document.getElementById("dashGateway").textContent = (data.gateway || "—") + " / " + (data.dns || "—");
    document.getElementById("dashInternet").textContent = data.internet_available ? "Đã xác minh" : "Chưa có Internet";
+   document.getElementById("dashDnsProbe").textContent = data.dns_probe_state === 1 ? "Thành công" : data.dns_probe_state === 0 ? "Thất bại" : "Đang chờ";
+   document.getElementById("dashTcpProbe").textContent = data.tcp443_probe_state === 1 ? "Thông TCP 443" : data.tcp443_probe_state === 0 ? "Không thông" : "Đang chờ";
    document.getElementById("dashAp").textContent = data.softap_ip || "Không hoạt động";
    document.getElementById("dashGemini").textContent = data.gemini_ready ? "Sẵn sàng" : data.gemini_tls_fatal ? "Lỗi TLS" : data.gemini_error ? "Có lỗi" : "Đang kết nối";
    document.getElementById("dashKey").textContent = data.key_configured ? "Đã lưu" : "Chưa cấu hình";
@@ -950,6 +954,8 @@ esp_err_t DeviceStatusHandler(httpd_req_t* request) {
     cJSON_AddStringToObject(root, "dns", dns.c_str());
     cJSON_AddStringToObject(root, "softap_ip", ap_ip.c_str());
     cJSON_AddNumberToObject(root, "rssi", chatai::network::NetworkManager::GetRssi());
+    cJSON_AddNumberToObject(root, "dns_probe_state", chatai::network::NetworkManager::GetDnsProbeState());
+    cJSON_AddNumberToObject(root, "tcp443_probe_state", chatai::network::NetworkManager::GetTcp443ProbeState());
     cJSON_AddNumberToObject(root, "speaker_volume", chatai::audio::GetOutputVolume());
     cJSON_AddNumberToObject(root, "free_heap", esp_get_free_heap_size());
     cJSON_AddNumberToObject(root, "min_free_heap", esp_get_minimum_free_heap_size());
