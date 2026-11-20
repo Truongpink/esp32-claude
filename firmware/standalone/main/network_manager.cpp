@@ -1001,7 +1001,12 @@ std::string NetworkManager::GetSsid() {
     if (!g_connected.load()) return {};
     wifi_config_t config{};
     if (esp_wifi_get_config(WIFI_IF_STA, &config) != ESP_OK) return {};
-    return std::string(reinterpret_cast<const char*>(config.sta.ssid));
+    std::string ssid;
+    for (const char value : config.sta.ssid) {
+        if (value == '\0') break;
+        ssid.push_back(value);
+    }
+    return ssid;
 }
 
 int NetworkManager::GetRssi() {
