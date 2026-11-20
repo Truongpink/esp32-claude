@@ -645,6 +645,7 @@ async function refreshDeviceStatus() {
   deviceStatus.textContent = state +
     (data.ip ? " · IP: " + data.ip : "") +
     (data.gateway ? " · Gateway: " + data.gateway : "");
+  wifiAdminStatus.textContent = state + (data.ip ? " · IP: " + data.ip : "");
 }
 
 async function refreshStatus() {
