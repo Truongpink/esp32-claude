@@ -9,6 +9,7 @@
 #include <driver/gpio.h>
 #include <driver/i2s_std.h>
 #include <esp_log.h>
+#include <nvs.h>
 
 namespace chatai::audio {
 namespace {
@@ -125,6 +126,15 @@ esp_err_t Initialize() {
     std::lock_guard<std::mutex> lock(s_state_mutex);
     if (s_mic_rx != nullptr || s_speaker_tx != nullptr) {
         return ESP_ERR_INVALID_STATE;
+    }
+
+    nvs_handle_t settings_handle;
+    if (nvs_open("chatai_cfg", NVS_READONLY, &settings_handle) == ESP_OK) {
+        int32_t saved_volume = 100;
+        if (nvs_get_i32(settings_handle, "speaker_vol", &saved_volume) == ESP_OK) {
+            s_output_volume.store(std::clamp<int32_t>(saved_volume, 0, 100));
+        }
+        nvs_close(settings_handle);
     }
 
     esp_err_t err = gpio_reset_pin(kSpeakerAmpEnable);
@@ -293,6 +303,20 @@ void SetOutputVolume(int volume_percent) {
 
 int GetOutputVolume() {
     return s_output_volume.load();
+}
+
+esp_err_t SaveOutputVolume(int volume_percent) {
+    if (volume_percent < 0 || volume_percent > 100) return ESP_ERR_INVALID_ARG;
+
+    nvs_handle_t handle;
+    esp_err_t result = nvs_open("chatai_cfg", NVS_READWRITE, &handle);
+    if (result != ESP_OK) return result;
+
+    result = nvs_set_i32(handle, "speaker_vol", volume_percent);
+    if (result == ESP_OK) result = nvs_commit(handle);
+    nvs_close(handle);
+    if (result == ESP_OK) SetOutputVolume(volume_percent);
+    return result;
 }
 
 void SetSpeakerReferenceCallback(SpeakerReferenceCallback callback, void* context) {
