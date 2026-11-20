@@ -29,7 +29,6 @@
 #include <esp_netif.h>
 #include <esp_random.h>
 #include <esp_wifi.h>
-#include <esp_netif.h>
 #include <lwip/ip4_addr.h>
 #include <nvs.h>
 
