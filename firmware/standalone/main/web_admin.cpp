@@ -12,6 +12,7 @@
 #include <esp_ota_ops.h>
 #include <esp_partition.h>
 #include <esp_system.h>
+#include <esp_timer.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
 
@@ -25,7 +26,7 @@
 
 namespace {
 constexpr char kTag[] = "ChatAI-Admin";
-constexpr size_t kMaxRequestBody = 512;
+constexpr size_t kMaxRequestBody = 4096;
 constexpr size_t kMaxApiKeyLength = 256;
 std::string g_csrf_token;
 std::mutex g_ota_mutex;
@@ -42,8 +43,8 @@ const char kAdminPage[] = R"html(
 <style>
 :root{color-scheme:dark;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:#090914;color:#f4f1ff;font-synthesis:none}
 *{box-sizing:border-box}
-body{margin:0;min-height:100vh;padding:28px 16px 44px;background:radial-gradient(ellipse at 50% -10%,#38206a 0,transparent 48%),linear-gradient(160deg,#0c0b19,#111020 58%,#090914)}
-main{width:100%;max-width:680px;margin:0 auto}
+body{margin:0;min-height:100vh;padding:20px 16px calc(112px + env(safe-area-inset-bottom));background:radial-gradient(ellipse at 50% -10%,#38206a 0,transparent 48%),linear-gradient(160deg,#0c0b19,#111020 58%,#090914)}
+main{width:100%;max-width:760px;margin:0 auto}
 header{display:flex;align-items:center;gap:13px;margin:0 2px 22px}
 .brand-mark{width:48px;height:48px;display:grid;place-items:center;border-radius:16px;background:linear-gradient(145deg,#9b5cff,#6034d6);box-shadow:0 8px 28px #8149ff45;font-size:24px}
 h1{font-size:21px;line-height:1.2;margin:0;font-weight:760;letter-spacing:-.35px}
@@ -70,9 +71,17 @@ hr{border:0;border-top:1px solid #ffffff12;margin:18px 0}
 #otaFileInfo{margin:9px 0}
 .progress{height:8px;background:#ffffff12;border-radius:20px;overflow:hidden;margin-top:13px}
 #otaProgress{height:100%;width:0;background:linear-gradient(90deg,#9b5cff,#55d6c2);transition:width .12s}
-.tabbar{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:7px;padding:7px;margin:0 0 16px;border:1px solid #ffffff14;border-radius:16px;background:#100f20;position:sticky;top:8px;z-index:5;backdrop-filter:blur(14px)}
-.tabbar button{min-width:0;padding:11px 5px;border-radius:11px;background:transparent;border:1px solid transparent;box-shadow:none;color:#aaa2c5;font-size:12px;white-space:nowrap}
-.tabbar button[aria-selected="true"]{background:linear-gradient(135deg,#7043c9,#4b3291);border-color:#b89aff55;color:#fff}
+.tabbar{position:fixed;left:50%;bottom:0;transform:translateX(-50%);width:min(100%,760px);display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:4px;padding:8px 10px calc(8px + env(safe-area-inset-bottom));border:1px solid #ffffff18;border-bottom:0;border-radius:20px 20px 0 0;background:#111020ed;backdrop-filter:blur(20px);z-index:20;box-shadow:0 -10px 35px #0005}
+.tabbar button{min-width:0;min-height:54px;padding:5px 1px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;border-radius:12px;background:transparent;border:1px solid transparent;box-shadow:none;color:#aaa2c5;font-size:10px;line-height:1.15;white-space:nowrap}
+.tabbar button .tab-icon{font-size:17px;line-height:1.1}
+.tabbar button[aria-selected="true"]{background:linear-gradient(145deg,#7043c9,#4b3291);border-color:#b89aff55;color:#fff}
+.metric-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;margin-top:14px}
+.metric{min-width:0;padding:12px;border:1px solid #ffffff12;border-radius:14px;background:#ffffff07}
+.metric span{display:block;color:#aaa2c5;font-size:11px;margin-bottom:5px}
+.metric strong{display:block;font-size:13px;overflow-wrap:anywhere;font-weight:650}
+textarea{width:100%;min-height:220px;resize:vertical;padding:13px;border:1px solid #ffffff20;border-radius:13px;background:#0d0c19;color:#f5f1ff;font:13px/1.55 sans-serif;outline:none}
+select,input[type=text]{width:100%;min-width:0;padding:13px;border:1px solid #ffffff20;border-radius:12px;background:#0d0c19;color:#f5f1ff;font:inherit}
+@media(min-width:700px){.tabbar{bottom:18px;border:1px solid #ffffff18;border-radius:18px;width:min(720px,calc(100% - 32px))}body{padding-bottom:110px}.metric-grid{grid-template-columns:repeat(3,minmax(0,1fr))}}
 .tab-panel[hidden]{display:none}
 .foot{text-align:center;color:#77718f;font-size:11px;margin:20px 0 0}
 @media(min-width:600px){body{padding-top:44px}}
@@ -85,12 +94,12 @@ hr{border:0;border-top:1px solid #ffffff12;margin:18px 0}
 <div><h1>ChatAI TPIOS</h1><p class="subtitle">Trung tâm điều khiển thiết bị</p></div>
 </header>
 <nav class="tabbar" role="tablist" aria-label="Các mục quản trị">
-<button type="button" role="tab" data-tab="overview" aria-selected="true">Tổng quan</button>
-<button type="button" role="tab" data-tab="wifi" aria-selected="false">Wi-Fi</button>
-<button type="button" role="tab" data-tab="gemini" aria-selected="false">Gemini AI</button>
-<button type="button" role="tab" data-tab="audio" aria-selected="false">Âm thanh</button>
-<button type="button" role="tab" data-tab="ota" aria-selected="false">Cập nhật</button>
-<button type="button" role="tab" data-tab="logs" aria-selected="false">Nhật ký</button>
+<button type="button" role="tab" data-tab="overview" aria-selected="true"><span class="tab-icon">⌂</span><span>Tổng quan</span></button>
+<button type="button" role="tab" data-tab="wifi" aria-selected="false"><span class="tab-icon">⌁</span><span>Wi-Fi</span></button>
+<button type="button" role="tab" data-tab="gemini" aria-selected="false"><span class="tab-icon">✧</span><span>Gemini</span></button>
+<button type="button" role="tab" data-tab="audio" aria-selected="false"><span class="tab-icon">♫</span><span>Âm thanh</span></button>
+<button type="button" role="tab" data-tab="ota" aria-selected="false"><span class="tab-icon">⇧</span><span>OTA</span></button>
+<button type="button" role="tab" data-tab="logs" aria-selected="false"><span class="tab-icon">≋</span><span>Nhật ký</span></button>
 </nav>
 <section class="card tab-panel" data-panel="overview" role="tabpanel" aria-labelledby="connectionTitle">
 <div class="card-head"><div class="card-icon" aria-hidden="true">◉</div><div><h2 id="connectionTitle">Trạng thái kết nối</h2><p class="hint">Theo dõi Wi-Fi, Internet và Gemini Live</p></div></div>
