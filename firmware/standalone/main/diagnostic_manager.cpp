@@ -48,7 +48,7 @@ uint32_t CrashContextChecksum(const RetainedCrashContext& context) {
 bool IsCrashContextValid(const RetainedCrashContext& context) {
     return context.magic == kCrashContextMagic &&
            context.checksum == CrashContextChecksum(context) &&
-           context.stage[0] != '\\0';
+           context.stage[0] != '\0';
 }
 }
 
@@ -136,7 +136,7 @@ void Clear() {
 }
 
 void SetCrashContext(const char* stage, const char* detail) {
-    if (stage == nullptr || *stage == '\\0') return;
+    if (stage == nullptr || *stage == '\0') return;
     std::lock_guard<std::mutex> lock(g_crash_context_mutex);
     RetainedCrashContext next{};
     next.magic = kCrashContextMagic;
