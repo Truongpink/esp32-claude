@@ -7,6 +7,7 @@ namespace chatai::gemini {
 esp_err_t Initialize();
 bool IsReady();
 bool IsSpeaking();
+void AbortSpeaking();
 bool HasError();
 bool IsTlsFatal();
 void SetChatEnabled(bool enabled);
