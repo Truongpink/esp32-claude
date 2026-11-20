@@ -53,22 +53,6 @@ bool InitializePlatform() {
         return false;
     }
 
-#if CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE
-    const esp_partition_t* running = esp_ota_get_running_partition();
-    esp_ota_img_states_t image_state;
-    if (running != nullptr &&
-        esp_ota_get_state_partition(running, &image_state) == ESP_OK &&
-        image_state == ESP_OTA_IMG_PENDING_VERIFY) {
-        const esp_err_t reset_result = chatai::network::NetworkManager::ClearSavedCredentials();
-        if (reset_result != ESP_OK) {
-            ESP_LOGE(kTag, "Could not reset old Wi-Fi credentials after OTA: %s",
-                     esp_err_to_name(reset_result));
-            return false;
-        }
-        ESP_LOGI(kTag, "New OTA firmware detected; saved Wi-Fi credentials cleared");
-    }
-#endif
-
     const esp_err_t migration_result = chatai::settings::MigrateLegacyGeminiApiKey();
     if (migration_result != ESP_OK) {
         ESP_LOGW(kTag, "Could not migrate existing Gemini API Key; it can be entered in Web Admin");
