@@ -8,6 +8,11 @@
 namespace {
 constexpr char kNvsNamespace[] = "chatai_ai";
 constexpr char kApiKey[] = "gemini_key";
+constexpr char kVoice[] = "voice";
+constexpr char kSystemPrompt[] = "system_prompt";
+constexpr size_t kMaxSystemPromptBytes = 3000;
+constexpr const char* kDefaultVoice = "Kore";
+constexpr const char* kDefaultSystemPrompt = "Bạn là trợ lý ChatAI TPIOS. Hãy giao tiếp tự nhiên, thân thiện và rõ ràng bằng tiếng Việt. Chỉ trả lời bằng giọng nói trong phiên hội thoại thời gian thực.";
 constexpr size_t kMaxApiKeyLength = 256;
 }
 
@@ -41,6 +46,78 @@ esp_err_t MigrateLegacyGeminiApiKey() {
     }
     return result;
 }
+
+
+bool IsSupportedGeminiVoice(const std::string& voice) {
+    static constexpr const char* kVoices[] = {
+        "Achernar", "Achird", "Algenib", "Algieba", "Alnilam", "Aoede",
+        "Autonoe", "Callirrhoe", "Charon", "Despina", "Enceladus", "Erinome",
+        "Fenrir", "Gacrux", "Iapetus", "Kore", "Laomedeia", "Leda", "Orus",
+        "Puck", "Pulcherrima", "Rasalgethi", "Sadachbia", "Sadaltager",
+        "Schedar", "Sulafat", "Umbriel", "Vindemiatrix", "Zephyr", "Zubenelgenubi"
+    };
+    for (const char* candidate : kVoices) {
+        if (voice == candidate) return true;
+    }
+    return false;
+}
+
+std::string GetGeminiVoice() {
+    nvs_handle_t handle;
+    if (nvs_open(kNvsNamespace, NVS_READONLY, &handle) != ESP_OK) return kDefaultVoice;
+    size_t size = 0;
+    if (nvs_get_str(handle, kVoice, nullptr, &size) != ESP_OK || size <= 1 || size > 32) {
+        nvs_close(handle);
+        return kDefaultVoice;
+    }
+    std::string value(size, '\\0');
+    const esp_err_t result = nvs_get_str(handle, kVoice, value.data(), &size);
+    nvs_close(handle);
+    if (result != ESP_OK) return kDefaultVoice;
+    value.resize(size - 1);
+    return IsSupportedGeminiVoice(value) ? value : kDefaultVoice;
+}
+
+esp_err_t SaveGeminiVoice(const std::string& voice) {
+    if (!IsSupportedGeminiVoice(voice)) return ESP_ERR_INVALID_ARG;
+    nvs_handle_t handle;
+    esp_err_t result = nvs_open(kNvsNamespace, NVS_READWRITE, &handle);
+    if (result != ESP_OK) return result;
+    result = nvs_set_str(handle, kVoice, voice.c_str());
+    if (result == ESP_OK) result = nvs_commit(handle);
+    nvs_close(handle);
+    return result;
+}
+
+std::string GetGeminiSystemPrompt() {
+    nvs_handle_t handle;
+    if (nvs_open(kNvsNamespace, NVS_READONLY, &handle) != ESP_OK) return kDefaultSystemPrompt;
+    size_t size = 0;
+    if (nvs_get_str(handle, kSystemPrompt, nullptr, &size) != ESP_OK ||
+        size <= 1 || size > kMaxSystemPromptBytes + 1) {
+        nvs_close(handle);
+        return kDefaultSystemPrompt;
+    }
+    std::string value(size, '\\0');
+    const esp_err_t result = nvs_get_str(handle, kSystemPrompt, value.data(), &size);
+    nvs_close(handle);
+    if (result != ESP_OK) return kDefaultSystemPrompt;
+    value.resize(size - 1);
+    return value;
+}
+
+esp_err_t SaveGeminiSystemPrompt(const std::string& prompt) {
+    if (prompt.empty() || prompt.size() > kMaxSystemPromptBytes) return ESP_ERR_INVALID_SIZE;
+    nvs_handle_t handle;
+    esp_err_t result = nvs_open(kNvsNamespace, NVS_READWRITE, &handle);
+    if (result != ESP_OK) return result;
+    result = nvs_set_str(handle, kSystemPrompt, prompt.c_str());
+    if (result == ESP_OK) result = nvs_commit(handle);
+    nvs_close(handle);
+    return result;
+}
+
+size_t GetMaxGeminiSystemPromptBytes() { return kMaxSystemPromptBytes; }
 
 bool HasGeminiApiKey() {
     nvs_handle_t handle;
