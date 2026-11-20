@@ -207,93 +207,114 @@ void ReportWebSocketCloseFrame(const esp_websocket_event_data_t* event) {
 
     char detail[192]{};
     std::snprintf(detail, sizeof(detail),
-                  "source=received_close_frame close_code=%d payload_len=%d reason_len_logged=%d reason=\"%s\"",
-                  event->close_status_code, event->payload_len, reason_length, reason);
+                  "source=received_close_frame close_code=%d payload_len=%d "
+                  "reason_len_logged=%d reason=\"%s\"",
+                  event->close_status_code, event->payload_len,
+                  reason_length, reason_length > 0 ? reason : "empty_or_unavailable");
     chatai::diagnostics::Add("WS_CLOSE", "INFO", detail);
 }
 
+void ReportTlsFailure(const char* detail, int error_code, uint32_t cert_flags) {
+    const uint32_t now = static_cast<uint32_t>(xTaskGetTickCount());
+    const bool was_active = g_tls_failure_active.exchange(true);
+    const int previous_error = g_last_tls_error.exchange(error_code);
+    const uint32_t previous_flags = g_last_tls_cert_flags.exchange(cert_flags);
+
+    if (!was_active || previous_error != error_code || previous_flags != cert_flags) {
+        g_tls_suppressed_count.store(0);
+        g_tls_failure_started_tick.store(now);
+        g_tls_last_summary_tick.store(now);
+        chatai::diagnostics::Add("TLS", "FAIL", detail);
+        return;
+    }
+
+    const uint32_t suppressed = g_tls_suppressed_count.fetch_add(1) + 1;
+    const uint32_t last_summary = g_tls_last_summary_tick.load();
+    if (now - last_summary >= pdMS_TO_TICKS(kFailureSummaryIntervalMs)) {
+        char summary[128]{};
+        const uint32_t duration = (now - g_tls_failure_started_tick.load()) /
+                                  configTICK_RATE_HZ;
+        std::snprintf(summary, sizeof(summary),
+                      "same_error_count=%lu duration=%lus",
+                      static_cast<unsigned long>(suppressed),
+                      static_cast<unsigned long>(duration));
+        chatai::diagnostics::Add("TLS", "WARN", summary);
+        g_tls_last_summary_tick.store(now);
+    }
+}
+
+void ReportTlsRecovered() {
+    if (!g_tls_failure_active.exchange(false)) return;
+    const uint32_t now = static_cast<uint32_t>(xTaskGetTickCount());
+    const uint32_t failures = g_tls_suppressed_count.exchange(0) + 1;
+    const uint32_t duration = (now - g_tls_failure_started_tick.load()) /
+                              configTICK_RATE_HZ;
+    char detail[128]{};
+    std::snprintf(detail, sizeof(detail),
+                  "recovered_after_failures=%lu duration=%lus",
+                  static_cast<unsigned long>(failures),
+                  static_cast<unsigned long>(duration));
+    chatai::diagnostics::Add("TLS", "OK", detail);
+    g_tls_fatal.store(false);
+    g_retry_blocked.store(false);
+}
+
 void NotifyConnectionError(const char* title, const char* message) {
-    if (g_connection_notification_active.exchange(true)) return;
-    chatai::display::Notify(title, message, 4000);
+    if (!g_connection_notification_active.exchange(true)) {
+        chatai::display::Notify(title, message, 4000);
+    }
 }
 
 void ReportTimeFailure(const char* detail) {
+    chatai::diagnostics::SetTimeSyncStatus(false);
     if (!g_time_failure_reported.exchange(true)) {
-        ESP_LOGE(kTag, "System time is not synchronized: %s", detail);
+        ESP_LOGW(kTag, "System time is not NTP-verified for Gemini TLS: %s", detail);
         chatai::diagnostics::Add("TIME", "FAIL", detail);
-        NotifyConnectionError("THOI GIAN", "Chua dong bo NTP");
     }
 }
 
 void ReportTimeSuccess(const char* detail) {
-    if (!g_time_success_reported.exchange(true)) {
-        chatai::diagnostics::SetTimeSyncStatus(true, "SNTP");
-        ESP_LOGI(kTag, "System time synchronized by SNTP");
-        chatai::diagnostics::Add("TIME", "OK", detail);
+    chatai::diagnostics::SetTimeSyncStatus(true, "SNTP");
+    const bool recovered = g_time_failure_reported.exchange(false);
+    if (recovered || !g_time_success_reported.exchange(true)) {
+        char time_detail[128]{};
+        std::snprintf(time_detail, sizeof(time_detail), "%s; timezone=Asia/Ho_Chi_Minh UTC+07:00",
+                      recovered ? "system clock synchronized" : detail);
+        chatai::diagnostics::Add("TIME", "OK", time_detail);
     }
 }
 
-void ReportTlsFailure(const char* detail, int mbedtls_error, uint32_t cert_flags) {
-    const bool first = !g_tls_failure_active.exchange(true);
-    if (first) {
-        g_tls_failure_started_tick.store(static_cast<uint32_t>(xTaskGetTickCount()));
-        g_tls_last_summary_tick.store(g_tls_failure_started_tick.load());
-        g_last_tls_error.store(mbedtls_error);
-        g_last_tls_cert_flags.store(cert_flags);
-        ESP_LOGE(kTag, "Gemini TLS failure: %s", detail);
-        chatai::diagnostics::Add("TLS", "FAIL", detail);
-        NotifyConnectionError("TLS GEMINI", "Loi xac minh bao mat");
-        return;
-    }
-
-    g_tls_suppressed_count.fetch_add(1);
-    const uint32_t now = static_cast<uint32_t>(xTaskGetTickCount());
-    const uint32_t last = g_tls_last_summary_tick.load();
-    if (static_cast<uint32_t>(now - last) <
-        pdMS_TO_TICKS(kFailureSummaryIntervalMs)) return;
-
-    g_tls_last_summary_tick.store(now);
-    char summary[176]{};
-    std::snprintf(summary, sizeof(summary),
-                  "ongoing_seconds=%lu suppressed=%lu last_mbedtls=%d last_cert_flags=0x%x",
-                  static_cast<unsigned long>(ElapsedSeconds(now, g_tls_failure_started_tick.load())),
-                  static_cast<unsigned long>(g_tls_suppressed_count.exchange(0)),
-                  g_last_tls_error.load(), static_cast<unsigned>(g_last_tls_cert_flags.load()));
-    chatai::diagnostics::Add("TLS", "WARN", summary);
-}
-
-void ReportTlsRecovered() {
-    if (g_tls_failure_active.exchange(false)) {
-        const uint32_t now = static_cast<uint32_t>(xTaskGetTickCount());
-        char detail[112]{};
-        std::snprintf(detail, sizeof(detail),
-                      "TLS recovered after %lu seconds; suppressed=%lu",
-                      static_cast<unsigned long>(ElapsedSeconds(now, g_tls_failure_started_tick.load())),
-                      static_cast<unsigned long>(g_tls_suppressed_count.exchange(0)));
-        ESP_LOGI(kTag, "Gemini TLS recovered");
-        chatai::diagnostics::Add("TLS", "RECOVERED", detail);
-    }
-}
-
-void ReportTlsBundleFailure(const char* detail) {
-    if (!g_tls_bundle_failure_reported.exchange(true))
-        chatai::diagnostics::Add("TLS_CA", "FAIL", detail);
-}
-
-int AttachGeminiCertificateBundle(void* config_pointer) {
-    const int result = esp_crt_bundle_attach(config_pointer);
-    if (result == ESP_OK) {
-        if (!g_tls_bundle_success_reported.exchange(true))
-            chatai::diagnostics::Add("TLS_CA", "OK", "esp_crt_bundle_attach=ESP_OK(0x00000000)");
-    } else {
-        char detail[96]{};
-        std::snprintf(detail, sizeof(detail), "esp_crt_bundle_attach=%s(0x%08x)",
-                      esp_err_to_name(result), static_cast<unsigned>(result));
-        ReportTlsBundleFailure(detail);
-    }
-
+esp_err_t AttachGeminiCertificateBundle(void* tls_config) {
+    const esp_err_t result = esp_crt_bundle_attach(tls_config);
 #if defined(CONFIG_MBEDTLS_DEBUG) && CONFIG_MBEDTLS_DEBUG
-    if (!g_tls_config_reported.exchange(true)) {
+    if (result == ESP_OK && tls_config != nullptr) {
+        mbedtls_esp_enable_debug_log(
+            static_cast<mbedtls_ssl_config*>(tls_config), CONFIG_MBEDTLS_DEBUG_LEVEL);
+        esp_log_level_set("esp-tls", ESP_LOG_DEBUG);
+        esp_log_level_set("esp-x509-crt-bundle", ESP_LOG_DEBUG);
+        char debug_detail[80]{};
+        std::snprintf(debug_detail, sizeof(debug_detail),
+                      "MbedTLS debug compiled in; level=%d", CONFIG_MBEDTLS_DEBUG_LEVEL);
+        chatai::diagnostics::Add("TLS_DEBUG", "OK", debug_detail);
+    }
+#else
+    chatai::diagnostics::Add("TLS_DEBUG", "FAIL",
+                             "CONFIG_MBEDTLS_DEBUG is disabled in this firmware build");
+#endif
+    char detail[112]{};
+    std::snprintf(detail, sizeof(detail), "esp_crt_bundle_attach=%s(0x%08x)",
+                  esp_err_to_name(result), static_cast<unsigned>(result));
+    if (result == ESP_OK) {
+        if (!g_tls_bundle_success_reported.exchange(true)) {
+            ESP_LOGI(kTag, "Gemini certificate bundle attached");
+            chatai::diagnostics::Add("TLS_CA", "OK", detail);
+        }
+    } else if (!g_tls_bundle_failure_reported.exchange(true)) {
+        ESP_LOGE(kTag, "Gemini certificate bundle attach failed: %s",
+                 esp_err_to_name(result));
+        chatai::diagnostics::Add("TLS_CA", "FAIL", detail);
+    }
+    if (result == ESP_OK && !g_tls_config_reported.exchange(true)) {
         const char* cross_signed = "disabled";
         const char* time_date = "disabled";
         const char* full_bundle = "disabled";
@@ -664,13 +685,13 @@ void ReportWebSocketDisconnectError(const esp_websocket_event_data_t* event) {
                 std::snprintf(mbedtls_message, sizeof(mbedtls_message),
                               "not reported");
             }
-
+    
             const size_t internal_free =
                 heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
             const size_t internal_largest =
                 heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
             const std::time_t system_time = std::time(nullptr);
-
+    
             char detail[416]{};
             std::snprintf(detail, sizeof(detail),
                           "host=generativelanguage.googleapis.com esp=%s(0x%08x) "
@@ -705,7 +726,7 @@ void ReportWebSocketDisconnectError(const esp_websocket_event_data_t* event) {
             }
             break;
         }
-
+    
         case WEBSOCKET_ERROR_TYPE_HANDSHAKE: {
             const int http_status = event->error_handle.esp_ws_handshake_status_code;
             char detail[80]{};
@@ -718,15 +739,15 @@ void ReportWebSocketDisconnectError(const esp_websocket_event_data_t* event) {
             }
             break;
         }
-
+    
         case WEBSOCKET_ERROR_TYPE_PONG_TIMEOUT:
             chatai::diagnostics::Add("WS", "FAIL", "WebSocket PONG timeout");
             break;
-
+    
         case WEBSOCKET_ERROR_TYPE_SERVER_CLOSE:
             chatai::diagnostics::Add("WS", "FAIL", "server closed WebSocket connection");
             break;
-
+    
         case WEBSOCKET_ERROR_TYPE_NONE:
         default: {
             char detail[64]{};
