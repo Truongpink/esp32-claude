@@ -910,16 +910,31 @@ bool IsValidApiKey(const char* value) {
 }
 
 esp_err_t AdminPageHandler(httpd_req_t* request) {
-    std::string page(kAdminPage);
-    const size_t marker = page.find("__CSRF_TOKEN__");
-    if (marker == std::string::npos) return ESP_FAIL;
-    page.replace(marker, std::strlen("__CSRF_TOKEN__"), g_csrf_token);
+    const char* marker = std::strstr(kAdminPage, "__CSRF_TOKEN__");
+    if (marker == nullptr) return ESP_FAIL;
+
     httpd_resp_set_type(request, "text/html; charset=utf-8");
     SetNoStore(request);
     httpd_resp_set_hdr(request, "Content-Security-Policy",
         "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; "
         "connect-src 'self'; base-uri 'none'; frame-ancestors 'none'");
-    return httpd_resp_send(request, page.c_str(), page.size());
+
+    // Stream the immutable page around the per-boot CSRF token. Avoid copying
+    // the entire HTML document into a temporary std::string on the HTTP task.
+    const size_t prefix_size = static_cast<size_t>(marker - kAdminPage);
+    esp_err_t result = httpd_resp_send_chunk(request, kAdminPage, prefix_size);
+    if (result == ESP_OK) {
+        result = httpd_resp_send_chunk(request, g_csrf_token.c_str(),
+                                       g_csrf_token.size());
+    }
+    if (result == ESP_OK) {
+        const char* suffix = marker + std::strlen("__CSRF_TOKEN__");
+        result = httpd_resp_send_chunk(request, suffix, HTTPD_RESP_USE_STRLEN);
+    }
+    if (result == ESP_OK) {
+        result = httpd_resp_send_chunk(request, nullptr, 0);
+    }
+    return result;
 }
 
 esp_err_t FirmwareStatusHandler(httpd_req_t* request) {
