@@ -18,12 +18,14 @@
 #include <esp_netif_sntp.h>
 #include <esp_random.h>
 #include <esp_websocket_client.h>
+#include <esp_tls.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/queue.h>
 #include <freertos/task.h>
 #include <mbedtls/base64.h>
 #include <mbedtls/error.h>
 #include <mbedtls/esp_debug.h>
+#include <mbedtls/version.h>
 
 #include "audio_manager.h"
 #include "gemini_settings.h"
@@ -33,6 +35,7 @@
 
 namespace {
 constexpr char kTag[] = "ChatAI-Gemini";
+constexpr char kGeminiHost[] = "generativelanguage.googleapis.com";
 constexpr char kEndpoint[] =
     "wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta."
     "GenerativeService.BidiGenerateContent?key=";
@@ -72,6 +75,8 @@ std::atomic<bool> g_model_reported{false};
 std::atomic<bool> g_ws_start_reported{false};
 std::atomic<bool> g_tls_bundle_success_reported{false};
 std::atomic<bool> g_tls_bundle_failure_reported{false};
+std::atomic<bool> g_tls_config_reported{false};
+bool g_tls_probe_completed = false;
 std::atomic<bool> g_client_failed{false};
 std::atomic<bool> g_connection_failure_reported{false};
 std::atomic<bool> g_connection_notification_active{false};
@@ -206,7 +211,77 @@ esp_err_t AttachGeminiCertificateBundle(void* tls_config) {
                  esp_err_to_name(result));
         chatai::diagnostics::Add("TLS_CA", "FAIL", detail);
     }
+    if (result == ESP_OK && !g_tls_config_reported.exchange(true)) {
+        const char* cross_signed = "disabled";
+        const char* time_date = "disabled";
+        const char* full_bundle = "disabled";
+#if defined(CONFIG_MBEDTLS_CERTIFICATE_BUNDLE_CROSS_SIGNED_VERIFY) && CONFIG_MBEDTLS_CERTIFICATE_BUNDLE_CROSS_SIGNED_VERIFY
+        cross_signed = "enabled";
+#endif
+#if defined(CONFIG_MBEDTLS_HAVE_TIME_DATE) && CONFIG_MBEDTLS_HAVE_TIME_DATE
+        time_date = "enabled";
+#endif
+#if defined(CONFIG_MBEDTLS_CERTIFICATE_BUNDLE_DEFAULT_FULL) && CONFIG_MBEDTLS_CERTIFICATE_BUNDLE_DEFAULT_FULL
+        full_bundle = "enabled";
+#endif
+        char config_detail[192]{};
+        std::snprintf(config_detail, sizeof(config_detail),
+                      "mbedtls=%s cross_signed_verify=%s time_date=%s full_bundle=%s debug_level=%d",
+                      MBEDTLS_VERSION_STRING_FULL, cross_signed, time_date,
+                      full_bundle, CONFIG_MBEDTLS_DEBUG_LEVEL);
+        chatai::diagnostics::Add("TLS_CONFIG", "INFO", config_detail);
+    }
     return result;
+}
+
+bool ProbeGeminiTls() {
+    esp_tls_cfg_t config{};
+    config.crt_bundle_attach = AttachGeminiCertificateBundle;
+    config.timeout_ms = 12000;
+
+    esp_tls_t* tls = esp_tls_init();
+    if (tls == nullptr) {
+        chatai::diagnostics::Add("TLS_PROBE", "FAIL", "esp_tls_init returned null");
+        return false;
+    }
+
+    const int connected = esp_tls_conn_new_sync(
+        kGeminiHost, sizeof(kGeminiHost) - 1, 443, &config, tls);
+    if (connected == 1) {
+        chatai::diagnostics::Add(
+            "TLS_PROBE", "OK",
+            "independent verified TLS handshake succeeded; hostname and CA bundle accepted");
+        esp_tls_conn_destroy(tls);
+        return true;
+    }
+
+    esp_tls_error_handle_t error_handle = nullptr;
+    int mbedtls_error = 0;
+    int cert_flags = 0;
+    esp_err_t tls_error = ESP_FAIL;
+    if (esp_tls_get_error_handle(tls, &error_handle) == ESP_OK &&
+        error_handle != nullptr) {
+        tls_error = esp_tls_get_and_clear_last_error(
+            error_handle, &mbedtls_error, &cert_flags);
+    }
+
+    char mbedtls_message[112]{};
+    if (mbedtls_error != 0) {
+        mbedtls_strerror(mbedtls_error, mbedtls_message, sizeof(mbedtls_message));
+    } else {
+        std::snprintf(mbedtls_message, sizeof(mbedtls_message), "not reported");
+    }
+
+    char detail[288]{};
+    std::snprintf(detail, sizeof(detail),
+                  "host=%s result=%d esp=%s(0x%08x) mbedtls_code=%d text=%s cert_flags=0x%x",
+                  kGeminiHost, connected, esp_err_to_name(tls_error),
+                  static_cast<unsigned>(tls_error), mbedtls_error,
+                  mbedtls_message, static_cast<unsigned>(cert_flags));
+    ESP_LOGE(kTag, "Independent Gemini TLS probe failed: %s", detail);
+    chatai::diagnostics::Add("TLS_PROBE", "FAIL", detail);
+    esp_tls_conn_destroy(tls);
+    return false;
 }
 
 std::string UrlEncode(const std::string& value) {
@@ -937,6 +1012,13 @@ void GeminiWorker(void*) {
             std::fill(api_key.begin(), api_key.end(), '\0');
             schedule_retry();
             continue;
+        }
+
+        // Run one independent TLS handshake before WSS. This separates CA/hostname
+        // verification failures from WebSocket-specific handshake failures.
+        if (!g_tls_probe_completed) {
+            g_tls_probe_completed = true;
+            ProbeGeminiTls();
         }
 
         if (!g_auth_reported.exchange(true))
