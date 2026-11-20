@@ -1033,6 +1033,9 @@ std::string NetworkManager::GetSoftApIpAddress() {
     return address;
 }
 
+int NetworkManager::GetDnsProbeState() { return g_last_dns_state.load(); }
+int NetworkManager::GetTcp443ProbeState() { return g_last_tcp_state.load(); }
+
 bool NetworkManager::IsProvisioningActive() {
     return g_provisioning_started.load();
 }
