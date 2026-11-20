@@ -61,6 +61,7 @@ std::atomic<bool> g_push_to_talk{false};
 std::atomic<bool> g_restart_requested{false};
 bool g_sntp_initialized = false;
 bool g_sntp_started = false;
+bool g_sntp_sync_confirmed = false;
 std::atomic<uint32_t> g_audio_epoch{0};
 std::atomic<bool> g_audio_response_reported{false};
 std::atomic<bool> g_audio_input_reported{false};
@@ -156,28 +157,40 @@ void NotifyConnectionError(const char* title, const char* message) {
 }
 
 void ReportTimeFailure(const char* detail) {
+    chatai::diagnostics::SetTimeSyncStatus(false);
     if (!g_time_failure_reported.exchange(true)) {
-        ESP_LOGW(kTag, "System time unavailable for Gemini TLS: %s", detail);
+        ESP_LOGW(kTag, "System time is not NTP-verified for Gemini TLS: %s", detail);
         chatai::diagnostics::Add("TIME", "FAIL", detail);
     }
 }
 
 void ReportTimeSuccess(const char* detail) {
+    chatai::diagnostics::SetTimeSyncStatus(true, "SNTP");
     const bool recovered = g_time_failure_reported.exchange(false);
     if (recovered || !g_time_success_reported.exchange(true)) {
-        chatai::diagnostics::Add("TIME", "OK", recovered ? "system clock recovered" : detail);
+        char time_detail[128]{};
+        std::snprintf(time_detail, sizeof(time_detail), "%s; timezone=Asia/Ho_Chi_Minh UTC+07:00",
+                      recovered ? "system clock synchronized" : detail);
+        chatai::diagnostics::Add("TIME", "OK", time_detail);
     }
 }
 
 esp_err_t AttachGeminiCertificateBundle(void* tls_config) {
     const esp_err_t result = esp_crt_bundle_attach(tls_config);
-#if CONFIG_MBEDTLS_DEBUG
+#if defined(CONFIG_MBEDTLS_DEBUG) && CONFIG_MBEDTLS_DEBUG
     if (result == ESP_OK && tls_config != nullptr) {
-        // Attach info-level MbedTLS diagnostics to this TLS session so the
-        // next handshake failure exposes the certificate verification path.
         mbedtls_esp_enable_debug_log(
-            static_cast<mbedtls_ssl_config*>(tls_config), 2);
+            static_cast<mbedtls_ssl_config*>(tls_config), CONFIG_MBEDTLS_DEBUG_LEVEL);
+        esp_log_level_set("esp-tls", ESP_LOG_DEBUG);
+        esp_log_level_set("esp-x509-crt-bundle", ESP_LOG_DEBUG);
+        char debug_detail[80]{};
+        std::snprintf(debug_detail, sizeof(debug_detail),
+                      "MbedTLS debug compiled in; level=%d", CONFIG_MBEDTLS_DEBUG_LEVEL);
+        chatai::diagnostics::Add("TLS_DEBUG", "OK", debug_detail);
     }
+#else
+    chatai::diagnostics::Add("TLS_DEBUG", "FAIL",
+                             "CONFIG_MBEDTLS_DEBUG is disabled in this firmware build");
 #endif
     char detail[112]{};
     std::snprintf(detail, sizeof(detail), "esp_crt_bundle_attach=%s(0x%08x)",
@@ -217,8 +230,10 @@ std::string UrlEncode(const std::string& value) {
 bool EnsureSystemTime() {
     constexpr std::time_t kMinimumValidTime = 1700000000;
     constexpr unsigned kSntpServerCount = 3;
-    if (std::time(nullptr) >= kMinimumValidTime) {
-        ReportTimeSuccess("system clock valid");
+    // A plausible Unix epoch is not proof that the clock is correct. Require
+    // one successful SNTP synchronization after this boot before TLS starts.
+    if (g_sntp_sync_confirmed && std::time(nullptr) >= kMinimumValidTime) {
+        ReportTimeSuccess("SNTP clock remains valid");
         return true;
     }
 
@@ -250,13 +265,14 @@ bool EnsureSystemTime() {
     esp_err_t sync_result = ESP_ERR_TIMEOUT;
     for (unsigned attempt = 0; attempt < 15; ++attempt) {
         sync_result = esp_netif_sntp_sync_wait(pdMS_TO_TICKS(2000));
-        if (std::time(nullptr) >= kMinimumValidTime) {
-            ESP_LOGI(kTag, "System time synchronized; Gemini TLS certificate validation can proceed");
-            ReportTimeSuccess("SNTP synchronized");
+        if (sync_result == ESP_OK && std::time(nullptr) >= kMinimumValidTime) {
+            g_sntp_sync_confirmed = true;
+            ESP_LOGI(kTag, "SNTP synchronization confirmed; Gemini TLS certificate validation can proceed");
+            ReportTimeSuccess("SNTP synchronization confirmed");
             return true;
         }
         if (sync_result != ESP_ERR_TIMEOUT &&
-            sync_result != ESP_ERR_NOT_FINISHED) {
+            sync_result != ESP_ERR_NOT_FINISHED && sync_result != ESP_OK) {
             break;
         }
     }
@@ -267,9 +283,10 @@ bool EnsureSystemTime() {
     }
     char detail[128]{};
     std::snprintf(detail, sizeof(detail),
-                  "sync=%s NTP_reachability=%02x/%02x/%02x",
-                  esp_err_to_name(sync_result), reachability[0],
-                  reachability[1], reachability[2]);
+                  "SNTP not confirmed; sync=%s epoch_valid=%s NTP_reachability=%02x/%02x/%02x",
+                  esp_err_to_name(sync_result),
+                  std::time(nullptr) >= kMinimumValidTime ? "yes_unverified" : "no",
+                  reachability[0], reachability[1], reachability[2]);
     ReportTimeFailure(detail);
     return false;
 }
