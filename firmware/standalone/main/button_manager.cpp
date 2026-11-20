@@ -13,6 +13,7 @@
 #include "audio_manager.h"
 #include "display_manager.h"
 #include "gemini_live_client.h"
+#include "network_manager.h"
 #include "diagnostic_manager.h"
 
 namespace chatai::buttons {
@@ -107,10 +108,21 @@ void ButtonTask(void*) {
         if (UpdateButton(g_boot, now)) {
             ReportButtonTransition("BOOT", g_boot);
             if (!g_boot.stable_pressed) {
-            const bool enabled = !chatai::gemini::IsChatEnabled();
-            chatai::gemini::SetChatEnabled(enabled);
-            chatai::display::Notify("CHAT AI", enabled ? "Bật nghe liên tục" : "Đã tắt nghe");
-            ESP_LOGI(kTag, "Chat listening %s", enabled ? "enabled" : "disabled");
+                if (chatai::network::NetworkManager::IsProvisioningActive()) {
+                    chatai::display::Notify("WI-FI", "Cấu hình qua Web Admin");
+                    ESP_LOGI(kTag, "BOOT clicked while Wi-Fi provisioning is active");
+                } else if (chatai::gemini::IsSpeaking()) {
+                    chatai::gemini::AbortSpeaking();
+                    chatai::display::Notify("CHAT AI", "Đã dừng phát");
+                    ESP_LOGI(kTag, "BOOT stopped current Gemini playback");
+                } else {
+                    const bool enabled = !chatai::gemini::IsChatEnabled();
+                    chatai::gemini::SetChatEnabled(enabled);
+                    chatai::display::Notify("CHAT AI",
+                        enabled ? "Bật nghe liên tục" : "Đã tắt nghe");
+                    ESP_LOGI(kTag, "Chat listening %s",
+                             enabled ? "enabled" : "disabled");
+                }
             }
         }
 
