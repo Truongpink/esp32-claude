@@ -66,6 +66,9 @@ bool g_sntp_started = false;
 bool g_sntp_sync_confirmed = false;
 std::atomic<uint32_t> g_audio_epoch{0};
 std::atomic<bool> g_audio_response_reported{false};
+std::atomic<bool> g_audio_reject_reported{false};
+std::atomic<bool> g_server_content_reported{false};
+std::atomic<int> g_last_speech_state{-1};
 std::atomic<bool> g_audio_input_reported{false};
 std::atomic<uint32_t> g_ws_session_start_tick{0};
 std::atomic<uint32_t> g_ws_ping_rx_count{0};
@@ -140,6 +143,9 @@ void ResetWebSocketSessionMetrics() {
     g_ws_audio_rx_count.store(0);
     g_ws_last_audio_rx_tick.store(0);
     g_audio_response_reported.store(false);
+    g_audio_reject_reported.store(false);
+    g_server_content_reported.store(false);
+    g_last_speech_state.store(-1);
     g_ws_summary_reported.store(false);
 }
 
@@ -499,6 +505,7 @@ std::string BuildSetupMessage() {
     if (root == nullptr) return {};
     cJSON* setup = cJSON_AddObjectToObject(root, "setup");
     cJSON_AddStringToObject(setup, "model", "models/gemini-3.8-live");
+    cJSON_AddBoolToObject(setup, "explicitVADSignal", true);
     cJSON* generation = cJSON_AddObjectToObject(setup, "generationConfig");
     cJSON* modalities = cJSON_AddArrayToObject(generation, "responseModalities");
     cJSON_AddItemToArray(modalities, cJSON_CreateString("AUDIO"));
@@ -528,12 +535,27 @@ void ClearAudioQueue() {
     }
 }
 
+void ReportAudioRejectOnce(const char* reason) {
+    if (!g_audio_reject_reported.exchange(true)) {
+        chatai::diagnostics::Add("GEMINI_AUDIO_RX", "WARN", reason);
+    }
+}
+
 void QueueServerAudio(const cJSON* inline_data) {
     const cJSON* mime = cJSON_GetObjectItemCaseSensitive(inline_data, "mimeType");
     const cJSON* data = cJSON_GetObjectItemCaseSensitive(inline_data, "data");
     if (!cJSON_IsString(mime) || !cJSON_IsString(data) ||
-        std::strncmp(mime->valuestring, "audio/pcm;rate=24000", 20) != 0 ||
-        data->valuestring == nullptr || g_audio_queue == nullptr) return;
+        data->valuestring == nullptr || g_audio_queue == nullptr) {
+        ReportAudioRejectOnce("audio inlineData missing MIME/data or playback queue unavailable");
+        return;
+    }
+    if (std::strncmp(mime->valuestring, "audio/pcm;rate=24000", 20) != 0) {
+        char detail[112]{};
+        std::snprintf(detail, sizeof(detail), "unsupported audio MIME type: %.80s",
+                      mime->valuestring);
+        ReportAudioRejectOnce(detail);
+        return;
+    }
 
     const size_t encoded_size = std::strlen(data->valuestring);
     if (encoded_size == 0 || encoded_size > 6000) {
@@ -617,6 +639,48 @@ void HandleServerMessage(const std::string& message) {
     if (cJSON_IsObject(server_content)) {
         g_ws_server_content_count.fetch_add(1);
         g_ws_last_server_content_tick.store(static_cast<uint32_t>(xTaskGetTickCount()));
+
+        const cJSON* speech_state =
+            cJSON_GetObjectItemCaseSensitive(server_content, "speechState");
+        if (cJSON_IsString(speech_state)) {
+            const bool speech = std::strcmp(speech_state->valuestring, "SPEECH") == 0;
+            const bool non_speech = std::strcmp(speech_state->valuestring, "NON_SPEECH") == 0;
+            const int state = speech ? 1 : (non_speech ? 0 : -1);
+            if (state >= 0 && g_last_speech_state.exchange(state) != state) {
+                chatai::diagnostics::Add("GEMINI_VAD",
+                    speech ? "SPEECH" : "NON_SPEECH",
+                    speech ? "Gemini server detected incoming speech"
+                           : "Gemini server detected end of speech");
+            }
+        }
+
+        const cJSON* turn_complete =
+            cJSON_GetObjectItemCaseSensitive(server_content, "turnComplete");
+        if (cJSON_IsTrue(turn_complete)) {
+            const cJSON* interaction_status =
+                cJSON_GetObjectItemCaseSensitive(server_content, "interactionStatus");
+            const cJSON* complete_reason =
+                cJSON_GetObjectItemCaseSensitive(server_content, "turnCompleteReason");
+            char detail[144]{};
+            std::snprintf(detail, sizeof(detail),
+                "interaction_status=%.32s reason=%.48s model_turn=%d",
+                cJSON_IsString(interaction_status) ? interaction_status->valuestring : "unknown",
+                cJSON_IsString(complete_reason) ? complete_reason->valuestring : "unspecified",
+                cJSON_IsObject(cJSON_GetObjectItemCaseSensitive(server_content, "modelTurn")) ? 1 : 0);
+            chatai::diagnostics::Add("GEMINI_TURN", "COMPLETE", detail);
+        } else if (!g_server_content_reported.exchange(true)) {
+            const cJSON* model_turn =
+                cJSON_GetObjectItemCaseSensitive(server_content, "modelTurn");
+            const cJSON* parts = cJSON_IsObject(model_turn)
+                ? cJSON_GetObjectItemCaseSensitive(model_turn, "parts") : nullptr;
+            char detail[112]{};
+            std::snprintf(detail, sizeof(detail),
+                "first serverContent received; model_turn=%d parts=%d",
+                cJSON_IsObject(model_turn) ? 1 : 0,
+                cJSON_IsArray(parts) ? cJSON_GetArraySize(parts) : 0);
+            chatai::diagnostics::Add("GEMINI_SERVER_CONTENT", "INFO", detail);
+        }
+
         const cJSON* interrupted =
             cJSON_GetObjectItemCaseSensitive(server_content, "interrupted");
         if (cJSON_IsTrue(interrupted)) {
@@ -1182,11 +1246,17 @@ void MicrophoneWorker(void*) {
             const double dc_offset = static_cast<double>(mic_sum) / mic_sample_count;
             const double clipped_percent =
                 100.0 * static_cast<double>(mic_clipped_count) / mic_sample_count;
-            char level_detail[192]{};
+            const uint32_t window_ms = std::max<uint32_t>(
+                1, static_cast<uint32_t>(
+                    (stats_now - mic_stats_started) * 1000 / configTICK_RATE_HZ));
+            const double sample_rate =
+                static_cast<double>(mic_sample_count) * 1000.0 / window_ms;
+            char level_detail[224]{};
             std::snprintf(level_detail, sizeof(level_detail),
-                          "window_ms=5000 samples=%lu min=%ld max=%ld peak=%lu "
-                          "mean_abs=%lu rms=%.1f dc=%.1f clipped=%.2f%%",
-                          static_cast<unsigned long>(mic_sample_count),
+                          "window_ms=%lu samples=%lu rate_sps=%.0f min=%ld max=%ld "
+                          "peak=%lu mean_abs=%lu rms=%.1f dc=%.1f clipped=%.2f%%",
+                          static_cast<unsigned long>(window_ms),
+                          static_cast<unsigned long>(mic_sample_count), sample_rate,
                           static_cast<long>(mic_min), static_cast<long>(mic_max),
                           static_cast<unsigned long>(peak),
                           static_cast<unsigned long>(mic_sum_abs / mic_sample_count),
