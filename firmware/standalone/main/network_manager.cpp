@@ -1,6 +1,5 @@
 #include "network_manager.h"
 #include "web_admin.h"
-#include "firmware_info.h"
 #include "display_manager.h"
 #include "diagnostic_manager.h"
 
