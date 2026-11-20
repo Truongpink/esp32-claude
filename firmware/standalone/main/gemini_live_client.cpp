@@ -1406,9 +1406,11 @@ void SetChatEnabled(bool enabled) { g_chat_enabled.store(enabled); }
 bool IsChatEnabled() { return g_chat_enabled.load(); }
 void SetPushToTalk(bool pressed) {
     const bool was_pressed = g_push_to_talk.exchange(pressed);
-    if (pressed && !was_pressed && !g_ready.load()) {
+    if (pressed && !was_pressed && !g_ready.load() &&
+        !g_waiting_setup.load() &&
+        (g_client_failed.load() || g_retry_blocked.load())) {
         chatai::diagnostics::Add("PTT", "INFO",
-            "press detected while Gemini is not ready; requesting one reconnect");
+            "press detected after Gemini session failure; requesting one reconnect");
         RequestReconnect();
     }
 }
