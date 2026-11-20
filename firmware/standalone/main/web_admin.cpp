@@ -861,22 +861,34 @@ esp_err_t SendError(httpd_req_t* request, const char* status, const char* messag
 }
 
 bool IsSameOrigin(httpd_req_t* request) {
-    const size_t origin_length = httpd_req_get_hdr_value_len(request, "Origin");
     const size_t host_length = httpd_req_get_hdr_value_len(request, "Host");
-    if (origin_length == 0 || host_length == 0 ||
-        origin_length >= 160 || host_length >= 96) return false;
+    if (host_length == 0 || host_length >= 96) return false;
+
+    char host[96]{};
+    if (httpd_req_get_hdr_value_str(request, "Host", host, sizeof(host)) != ESP_OK) {
+        return false;
+    }
+
+    const size_t origin_length = httpd_req_get_hdr_value_len(request, "Origin");
+    // Some mobile browser/webview requests omit Origin for same-origin fetches.
+    // IsAuthorizedMutation still requires the unpredictable per-boot CSRF token.
+    if (origin_length == 0) return true;
+    if (origin_length >= 160) return false;
 
     char origin[160]{};
-    char host[96]{};
-    if (httpd_req_get_hdr_value_str(request, "Origin", origin, sizeof(origin)) != ESP_OK ||
-        httpd_req_get_hdr_value_str(request, "Host", host, sizeof(host)) != ESP_OK) {
+    if (httpd_req_get_hdr_value_str(request, "Origin", origin, sizeof(origin)) != ESP_OK) {
         return false;
     }
 
     const std::string expected = std::string("http://") + host;
     if (origin == expected) return true;
-    return expected.find(":80") == std::string::npos &&
-           origin == expected + ":80";
+
+    // Normalize the optional explicit default HTTP port on either header.
+    if (expected.size() > 3 &&
+        expected.compare(expected.size() - 3, 3, ":80") == 0) {
+        return origin == expected.substr(0, expected.size() - 3);
+    }
+    return origin == expected + ":80";
 }
 
 bool IsAuthorizedMutation(httpd_req_t* request) {
