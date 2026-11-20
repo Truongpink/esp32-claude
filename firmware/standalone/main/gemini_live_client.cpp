@@ -43,7 +43,9 @@ constexpr char kEndpoint[] =
     "GenerativeService.BidiGenerateContent?key=";
 constexpr size_t kMaxIncomingMessage = 8192;
 constexpr size_t kMaxOutputSamples = 2048;
-constexpr size_t kMicChunkSamples = 320;  // 20 ms at 16 kHz.
+constexpr size_t kMicChunkSamples = 1600;  // 100 ms at 16 kHz.
+constexpr size_t kMicEncodedBufferSize = 4300;
+constexpr size_t kMicMessageBufferSize = 5000;
 constexpr uint32_t kFailureSummaryIntervalMs = 300000;
 constexpr UBaseType_t kAudioQueueLength = 8;
 
@@ -1089,9 +1091,10 @@ void MicrophoneWorker(void*) {
     bool last_should_listen = false;
     bool microphone_read_reported = false;
     bool microphone_read_attempt_recorded = false;
-    int16_t pcm[kMicChunkSamples]{};
-    unsigned char encoded[900]{};
-    char message[1200]{};
+    // Keep the larger 100 ms buffers out of this task's limited FreeRTOS stack.
+    static int16_t pcm[kMicChunkSamples]{};
+    static unsigned char encoded[kMicEncodedBufferSize]{};
+    static char message[kMicMessageBufferSize]{};
     bool microphone_enabled = false;
     bool microphone_error_reported = false;
     bool audio_stream_active = false;
@@ -1626,7 +1629,7 @@ void GeminiWorker(void*) {
         esp_websocket_client_config_t config{};
         config.uri = uri.c_str();
         config.crt_bundle_attach = AttachGeminiCertificateBundle;
-        config.buffer_size = 4096;
+        config.buffer_size = 6144;
         config.task_stack = 6144;
         config.task_prio = 5;
         config.network_timeout_ms = 15000;
