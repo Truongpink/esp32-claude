@@ -40,7 +40,7 @@ constexpr char kPasswordKey[] = "password";
 constexpr char kFirmwareBuildKey[] = "fw_build";
 
 constexpr uint8_t kMaxReconnectAttempts = 5;
-constexpr size_t kMaxFormLength = 256;
+constexpr size_t kMaxFormLength = 512;
 
 esp_netif_t* g_sta_netif = nullptr;
 esp_netif_t* g_ap_netif = nullptr;
