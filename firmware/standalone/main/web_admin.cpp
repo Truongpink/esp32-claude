@@ -26,7 +26,7 @@
 
 namespace {
 constexpr char kTag[] = "ChatAI-Admin";
-constexpr size_t kMaxRequestBody = 4096;
+constexpr size_t kMaxRequestBody = 8192;
 constexpr size_t kMaxApiKeyLength = 256;
 std::string g_csrf_token;
 std::mutex g_ota_mutex;
