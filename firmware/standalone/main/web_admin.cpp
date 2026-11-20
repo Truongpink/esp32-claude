@@ -304,6 +304,19 @@ async function pollAdminWifiStatus() {
     if (!response.ok) throw new Error("Không đọc được trạng thái Wi-Fi (HTTP " + response.status + ")");
     const state = await response.json();
     wifiAdminStatus.textContent = state.message + (state.ip ? " IP: " + state.ip : "");
+   document.getElementById("dashSsid").textContent = data.ssid || (data.wifi_connected ? "Đã kết nối" : "Chưa kết nối");
+   document.getElementById("dashRssi").textContent = data.wifi_connected ? data.rssi + " dBm" : "—";
+   document.getElementById("dashIp").textContent = data.ip || "Chưa có IP";
+   document.getElementById("dashGateway").textContent = (data.gateway || "—") + " / " + (data.dns || "—");
+   document.getElementById("dashInternet").textContent = data.internet_available ? "Đã xác minh" : "Chưa có Internet";
+   document.getElementById("dashAp").textContent = data.softap_ip || "Không hoạt động";
+   document.getElementById("dashGemini").textContent = data.gemini_ready ? "Sẵn sàng" : data.gemini_tls_fatal ? "Lỗi TLS" : data.gemini_error ? "Có lỗi" : "Đang kết nối";
+   document.getElementById("dashKey").textContent = data.key_configured ? "Đã lưu" : "Chưa cấu hình";
+   document.getElementById("dashVolume").textContent = data.speaker_volume + "%";
+   document.getElementById("dashHeap").textContent = data.free_heap + " byte";
+   document.getElementById("dashMinHeap").textContent = data.min_free_heap + " byte";
+   document.getElementById("dashUptime").textContent = Math.floor(data.uptime_seconds/3600) + " giờ " + Math.floor((data.uptime_seconds%3600)/60) + " phút";
+   document.getElementById("dashBuild").textContent = "#" + data.build_number;
     if ((state.state === 1 || state.state === 2 || state.state === 5) && wifiPollAttempts++ < 60) {
       setTimeout(pollAdminWifiStatus, 1500);
     } else if (state.state === 3) {
@@ -679,6 +692,30 @@ updateFirmwareButton.addEventListener("click", async () => {
   }
 });
 
+const promptTemplates = {
+personal:"Bạn là trợ lý cá nhân của tôi. Giao tiếp tự nhiên, rõ ràng bằng tiếng Việt. Trả lời ngắn gọn khi câu hỏi đơn giản; phân tích kỹ khi cần. Hỏi lại nếu thiếu dữ kiện. Không bịa thông tin.",
+companion:"Bạn là người bạn đồng hành AI ấm áp, tinh tế và vui vẻ. Biết lắng nghe, quan tâm nhưng không giả vờ là con người. Trò chuyện tự nhiên bằng tiếng Việt.",
+tech:"Bạn là chuyên gia công nghệ và hệ thống nhúng. Phân tích dựa trên dữ liệu, nêu rõ giả định và rủi ro. Ưu tiên giải pháp đơn giản, ổn định. Không tự bịa thông số.",
+coding:"Bạn là trợ lý lập trình cấp cao. Đọc code và ngữ cảnh trước khi đề xuất sửa. Ưu tiên thay đổi nhỏ, dễ bảo trì, không thêm dependency không cần thiết.",
+language:"Bạn là giáo viên ngoại ngữ kiên nhẫn. Điều chỉnh độ khó theo người học, sửa lỗi nhẹ nhàng, đưa ví dụ thực tế và giải thích bằng tiếng Việt khi cần.",
+support:"Bạn là trợ lý chăm sóc khách hàng chuyên nghiệp. Lắng nghe, xác nhận nhu cầu, hướng dẫn từng bước. Không hứa điều chưa chắc chắn."
+};
+function updatePromptBytes(){promptBytes.textContent=new TextEncoder().encode(promptInput.value).length;}
+promptInput.addEventListener("input",updatePromptBytes);
+promptTemplate.addEventListener("change",()=>{if(promptTemplate.value!=="custom"){promptInput.value=promptTemplates[promptTemplate.value]||"";updatePromptBytes();}});
+async function loadGeminiSettings(){
+ try{const response=await fetch("/api/gemini/settings",{cache:"no-store"});const data=await response.json();if(!response.ok)throw new Error(data.error||"Không tải được cấu hình Gemini");voiceSelect.value=data.voice||"Kore";promptInput.value=data.system_prompt||"";updatePromptBytes();}
+ catch(error){voiceResult.textContent=error.message;}
+}
+async function saveGeminiSetting(url,payload,resultElement,button){
+ button.disabled=true;resultElement.textContent="Đang lưu...";
+ try{const response=await fetch(url,{method:"POST",cache:"no-store",headers:{"Content-Type":"application/json","X-ChatAI-CSRF":csrfToken},body:JSON.stringify(payload)});const data=await response.json().catch(()=>({}));if(!response.ok)throw new Error(data.error||("Lưu thất bại (HTTP "+response.status+")"));resultElement.textContent=data.message||"Đã lưu. Gemini Live sẽ tạo phiên mới để áp dụng.";}
+ catch(error){resultElement.textContent=error.message;}finally{button.disabled=false;}
+}
+document.getElementById("saveVoice").addEventListener("click",()=>saveGeminiSetting("/api/gemini/voice",{voice:voiceSelect.value},voiceResult,document.getElementById("saveVoice")));
+document.getElementById("savePrompt").addEventListener("click",()=>saveGeminiSetting("/api/gemini/prompt",{system_prompt:promptInput.value},promptResult,document.getElementById("savePrompt")));
+document.getElementById("resetPrompt").addEventListener("click",()=>{promptInput.value="Bạn là trợ lý ChatAI TPIOS. Hãy giao tiếp tự nhiên, thân thiện và rõ ràng bằng tiếng Việt. Chỉ trả lời bằng giọng nói trong phiên hội thoại thời gian thực.";promptTemplate.value="custom";updatePromptBytes();});
+document.getElementById("refreshDashboard").addEventListener("click",()=>refreshDeviceStatus().catch(error=>{deviceStatus.textContent=error.message;}));
 async function refreshDeviceStatus() {
   const response = await fetch("/api/device/status", {cache:"no-store"});
   if (!response.ok) throw new Error("Không đọc được trạng thái thiết bị (HTTP " + response.status + ")");
@@ -710,6 +747,7 @@ async function refreshStatus() {
   catch (error) { deviceStatus.textContent = error.message; }
   try { await refreshFirmwareStatus(); }
   catch (error) { firmwareStatus.textContent = error.message; }
+  await loadGeminiSettings();
 }
 async function sendKeyRequest(method, body) {
   const options = {method, cache:"no-store", headers:{"X-ChatAI-CSRF":csrfToken}};
