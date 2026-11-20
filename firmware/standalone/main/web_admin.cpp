@@ -167,7 +167,7 @@ select,input[type=text]{width:100%;min-width:0;padding:13px;border:1px solid #ff
 <option value="custom">Tùy chỉnh</option><option value="personal">Trợ lý cá nhân</option><option value="companion">Bạn gái AI thân thiện</option><option value="tech">Chuyên gia công nghệ</option><option value="coding">Trợ lý lập trình</option><option value="language">Giáo viên ngoại ngữ</option><option value="support">Chăm sóc khách hàng</option>
 </select>
 <label for="systemPrompt">System Prompt</label>
-<textarea id="systemPrompt" maxlength="3000" placeholder="Mô tả vai trò, tính cách, ngôn ngữ và quy tắc phản hồi của AI..."></textarea>
+<textarea id="systemPrompt" placeholder="Mô tả vai trò, tính cách, ngôn ngữ và quy tắc phản hồi của AI..."></textarea>
 <p class="hint"><span id="promptBytes">0</span>/3000 byte UTF-8. Giới hạn lưu theo dung lượng NVS hiện tại.</p>
 <div class="actions"><button id="savePrompt">Lưu System Prompt</button><button id="resetPrompt" class="secondary">Khôi phục mặc định</button></div>
 <p id="promptResult" class="hint" role="status" aria-live="polite"></p>
@@ -702,7 +702,12 @@ async function saveGeminiSetting(url,payload,resultElement,button){
  catch(error){resultElement.textContent=error.message;}finally{button.disabled=false;}
 }
 document.getElementById("saveVoice").addEventListener("click",()=>saveGeminiSetting("/api/gemini/voice",{voice:voiceSelect.value},voiceResult,document.getElementById("saveVoice")));
-document.getElementById("savePrompt").addEventListener("click",()=>saveGeminiSetting("/api/gemini/prompt",{system_prompt:promptInput.value},promptResult,document.getElementById("savePrompt")));
+document.getElementById("savePrompt").addEventListener("click",()=>{
+ const bytes=new TextEncoder().encode(promptInput.value).length;
+ if(bytes===0){promptResult.textContent="System Prompt không được để trống.";return;}
+ if(bytes>3000){promptResult.textContent="Prompt hiện có "+bytes+" byte; bộ nhớ cấu hình hiện tại chỉ lưu tối đa 3000 byte. Hãy rút gọn nội dung trước khi lưu.";return;}
+ saveGeminiSetting("/api/gemini/prompt",{system_prompt:promptInput.value},promptResult,document.getElementById("savePrompt"));
+});
 document.getElementById("resetPrompt").addEventListener("click",()=>{promptInput.value="Bạn là trợ lý ChatAI TPIOS. Hãy giao tiếp tự nhiên, thân thiện và rõ ràng bằng tiếng Việt. Chỉ trả lời bằng giọng nói trong phiên hội thoại thời gian thực.";promptTemplate.value="custom";updatePromptBytes();});
 document.getElementById("refreshDashboard").addEventListener("click",()=>refreshDeviceStatus().catch(error=>{deviceStatus.textContent=error.message;}));
 async function refreshDeviceStatus() {
