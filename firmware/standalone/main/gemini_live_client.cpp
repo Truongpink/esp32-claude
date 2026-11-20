@@ -77,6 +77,7 @@ std::atomic<bool> g_connection_failure_reported{false};
 std::atomic<bool> g_connection_notification_active{false};
 std::atomic<bool> g_time_failure_reported{false};
 std::atomic<bool> g_time_success_reported{false};
+std::atomic<bool> g_time_initial_sample_reported{false};
 std::atomic<bool> g_tls_fatal{false};
 std::atomic<bool> g_retry_blocked{false};
 std::atomic<bool> g_tls_failure_active{false};
@@ -230,6 +231,12 @@ std::string UrlEncode(const std::string& value) {
 bool EnsureSystemTime() {
     constexpr std::time_t kMinimumValidTime = 1700000000;
     constexpr unsigned kSntpServerCount = 3;
+    if (!g_time_initial_sample_reported.exchange(true)) {
+        char detail[96]{};
+        std::snprintf(detail, sizeof(detail), "pre-SNTP clock sample unix_time=%lld",
+                      static_cast<long long>(std::time(nullptr)));
+        chatai::diagnostics::Add("TIME", "INFO", detail);
+    }
     // A plausible Unix epoch is not proof that the clock is correct. Require
     // one successful SNTP synchronization after this boot before TLS starts.
     if (g_sntp_sync_confirmed && std::time(nullptr) >= kMinimumValidTime) {
@@ -268,7 +275,7 @@ bool EnsureSystemTime() {
         if (sync_result == ESP_OK && std::time(nullptr) >= kMinimumValidTime) {
             g_sntp_sync_confirmed = true;
             ESP_LOGI(kTag, "SNTP synchronization confirmed; Gemini TLS certificate validation can proceed");
-            ReportTimeSuccess("SNTP synchronization confirmed");
+            ReportTimeSuccess("SNTP synchronized; configured_servers=time.google.com,pool.ntp.org,time.cloudflare.com");
             return true;
         }
         if (sync_result != ESP_ERR_TIMEOUT &&
