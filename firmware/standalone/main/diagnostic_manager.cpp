@@ -1,10 +1,13 @@
 #include "diagnostic_manager.h"
 
+#include <atomic>
 #include <cstdio>
 #include <cstring>
 #include <ctime>
 #include <mutex>
 #include <string>
+
+#include <esp_timer.h>
 
 #include <esp_log.h>
 
@@ -13,24 +16,52 @@ constexpr char kTag[] = "ChatAI-Diag";
 constexpr size_t kMaxLogBytes = 8192;
 std::mutex g_mutex;
 std::string g_log;
+std::atomic<bool> g_time_synchronized{false};
+std::atomic<const char*> g_time_source{"UNSYNCED"};
 }
 
 namespace chatai::diagnostics {
 
+void SetTimeSyncStatus(bool synchronized, const char* source) {
+    g_time_synchronized.store(synchronized);
+    g_time_source.store(synchronized && source != nullptr ? source : "UNSYNCED");
+}
+
 void Add(const char* stage, const char* result, const char* detail) {
+    constexpr std::time_t kMinimumValidTime = 1700000000;
+    constexpr std::time_t kVietnamOffsetSeconds = 7 * 60 * 60;
     const std::time_t now = std::time(nullptr);
-    std::tm time_info{};
-    gmtime_r(&now, &time_info);
-    char timestamp[24]{};
-    if (now >= 1700000000) {
-        std::strftime(timestamp, sizeof(timestamp), "%Y-%m-%dT%H:%M:%SZ", &time_info);
-    } else {
-        std::snprintf(timestamp, sizeof(timestamp), "uptime-unknown");
+    const bool epoch_valid = now >= kMinimumValidTime;
+    const bool synchronized = epoch_valid && g_time_synchronized.load();
+    char utc_timestamp[24]{};
+    char ict_timestamp[24]{};
+    if (epoch_valid) {
+        std::tm utc_info{};
+        std::tm ict_info{};
+        gmtime_r(&now, &utc_info);
+        const std::time_t ict_epoch = now + kVietnamOffsetSeconds;
+        gmtime_r(&ict_epoch, &ict_info);
+        std::strftime(utc_timestamp, sizeof(utc_timestamp), "%Y-%m-%d %H:%M:%S", &utc_info);
+        std::strftime(ict_timestamp, sizeof(ict_timestamp), "%Y-%m-%d %H:%M:%S", &ict_info);
     }
 
-    std::string line = "[";
-    line += timestamp;
-    line += "][";
+    std::string line;
+    if (epoch_valid) {
+        line = "[";
+        line += ict_timestamp;
+        line += " ICT][\";
+        line += utc_timestamp;
+        line += " UTC][UNIX=";
+        line += std::to_string(static_cast<long long>(now));
+        line += "][TIME_SYNC=";
+        line += synchronized ? g_time_source.load() : "UNVERIFIED";
+        line += "]";
+    } else {
+        line = "[TIME_UNSYNCED][UPTIME_MS=";
+        line += std::to_string(static_cast<long long>(esp_timer_get_time() / 1000));
+        line += "][TIME_SYNC=NO]";
+    }
+    line += "[";
     line += stage != nullptr ? stage : "SYSTEM";
     line += "][";
     line += result != nullptr ? result : "INFO";
