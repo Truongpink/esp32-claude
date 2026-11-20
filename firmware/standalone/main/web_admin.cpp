@@ -21,6 +21,7 @@
 #include "network_manager.h"
 #include "firmware_info.h"
 #include "diagnostic_manager.h"
+#include "audio_manager.h"
 
 namespace {
 constexpr char kTag[] = "ChatAI-Admin";
@@ -69,7 +70,7 @@ hr{border:0;border-top:1px solid #ffffff12;margin:18px 0}
 #otaFileInfo{margin:9px 0}
 .progress{height:8px;background:#ffffff12;border-radius:20px;overflow:hidden;margin-top:13px}
 #otaProgress{height:100%;width:0;background:linear-gradient(90deg,#9b5cff,#55d6c2);transition:width .12s}
-.tabbar{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:7px;padding:7px;margin:0 0 16px;border:1px solid #ffffff14;border-radius:16px;background:#100f20;position:sticky;top:8px;z-index:5;backdrop-filter:blur(14px)}
+.tabbar{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:7px;padding:7px;margin:0 0 16px;border:1px solid #ffffff14;border-radius:16px;background:#100f20;position:sticky;top:8px;z-index:5;backdrop-filter:blur(14px)}
 .tabbar button{min-width:0;padding:11px 5px;border-radius:11px;background:transparent;border:1px solid transparent;box-shadow:none;color:#aaa2c5;font-size:12px;white-space:nowrap}
 .tabbar button[aria-selected="true"]{background:linear-gradient(135deg,#7043c9,#4b3291);border-color:#b89aff55;color:#fff}
 .tab-panel[hidden]{display:none}
@@ -86,6 +87,7 @@ hr{border:0;border-top:1px solid #ffffff12;margin:18px 0}
 <nav class="tabbar" role="tablist" aria-label="Các mục quản trị">
 <button type="button" role="tab" data-tab="overview" aria-selected="true">Tổng quan</button>
 <button type="button" role="tab" data-tab="gemini" aria-selected="false">Gemini AI</button>
+<button type="button" role="tab" data-tab="audio" aria-selected="false">Âm thanh</button>
 <button type="button" role="tab" data-tab="ota" aria-selected="false">Cập nhật</button>
 <button type="button" role="tab" data-tab="logs" aria-selected="false">Nhật ký</button>
 </nav>
@@ -110,6 +112,14 @@ hr{border:0;border-top:1px solid #ffffff12;margin:18px 0}
 <p class="hint">Khóa đã lưu không được gửi ngược về trình duyệt. Để giữ khóa hiện tại, hãy để trống và không nhấn lưu.</p>
 <div class="actions"><button id="save">Lưu API Key</button><button id="remove" class="secondary" hidden>Xóa API Key</button></div>
 <p id="result" role="status" aria-live="polite"></p>
+</section>
+<section class="card tab-panel" data-panel="audio" role="tabpanel" aria-labelledby="audioTitle" hidden>
+<div class="card-head"><div class="card-icon" aria-hidden="true">♫</div><div><h2 id="audioTitle">Âm thanh</h2><p class="hint">Điều chỉnh âm lượng loa phát Gemini Live</p></div></div>
+<label for="speakerVolume">Âm lượng loa: <output id="speakerVolumeValue">100%</output></label>
+<input id="speakerVolume" type="range" min="0" max="100" step="1" value="100" style="width:100%;accent-color:#9b5cff">
+<p class="hint">Thiết lập được lưu riêng vào NVS và tự áp dụng sau khi lưu. Mic Gain chưa được cung cấp vì firmware chưa có tầng điều chỉnh gain microphone.</p>
+<div class="actions"><button id="saveSpeakerVolume">Lưu âm lượng</button></div>
+<p id="audioResult" class="hint" role="status" aria-live="polite"></p>
 </section>
 <section class="card tab-panel" data-panel="ota" role="tabpanel" aria-labelledby="otaTitle" hidden>
 <div class="card-head"><div class="card-icon" aria-hidden="true">⇧</div><div><h2 id="otaTitle">Cập nhật Firmware OTA</h2><p class="hint">Cập nhật trực tiếp từ điện thoại, không cần cáp USB</p></div></div>
@@ -145,6 +155,10 @@ const diagnosticLog = document.getElementById("diagnosticLog");
 const diagnosticResult = document.getElementById("diagnosticResult");
 const copyDiagnosticButton = document.getElementById("copyDiagnostic");
 const clearDiagnosticButton = document.getElementById("clearDiagnostic");
+const speakerVolumeInput = document.getElementById("speakerVolume");
+const speakerVolumeValue = document.getElementById("speakerVolumeValue");
+const saveSpeakerVolumeButton = document.getElementById("saveSpeakerVolume");
+const audioResult = document.getElementById("audioResult");
 let otaMaxBytes = 0;
 let currentBuildNumber = 0;
 
@@ -158,6 +172,26 @@ document.querySelectorAll("[data-tab]").forEach(button => {
       panel.hidden = panel.dataset.panel !== selected;
     });
   });
+});
+
+speakerVolumeInput.addEventListener("input", () => {
+  speakerVolumeValue.textContent = speakerVolumeInput.value + "%";
+});
+saveSpeakerVolumeButton.addEventListener("click", async () => {
+  saveSpeakerVolumeButton.disabled = true;
+  audioResult.textContent = "Đang lưu âm lượng...";
+  try {
+    const response = await fetch("/api/audio/volume", {
+      method:"POST", cache:"no-store",
+      headers:{"Content-Type":"application/json","X-ChatAI-CSRF":csrfToken},
+      body:JSON.stringify({volume:Number(speakerVolumeInput.value)})
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(data.error || ("Không lưu được âm lượng (HTTP " + response.status + ")"));
+    audioResult.textContent = data.message || "Đã lưu âm lượng loa.";
+  } catch (error) {
+    audioResult.textContent = error.message;
+  } finally { saveSpeakerVolumeButton.disabled = false; }
 });
 
 function formatBytes(bytes) {
@@ -516,6 +550,8 @@ async function refreshDeviceStatus() {
   else if (data.gemini_tls_fatal) state = "Gemini Live: Lỗi xác thực chứng chỉ TLS; đã tạm dừng tự kết nối lại. Hãy kiểm tra mạng/giờ hệ thống rồi thử lại.";
   else if (data.gemini_error) state = "Gemini Live: Lỗi kết nối hoặc xác thực; hãy dùng nút Thử kết nối lại hoặc cập nhật API Key";
   else state = "Gemini Live: Đang kết nối, chờ setupComplete";
+  speakerVolumeInput.value = String(Number(data.speaker_volume ?? 100));
+  speakerVolumeValue.textContent = speakerVolumeInput.value + "%";
   deviceStatus.textContent = state +
     (data.ip ? " · IP: " + data.ip : "") +
     (data.gateway ? " · Gateway: " + data.gateway : "");
@@ -728,14 +764,14 @@ esp_err_t DeviceStatusHandler(httpd_req_t* request) {
         "{\"wifi_connected\":%s,\"internet_available\":%s,"
         "\"key_configured\":%s,\"gemini_ready\":%s,"
         "\"gemini_error\":%s,\"gemini_tls_fatal\":%s,"
-        "\"ip\":\"%s\",\"gateway\":\"%s\"}",
+        "\"ip\":\"%s\",\"gateway\":\"%s\",\\\"speaker_volume\\\":%d}",
         wifi_connected ? "true" : "false",
         internet_available ? "true" : "false",
         key_configured ? "true" : "false",
         gemini_ready ? "true" : "false",
         gemini_error ? "true" : "false",
         gemini_tls_fatal ? "true" : "false",
-        ip.c_str(), gateway.c_str());
+        ip.c_str(), gateway.c_str(), chatai::audio::GetOutputVolume());
     return SendJson(request, "200 OK", body);
 }
 
@@ -792,6 +828,28 @@ esp_err_t GeminiKeyPostHandler(httpd_req_t* request) {
     chatai::gemini::RequestReconnect();
     chatai::display::Notify("WEB ADMIN", "Đã lưu API Key");
     return SendJson(request, "200 OK", "{\"message\":\"Đã lưu Gemini API Key.\"}");
+}
+
+esp_err_t AudioVolumePostHandler(httpd_req_t* request) {
+    if (!IsAuthorizedMutation(request)) {
+        return SendError(request, "403 Forbidden", "Yêu cầu không hợp lệ");
+    }
+    std::string body;
+    if (!ReadBody(request, body)) {
+        return SendError(request, "400 Bad Request", "Dữ liệu âm lượng không hợp lệ");
+    }
+    cJSON* root = cJSON_ParseWithLength(body.c_str(), body.size());
+    const cJSON* volume = cJSON_IsObject(root)
+        ? cJSON_GetObjectItemCaseSensitive(root, "volume") : nullptr;
+    const bool valid = cJSON_IsNumber(volume) && volume->valuedouble >= 0 &&
+        volume->valuedouble <= 100 && volume->valuedouble == volume->valueint;
+    const int value = valid ? volume->valueint : -1;
+    if (root != nullptr) cJSON_Delete(root);
+    if (!valid) return SendError(request, "400 Bad Request", "Âm lượng phải là số nguyên từ 0 đến 100");
+    const esp_err_t result = chatai::audio::SaveOutputVolume(value);
+    if (result != ESP_OK) return SendError(request, "500 Internal Server Error", "Không thể lưu âm lượng vào NVS");
+    chatai::display::Notify("ÂM THANH", "Đã lưu âm lượng");
+    return SendJson(request, "200 OK", "{\"message\":\"Đã lưu âm lượng loa.\"}");
 }
 
 esp_err_t GeminiReconnectHandler(httpd_req_t* request) {
@@ -972,6 +1030,11 @@ esp_err_t RegisterRoutes(httpd_handle_t server, const std::string& csrf_token) {
     device_status_uri.method = HTTP_GET;
     device_status_uri.handler = DeviceStatusHandler;
 
+    httpd_uri_t audio_volume_uri{};
+    audio_volume_uri.uri = "/api/audio/volume";
+    audio_volume_uri.method = HTTP_POST;
+    audio_volume_uri.handler = AudioVolumePostHandler;
+
     httpd_uri_t reconnect_uri{};
     reconnect_uri.uri = "/api/gemini/reconnect";
     reconnect_uri.method = HTTP_POST;
@@ -1010,6 +1073,7 @@ esp_err_t RegisterRoutes(httpd_handle_t server, const std::string& csrf_token) {
     esp_err_t result = httpd_register_uri_handler(server, &admin_uri);
     if (result == ESP_OK) result = httpd_register_uri_handler(server, &firmware_status_uri);
     if (result == ESP_OK) result = httpd_register_uri_handler(server, &status_uri);
+    if (result == ESP_OK) result = httpd_register_uri_handler(server, &audio_volume_uri);
     if (result == ESP_OK) result = httpd_register_uri_handler(server, &device_status_uri);
     if (result == ESP_OK) result = httpd_register_uri_handler(server, &reconnect_uri);
     if (result == ESP_OK) result = httpd_register_uri_handler(server, &restart_uri);
