@@ -105,6 +105,22 @@ select,input[type=text]{width:100%;min-width:0;padding:13px;border:1px solid #ff
 <div class="card-head"><div class="card-icon" aria-hidden="true">◉</div><div><h2 id="connectionTitle">Trạng thái kết nối</h2><p class="hint">Theo dõi Wi-Fi, Internet và Gemini Live</p></div></div>
 <p id="status">Đang kiểm tra trạng thái...</p>
 <p id="deviceStatus" role="status" aria-live="polite">Đang kiểm tra Wi-Fi, Internet và Gemini Live...</p>
+<div class="metric-grid">
+<div class="metric"><span>Wi-Fi / SSID</span><strong id="dashSsid">Đang tải...</strong></div>
+<div class="metric"><span>Tín hiệu</span><strong id="dashRssi">—</strong></div>
+<div class="metric"><span>Địa chỉ IP</span><strong id="dashIp">—</strong></div>
+<div class="metric"><span>Gateway / DNS</span><strong id="dashGateway">—</strong></div>
+<div class="metric"><span>Internet</span><strong id="dashInternet">—</strong></div>
+<div class="metric"><span>SoftAP</span><strong id="dashAp">—</strong></div>
+<div class="metric"><span>Gemini Live</span><strong id="dashGemini">—</strong></div>
+<div class="metric"><span>API Key</span><strong id="dashKey">—</strong></div>
+<div class="metric"><span>Âm lượng loa</span><strong id="dashVolume">—</strong></div>
+<div class="metric"><span>Heap còn trống</span><strong id="dashHeap">—</strong></div>
+<div class="metric"><span>Heap thấp nhất</span><strong id="dashMinHeap">—</strong></div>
+<div class="metric"><span>Uptime</span><strong id="dashUptime">—</strong></div>
+<div class="metric"><span>Firmware</span><strong id="dashBuild">—</strong></div>
+</div>
+<div class="actions"><button id="refreshDashboard" class="secondary">↻ Làm mới trạng thái</button></div>
 <div class="actions"><button id="retryGemini" class="secondary">Thử kết nối lại Gemini</button><button id="restartDevice" class="danger">↻ Khởi động lại ESP32</button></div>
 <p id="restartResult" class="hint" role="status" aria-live="polite"></p>
 </section>
@@ -133,6 +149,26 @@ select,input[type=text]{width:100%;min-width:0;padding:13px;border:1px solid #ff
 <p class="hint">Khóa đã lưu không được gửi ngược về trình duyệt. Để giữ khóa hiện tại, hãy để trống và không nhấn lưu.</p>
 <div class="actions"><button id="save">Lưu API Key</button><button id="remove" class="secondary" hidden>Xóa API Key</button></div>
 <p id="result" role="status" aria-live="polite"></p>
+<hr>
+<h2>Giọng nói Gemini Live</h2>
+<p class="hint">Giọng được áp dụng khi tạo phiên Gemini Live tiếp theo. API Live hiện không có endpoint nghe thử riêng; không phát thử bằng cách chen âm thanh vào cuộc hội thoại đang chạy.</p>
+<label for="geminiVoice">Chọn giọng</label>
+<select id="geminiVoice">
+<option>Achernar</option><option>Achird</option><option>Algenib</option><option>Algieba</option><option>Alnilam</option><option>Aoede</option><option>Autonoe</option><option>Callirrhoe</option><option>Charon</option><option>Despina</option><option>Enceladus</option><option>Erinome</option><option>Fenrir</option><option>Gacrux</option><option>Iapetus</option><option>Kore</option><option>Laomedeia</option><option>Leda</option><option>Orus</option><option>Puck</option><option>Pulcherrima</option><option>Rasalgethi</option><option>Sadachbia</option><option>Sadaltager</option><option>Schedar</option><option>Sulafat</option><option>Umbriel</option><option>Vindemiatrix</option><option>Zephyr</option><option>Zubenelgenubi</option>
+</select>
+<div class="actions"><button id="saveVoice">Lưu giọng nói</button></div><p id="voiceResult" class="hint" role="status" aria-live="polite"></p>
+<hr>
+<h2>Vai trò và tính cách AI</h2>
+<p class="hint">Chọn mẫu để điền nhanh, sau đó có thể sửa nội dung theo ý anh.</p>
+<label for="promptTemplate">Mẫu System Prompt</label>
+<select id="promptTemplate">
+<option value="custom">Tùy chỉnh</option><option value="personal">Trợ lý cá nhân</option><option value="companion">Bạn gái AI thân thiện</option><option value="tech">Chuyên gia công nghệ</option><option value="coding">Trợ lý lập trình</option><option value="language">Giáo viên ngoại ngữ</option><option value="support">Chăm sóc khách hàng</option>
+</select>
+<label for="systemPrompt">System Prompt</label>
+<textarea id="systemPrompt" maxlength="3000" placeholder="Mô tả vai trò, tính cách, ngôn ngữ và quy tắc phản hồi của AI..."></textarea>
+<p class="hint"><span id="promptBytes">0</span>/3000 byte UTF-8. Giới hạn lưu theo dung lượng NVS hiện tại.</p>
+<div class="actions"><button id="savePrompt">Lưu System Prompt</button><button id="resetPrompt" class="secondary">Khôi phục mặc định</button></div>
+<p id="promptResult" class="hint" role="status" aria-live="polite"></p>
 </section>
 <section class="card tab-panel" data-panel="audio" role="tabpanel" aria-labelledby="audioTitle" hidden>
 <div class="card-head"><div class="card-icon" aria-hidden="true">♫</div><div><h2 id="audioTitle">Âm thanh</h2><p class="hint">Điều chỉnh âm lượng loa phát Gemini Live</p></div></div>
@@ -180,6 +216,12 @@ const speakerVolumeInput = document.getElementById("speakerVolume");
 const speakerVolumeValue = document.getElementById("speakerVolumeValue");
 const saveSpeakerVolumeButton = document.getElementById("saveSpeakerVolume");
 const audioResult = document.getElementById("audioResult");
+const voiceSelect = document.getElementById("geminiVoice");
+const voiceResult = document.getElementById("voiceResult");
+const promptInput = document.getElementById("systemPrompt");
+const promptTemplate = document.getElementById("promptTemplate");
+const promptBytes = document.getElementById("promptBytes");
+const promptResult = document.getElementById("promptResult");
 const wifiSsidInput = document.getElementById("wifiSsid");
 const wifiPasswordInput = document.getElementById("wifiPassword");
 const wifiAdminStatus = document.getElementById("wifiAdminStatus");
