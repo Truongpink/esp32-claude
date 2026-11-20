@@ -141,7 +141,7 @@ select,input[type=text]{width:100%;min-width:0;padding:13px;border:1px solid #ff
 <div class="card-head"><div class="card-icon" aria-hidden="true">≋</div><div><h2 id="diagnosticsTitle">Log chẩn đoán Gemini</h2><p class="hint">Tối đa 8 KB · Không lưu API Key hoặc dữ liệu âm thanh</p></div></div>
 <pre id="diagnosticLog" style="white-space:pre-wrap;overflow-wrap:anywhere;max-height:260px;overflow:auto;background:#0d0c19;border:1px solid #ffffff18;border-radius:12px;padding:12px;color:#d9d2f0;font:11px/1.55 ui-monospace,monospace">Đang tải log...</pre>
 <textarea id="diagnosticCopyFallback" readonly hidden aria-label="Log chẩn đoán để sao chép" style="width:100%;min-height:150px;margin-top:10px;padding:12px;border:1px solid #a477ff;border-radius:12px;background:#0d0c19;color:#f5f1ff;font:11px/1.55 ui-monospace,monospace"></textarea>
-<div class="actions"><button id="copyDiagnostic" class="secondary">Sao chép log</button><button id="clearDiagnostic" class="secondary">Xóa log</button></div>
+<div class="actions"><button id="copyDiagnostic" class="secondary">Sao chép log</button><button id="downloadDiagnostic" class="secondary">Tải log TXT</button><button id="clearDiagnostic" class="secondary">Xóa log</button></div>
 <p id="diagnosticResult" class="hint" role="status" aria-live="polite"></p>
 </section>
 <section class="card tab-panel" data-panel="gemini" role="tabpanel" aria-labelledby="geminiTitle" hidden>
@@ -213,6 +213,7 @@ const firmwareStatus = document.getElementById("firmwareStatus");
 const diagnosticLog = document.getElementById("diagnosticLog");
 const diagnosticResult = document.getElementById("diagnosticResult");
 const copyDiagnosticButton = document.getElementById("copyDiagnostic");
+const downloadDiagnosticButton = document.getElementById("downloadDiagnostic");
 const clearDiagnosticButton = document.getElementById("clearDiagnostic");
 const speakerVolumeInput = document.getElementById("speakerVolume");
 const speakerVolumeValue = document.getElementById("speakerVolumeValue");
@@ -407,6 +408,10 @@ copyDiagnosticButton.addEventListener("click", () => {
   } else {
     showDiagnosticCopyFallback(text);
   }
+});
+downloadDiagnosticButton.addEventListener("click", () => {
+  // A direct same-origin navigation preserves the user gesture on mobile Safari.
+  window.location.href = "/api/diagnostics/download";
 });
 clearDiagnosticButton.addEventListener("click", async () => {
   try {
@@ -996,6 +1001,15 @@ esp_err_t DiagnosticsHandler(httpd_req_t* request) {
     return httpd_resp_send(request, log.c_str(), log.size());
 }
 
+esp_err_t DiagnosticsDownloadHandler(httpd_req_t* request) {
+    const std::string log = chatai::diagnostics::Get();
+    httpd_resp_set_type(request, "text/plain; charset=utf-8");
+    httpd_resp_set_hdr(request, "Content-Disposition",
+                       "attachment; filename=chatai-diagnostics.txt");
+    SetNoStore(request);
+    return httpd_resp_send(request, log.c_str(), log.size());
+}
+
 esp_err_t DiagnosticsClearHandler(httpd_req_t* request) {
     if (!IsAuthorizedMutation(request)) {
         return SendError(request, "403 Forbidden", "Yêu cầu không hợp lệ");
@@ -1371,6 +1385,11 @@ esp_err_t RegisterRoutes(httpd_handle_t server, const std::string& csrf_token) {
     diagnostics_uri.method = HTTP_GET;
     diagnostics_uri.handler = DiagnosticsHandler;
 
+    httpd_uri_t diagnostics_download_uri{};
+    diagnostics_download_uri.uri = "/api/diagnostics/download";
+    diagnostics_download_uri.method = HTTP_GET;
+    diagnostics_download_uri.handler = DiagnosticsDownloadHandler;
+
     httpd_uri_t diagnostics_clear_uri{};
     diagnostics_clear_uri.uri = "/api/diagnostics/clear";
     diagnostics_clear_uri.method = HTTP_POST;
@@ -1395,6 +1414,7 @@ esp_err_t RegisterRoutes(httpd_handle_t server, const std::string& csrf_token) {
     if (result == ESP_OK) result = httpd_register_uri_handler(server, &save_uri);
     if (result == ESP_OK) result = httpd_register_uri_handler(server, &delete_uri);
     if (result == ESP_OK) result = httpd_register_uri_handler(server, &diagnostics_uri);
+    if (result == ESP_OK) result = httpd_register_uri_handler(server, &diagnostics_download_uri);
     if (result == ESP_OK) result = httpd_register_uri_handler(server, &diagnostics_clear_uri);
     if (result == ESP_OK) result = httpd_register_uri_handler(server, &ota_uri);
     if (result != ESP_OK) {
