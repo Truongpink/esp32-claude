@@ -70,7 +70,7 @@ std::string GetGeminiVoice() {
         nvs_close(handle);
         return kDefaultVoice;
     }
-    std::string value(size, '\\0');
+    std::string value(size, '\0');
     const esp_err_t result = nvs_get_str(handle, kVoice, value.data(), &size);
     nvs_close(handle);
     if (result != ESP_OK) return kDefaultVoice;
@@ -98,7 +98,7 @@ std::string GetGeminiSystemPrompt() {
         nvs_close(handle);
         return kDefaultSystemPrompt;
     }
-    std::string value(size, '\\0');
+    std::string value(size, '\0');
     const esp_err_t result = nvs_get_str(handle, kSystemPrompt, value.data(), &size);
     nvs_close(handle);
     if (result != ESP_OK) return kDefaultSystemPrompt;
