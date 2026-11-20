@@ -76,6 +76,7 @@ void ReportBootDiagnostics() {
                   static_cast<int>(reason), static_cast<unsigned long>(free_heap),
                   static_cast<unsigned long>(min_free_heap));
     chatai::diagnostics::Add("BOOT", "INFO", detail);
+    chatai::diagnostics::RestorePreviousCrashContext();
 }
 
 bool InitializePlatform() {
