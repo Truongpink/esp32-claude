@@ -12,6 +12,10 @@ CONFIG_LWIP_SNTP_MAX_SERVERS=3
 # Required for Gemini Live WSS certificate verification.
 CONFIG_MBEDTLS_CERTIFICATE_BUNDLE=y
 CONFIG_MBEDTLS_CERTIFICATE_BUNDLE_DEFAULT_FULL=y
+CONFIG_MBEDTLS_CERTIFICATE_BUNDLE_CROSS_SIGNED_VERIFY=y
+
+# Validate X.509 certificate validity dates only after SNTP synchronization.
+CONFIG_MBEDTLS_HAVE_TIME_DATE=y
 
 # Enable targeted MbedTLS handshake diagnostics while preserving certificate verification.
 CONFIG_MBEDTLS_DEBUG=y
