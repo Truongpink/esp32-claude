@@ -567,8 +567,24 @@ void QueueServerAudio(const cJSON* inline_data) {
         g_ws_audio_rx_count.fetch_add(1);
         g_ws_last_audio_rx_tick.store(static_cast<uint32_t>(xTaskGetTickCount()));
         if (!g_audio_response_reported.exchange(true)) {
-            chatai::diagnostics::SetCrashContext("GEMINI_AUDIO_RX", "first PCM16 24000 Hz response decoded");
-            chatai::diagnostics::Add("GEMINI_AUDIO_RX", "OK", "Gemini PCM16 24000 Hz response decoded and queued");
+            int16_t pcm_min = INT16_MAX;
+            int16_t pcm_max = INT16_MIN;
+            for (size_t i = 0; i < chunk->sample_count; ++i) {
+                pcm_min = std::min(pcm_min, chunk->samples[i]);
+                pcm_max = std::max(pcm_max, chunk->samples[i]);
+            }
+            char detail[192]{};
+            std::snprintf(detail, sizeof(detail),
+                          "mime=%s encoded_bytes=%lu decoded_bytes=%lu samples=%lu "
+                          "pcm_min=%d pcm_max=%d queue_depth=%lu",
+                          mime->valuestring,
+                          static_cast<unsigned long>(encoded_size),
+                          static_cast<unsigned long>(decoded_size),
+                          static_cast<unsigned long>(chunk->sample_count),
+                          static_cast<int>(pcm_min), static_cast<int>(pcm_max),
+                          static_cast<unsigned long>(uxQueueMessagesWaiting(g_audio_queue)));
+            chatai::diagnostics::SetCrashContext("GEMINI_AUDIO_RX", detail);
+            chatai::diagnostics::Add("GEMINI_AUDIO_RX", "INFO", detail);
         }
         g_speaking.store(true);
     }
@@ -1317,9 +1333,11 @@ void SpeakerWorker(void*) {
 }
 
 void GeminiWorker(void*) {
+    uint32_t reconnect_delay_ms = 1000;
     while (true) {
         const bool manual_restart = g_restart_requested.exchange(false);
         if (manual_restart) {
+            reconnect_delay_ms = 1000;
             g_retry_blocked.store(false);
             g_tls_fatal.store(false);
             g_error.store(false);
@@ -1333,6 +1351,7 @@ void GeminiWorker(void*) {
         }
 
         if (client != nullptr) {
+            if (g_ready.load()) reconnect_delay_ms = 1000;
             const bool connection_failed = g_client_failed.exchange(false);
             if (manual_restart || connection_failed) {
                 g_client_generation.fetch_add(1);
@@ -1357,9 +1376,21 @@ void GeminiWorker(void*) {
                              esp_err_to_name(stop_result));
                 }
                 if (!manual_restart) {
-                    g_retry_blocked.store(true);
-                    chatai::diagnostics::Add("RETRY", "PAUSED",
-                        "automatic reconnect stopped after one failed attempt; use Web Admin to retry");
+                    if (!g_retry_blocked.load() && !g_tls_fatal.load()) {
+                        char retry_detail[96]{};
+                        std::snprintf(retry_detail, sizeof(retry_detail),
+                                      "transport/session failure; retry_in_ms=%lu",
+                                      static_cast<unsigned long>(reconnect_delay_ms));
+                        chatai::diagnostics::Add("RETRY", "SCHEDULED", retry_detail);
+                        vTaskDelay(pdMS_TO_TICKS(reconnect_delay_ms));
+                        reconnect_delay_ms = std::min<uint32_t>(
+                            reconnect_delay_ms * 2, 30000);
+                    } else {
+                        chatai::diagnostics::Add("RETRY", "PAUSED",
+                            g_tls_fatal.load()
+                                ? "TLS verification failure requires manual recovery"
+                                : "retry blocked by authentication or protocol error");
+                    }
                 }
                 continue;
             }
@@ -1443,9 +1474,13 @@ void GeminiWorker(void*) {
             g_error.store(true);
             ESP_LOGE(kTag, "Could not initialize Gemini Live WebSocket client");
             chatai::diagnostics::Add("WS", "FAIL", "esp_websocket_client_init returned null");
-            g_retry_blocked.store(true);
-            chatai::diagnostics::Add("RETRY", "PAUSED",
-                "automatic reconnect stopped after one failed attempt; use Web Admin to retry");
+            char retry_detail[96]{};
+            std::snprintf(retry_detail, sizeof(retry_detail),
+                          "client initialization failed; retry_in_ms=%lu",
+                          static_cast<unsigned long>(reconnect_delay_ms));
+            chatai::diagnostics::Add("RETRY", "SCHEDULED", retry_detail);
+            vTaskDelay(pdMS_TO_TICKS(reconnect_delay_ms));
+            reconnect_delay_ms = std::min<uint32_t>(reconnect_delay_ms * 2, 30000);
             continue;
         }
 
@@ -1475,9 +1510,13 @@ void GeminiWorker(void*) {
                 std::lock_guard<std::mutex> event_lock(g_event_mutex);
             }
             esp_websocket_client_destroy(new_client);
-            g_retry_blocked.store(true);
-            chatai::diagnostics::Add("RETRY", "PAUSED",
-                "automatic reconnect stopped after one failed attempt; use Web Admin to retry");
+            char retry_detail[96]{};
+            std::snprintf(retry_detail, sizeof(retry_detail),
+                          "client start failed; retry_in_ms=%lu",
+                          static_cast<unsigned long>(reconnect_delay_ms));
+            chatai::diagnostics::Add("RETRY", "SCHEDULED", retry_detail);
+            vTaskDelay(pdMS_TO_TICKS(reconnect_delay_ms));
+            reconnect_delay_ms = std::min<uint32_t>(reconnect_delay_ms * 2, 30000);
             continue;
         }
 
