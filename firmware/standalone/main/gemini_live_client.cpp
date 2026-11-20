@@ -265,18 +265,31 @@ bool EnsureSystemTime() {
     return false;
 }
 
-const char kSetupMessage[] =
-    "{\"setup\":{"
-      "\"model\":\"models/gemini-3.8-live\","
-      "\"responseModalities\":[\"AUDIO\"],"
-      "\"systemInstruction\":{"
-        "\"parts\":[{"
-          "\"text\":\"Bạn là trợ lý ChatAI TPIOS. Hãy giao tiếp tự nhiên, thân thiện "
-          "và rõ ràng bằng tiếng Việt. Chỉ trả lời bằng giọng nói trong phiên hội thoại "
-          "thời gian thực.\""
-        "}]"
-      "}"
-    "}}";
+std::string BuildSetupMessage() {
+    cJSON* root = cJSON_CreateObject();
+    if (root == nullptr) return {};
+    cJSON* setup = cJSON_AddObjectToObject(root, "setup");
+    cJSON_AddStringToObject(setup, "model", "models/gemini-3.8-live");
+    cJSON* generation = cJSON_AddObjectToObject(setup, "generationConfig");
+    cJSON* modalities = cJSON_AddArrayToObject(generation, "responseModalities");
+    cJSON_AddItemToArray(modalities, cJSON_CreateString("AUDIO"));
+    cJSON* speech = cJSON_AddObjectToObject(generation, "speechConfig");
+    cJSON* voice_config = cJSON_AddObjectToObject(speech, "voiceConfig");
+    cJSON* prebuilt = cJSON_AddObjectToObject(voice_config, "prebuiltVoiceConfig");
+    const std::string voice = chatai::settings::GetGeminiVoice();
+    cJSON_AddStringToObject(prebuilt, "voiceName", voice.c_str());
+    cJSON* instruction = cJSON_AddObjectToObject(setup, "systemInstruction");
+    cJSON* parts = cJSON_AddArrayToObject(instruction, "parts");
+    const std::string prompt = chatai::settings::GetGeminiSystemPrompt();
+    cJSON* part = cJSON_CreateObject();
+    cJSON_AddStringToObject(part, "text", prompt.c_str());
+    cJSON_AddItemToArray(parts, part);
+    char* serialized = cJSON_PrintUnformatted(root);
+    std::string message = serialized != nullptr ? serialized : "";
+    if (serialized != nullptr) cJSON_free(serialized);
+    cJSON_Delete(root);
+    return message;
+}
 
 void ClearAudioQueue() {
     if (g_audio_queue == nullptr) return;
@@ -536,14 +549,15 @@ void WebSocketEventHandler(void* handler_arg, esp_event_base_t, int32_t event_id
             chatai::diagnostics::Add("SETUP", "INFO", "setup request sending");
 
             std::lock_guard<std::mutex> lock(g_send_mutex);
-            const int sent = g_client != nullptr
+            const std::string setup_message = BuildSetupMessage();
+            const int sent = g_client != nullptr && !setup_message.empty()
                 ? esp_websocket_client_send_text(
-                    g_client, kSetupMessage, sizeof(kSetupMessage) - 1, pdMS_TO_TICKS(5000))
+                    g_client, setup_message.c_str(), setup_message.size(), pdMS_TO_TICKS(5000))
                 : -1;
-            if (sent == static_cast<int>(sizeof(kSetupMessage) - 1)) {
+            if (sent == static_cast<int>(setup_message.size())) {
                 chatai::diagnostics::Add("SETUP", "INFO", "setup message sent; waiting for setupComplete");
             }
-            if (sent != static_cast<int>(sizeof(kSetupMessage) - 1)) {
+            if (sent != static_cast<int>(setup_message.size())) {
                 g_error.store(true);
                 g_client_failed.store(true);
                 g_connection_failure_reported.store(true);
