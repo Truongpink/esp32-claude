@@ -42,8 +42,6 @@ constexpr char kEndpoint[] =
 constexpr size_t kMaxIncomingMessage = 8192;
 constexpr size_t kMaxOutputSamples = 2048;
 constexpr size_t kMicChunkSamples = 320;  // 20 ms at 16 kHz.
-constexpr uint32_t kRetryBaseDelayMs = 5000;
-constexpr uint32_t kRetryMaxDelayMs = 60000;
 constexpr uint32_t kFailureSummaryIntervalMs = 300000;
 constexpr UBaseType_t kAudioQueueLength = 8;
 
@@ -95,21 +93,15 @@ std::atomic<uint32_t> g_client_generation{0};
 std::mutex g_event_mutex;
 esp_websocket_client_handle_t g_client = nullptr;
 QueueHandle_t g_audio_queue = nullptr;
+enum class IncomingMessageType : uint8_t { kNone, kText, kBinary };
 std::string g_incoming_message;
 size_t g_incoming_frame_bytes = 0;
-bool g_receiving_text = false;
+IncomingMessageType g_incoming_type = IncomingMessageType::kNone;
 bool g_missing_key_reported = false;
 std::mutex g_send_mutex;
 
 bool ShouldListen() {
     return g_chat_enabled.load() || g_push_to_talk.load();
-}
-
-uint32_t NextRetryDelayMs(uint32_t attempt) {
-    const uint32_t base = attempt >= 4
-        ? kRetryMaxDelayMs : (kRetryBaseDelayMs << attempt);
-    const uint32_t jitter = base / 5;
-    return base - jitter / 2 + (esp_random() % (jitter + 1));
 }
 
 void ReportTlsFailure(const char* detail, int error_code, uint32_t cert_flags) {
@@ -670,7 +662,7 @@ void WebSocketEventHandler(void* handler_arg, esp_event_base_t, int32_t event_id
             g_connection_failure_reported.store(false);
             g_incoming_message.clear();
             g_incoming_frame_bytes = 0;
-            g_receiving_text = false;
+            g_incoming_type = IncomingMessageType::kNone;
             ESP_LOGI(kTag, "Gemini Live WebSocket connected; sending setup");
             chatai::diagnostics::Add("WS", "OK", "WebSocket handshake completed");
             chatai::diagnostics::Add("SETUP", "INFO", "setup request sending");
@@ -703,76 +695,116 @@ void WebSocketEventHandler(void* handler_arg, esp_event_base_t, int32_t event_id
                 break;
             }
 
+            const uint8_t opcode = static_cast<uint8_t>(event->op_code);
             const bool setup_diagnostics = g_waiting_setup.load();
             if (setup_diagnostics) {
                 char rx_detail[128]{};
                 std::snprintf(rx_detail, sizeof(rx_detail),
                               "opcode=0x%02x bytes=%d payload=%d offset=%d fin=%d",
-                              event->op_code, event->data_len, event->payload_len,
+                              opcode, event->data_len, event->payload_len,
                               event->payload_offset, event->fin ? 1 : 0);
                 ESP_LOGI(kTag, "WebSocket RX: %s", rx_detail);
                 chatai::diagnostics::Add("WS_RX", "INFO", rx_detail);
             }
 
-            if (event->data_ptr == nullptr || event->data_len <= 0 ||
-                event->payload_len <= 0 || event->payload_offset < 0 ||
+            // Control frames can interleave fragmented data. The WebSocket
+            // client handles PING/PONG/CLOSE; ignore them without resetting data.
+            if (opcode == 0x8 || opcode == 0x9 || opcode == 0xA) {
+                if (setup_diagnostics) {
+                    chatai::diagnostics::Add("WS_RX", "INFO",
+                        opcode == 0x8 ? "ignored CLOSE control frame" :
+                        opcode == 0x9 ? "ignored PING control frame" :
+                                        "ignored PONG control frame");
+                }
+                break;
+            }
+
+            if (event->data_len <= 0 || event->payload_len <= 0 ||
+                event->payload_offset < 0 ||
                 event->payload_len > static_cast<int>(kMaxIncomingMessage) ||
                 event->payload_offset > event->payload_len ||
-                event->data_len > event->payload_len - event->payload_offset) {
+                event->data_len > event->payload_len - event->payload_offset ||
+                event->data_ptr == nullptr) {
                 g_incoming_message.clear();
                 g_incoming_frame_bytes = 0;
-                g_receiving_text = false;
+                g_incoming_type = IncomingMessageType::kNone;
                 if (setup_diagnostics) {
-                    chatai::diagnostics::Add("WS_RX", "WARN", "invalid DATA payload bounds; assembly reset");
+                    chatai::diagnostics::Add("WS_RX", "WARN",
+                        "invalid DATA payload bounds; message assembly reset");
                 }
                 break;
             }
 
             if (event->payload_offset == 0) {
                 g_incoming_frame_bytes = 0;
-                if (event->op_code == 0x1) {
+                if (opcode == 0x1 || opcode == 0x2) {
+                    if (g_incoming_type != IncomingMessageType::kNone &&
+                        setup_diagnostics) {
+                        chatai::diagnostics::Add("WS_RX", "WARN",
+                            "new data message replaced an incomplete message");
+                    }
                     g_incoming_message.clear();
-                    g_receiving_text = true;
-                } else if (event->op_code != 0x0 || !g_receiving_text) {
-                    g_incoming_message.clear();
-                    g_receiving_text = false;
+                    g_incoming_type = opcode == 0x1
+                        ? IncomingMessageType::kText
+                        : IncomingMessageType::kBinary;
+                } else if (opcode == 0x0) {
+                    if (g_incoming_type == IncomingMessageType::kNone) {
+                        if (setup_diagnostics) {
+                            chatai::diagnostics::Add("WS_RX", "WARN",
+                                "unexpected continuation frame without an active message");
+                        }
+                        break;
+                    }
+                } else {
                     if (setup_diagnostics) {
-                        chatai::diagnostics::Add("WS_RX", "WARN", "ignored non-text or unexpected continuation frame");
+                        chatai::diagnostics::Add("WS_RX", "WARN",
+                            "ignored unsupported WebSocket data opcode");
                     }
                     break;
                 }
             }
 
-            if (!g_receiving_text ||
+            if (g_incoming_type == IncomingMessageType::kNone ||
                 static_cast<size_t>(event->payload_offset) != g_incoming_frame_bytes ||
                 g_incoming_message.size() + static_cast<size_t>(event->data_len) >
                     kMaxIncomingMessage) {
                 g_incoming_message.clear();
                 g_incoming_frame_bytes = 0;
-                g_receiving_text = false;
+                g_incoming_type = IncomingMessageType::kNone;
                 if (setup_diagnostics) {
-                    chatai::diagnostics::Add("WS_RX", "WARN", "payload offset/size mismatch; assembly reset");
+                    chatai::diagnostics::Add("WS_RX", "WARN",
+                        "payload offset/size mismatch; message assembly reset");
                 }
                 break;
             }
 
-            g_incoming_message.append(event->data_ptr, static_cast<size_t>(event->data_len));
+            g_incoming_message.append(event->data_ptr,
+                                      static_cast<size_t>(event->data_len));
             g_incoming_frame_bytes += static_cast<size_t>(event->data_len);
 
             const bool frame_complete =
                 g_incoming_frame_bytes == static_cast<size_t>(event->payload_len);
-            if (frame_complete && event->fin) {
-                if (setup_diagnostics) {
-                    char message_detail[80]{};
-                    std::snprintf(message_detail, sizeof(message_detail),
-                                  "complete text message bytes=%lu",
-                                  static_cast<unsigned long>(g_incoming_message.size()));
-                    chatai::diagnostics::Add("WS_RX", "OK", message_detail);
+            if (frame_complete) {
+                if (event->fin) {
+                    if (setup_diagnostics) {
+                        char message_detail[96]{};
+                        std::snprintf(message_detail, sizeof(message_detail),
+                                      "complete %s message bytes=%lu; parsing JSON",
+                                      g_incoming_type == IncomingMessageType::kText
+                                          ? "text" : "binary",
+                                      static_cast<unsigned long>(g_incoming_message.size()));
+                        chatai::diagnostics::Add("WS_RX", "OK", message_detail);
+                    }
+                    // Gemini Live server envelopes are JSON. Try both data frame
+                    // types; do not assume a binary frame contains protobuf.
+                    HandleServerMessage(g_incoming_message);
+                    g_incoming_message.clear();
+                    g_incoming_frame_bytes = 0;
+                    g_incoming_type = IncomingMessageType::kNone;
+                } else {
+                    // Preserve message type and bytes for the next continuation.
+                    g_incoming_frame_bytes = 0;
                 }
-                HandleServerMessage(g_incoming_message);
-                g_incoming_message.clear();
-                g_incoming_frame_bytes = 0;
-                g_receiving_text = false;
             }
             break;
         }
@@ -971,25 +1003,12 @@ void SpeakerWorker(void*) {
 }
 
 void GeminiWorker(void*) {
-    uint32_t retry_attempt = 0;
-    TickType_t retry_deadline = 0;
-    bool retry_pending = false;
-
-    auto schedule_retry = [&]() {
-        const uint32_t delay_ms = NextRetryDelayMs(retry_attempt);
-        if (retry_attempt < 5) ++retry_attempt;
-        retry_deadline = xTaskGetTickCount() + pdMS_TO_TICKS(delay_ms);
-        retry_pending = true;
-    };
-
     while (true) {
         const bool manual_restart = g_restart_requested.exchange(false);
         if (manual_restart) {
             g_retry_blocked.store(false);
             g_tls_fatal.store(false);
             g_error.store(false);
-            retry_attempt = 0;
-            retry_pending = false;
             chatai::diagnostics::Add("WS", "INFO", "manual reconnect requested");
         }
 
@@ -1023,14 +1042,14 @@ void GeminiWorker(void*) {
                     ESP_LOGW(kTag, "Gemini client stop returned: %s",
                              esp_err_to_name(stop_result));
                 }
-                if (!manual_restart && !g_retry_blocked.load()) schedule_retry();
+                if (!manual_restart) {
+                    g_retry_blocked.store(true);
+                    chatai::diagnostics::Add("RETRY", "PAUSED",
+                        "automatic reconnect stopped after one failed attempt; use Web Admin to retry");
+                }
                 continue;
             }
 
-            if (g_ready.load()) {
-                retry_attempt = 0;
-                retry_pending = false;
-            }
             if (g_waiting_setup.load()) {
                 const uint32_t elapsed = static_cast<uint32_t>(xTaskGetTickCount()) -
                                           g_setup_started_tick.load();
@@ -1055,15 +1074,6 @@ void GeminiWorker(void*) {
             continue;
         }
 
-        if (retry_pending) {
-            const TickType_t now = xTaskGetTickCount();
-            if (static_cast<int32_t>(now - retry_deadline) < 0) {
-                vTaskDelay(pdMS_TO_TICKS(250));
-                continue;
-            }
-            retry_pending = false;
-        }
-
         if (!chatai::network::NetworkManager::IsInternetAvailable()) {
             vTaskDelay(pdMS_TO_TICKS(1000));
             continue;
@@ -1083,7 +1093,7 @@ void GeminiWorker(void*) {
         g_missing_key_reported = false;
         if (!EnsureSystemTime()) {
             std::fill(api_key.begin(), api_key.end(), '\0');
-            schedule_retry();
+            vTaskDelay(pdMS_TO_TICKS(1000));
             continue;
         }
 
@@ -1119,7 +1129,9 @@ void GeminiWorker(void*) {
             g_error.store(true);
             ESP_LOGE(kTag, "Could not initialize Gemini Live WebSocket client");
             chatai::diagnostics::Add("WS", "FAIL", "esp_websocket_client_init returned null");
-            schedule_retry();
+            g_retry_blocked.store(true);
+            chatai::diagnostics::Add("RETRY", "PAUSED",
+                "automatic reconnect stopped after one failed attempt; use Web Admin to retry");
             continue;
         }
 
@@ -1149,7 +1161,9 @@ void GeminiWorker(void*) {
                 std::lock_guard<std::mutex> event_lock(g_event_mutex);
             }
             esp_websocket_client_destroy(new_client);
-            schedule_retry();
+            g_retry_blocked.store(true);
+            chatai::diagnostics::Add("RETRY", "PAUSED",
+                "automatic reconnect stopped after one failed attempt; use Web Admin to retry");
             continue;
         }
 
