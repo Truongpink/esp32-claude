@@ -1,6 +1,6 @@
 # ChatAI TPIOS local Web Admin
 
-The Standalone firmware provides a local Web Admin for Wi-Fi provisioning, Gemini API Key management, speaker volume, diagnostics, and OTA updates on the ESP32-S3.
+The Standalone firmware provides a responsive mobile Web Admin for Wi-Fi provisioning, Gemini API Key, Gemini Live voice and System Prompt settings, speaker volume, device telemetry, diagnostics, and OTA updates.
 
 ## Access
 
@@ -18,6 +18,10 @@ The Web Admin supports:
 - Save or replace a Gemini API Key.
 - Delete the saved Gemini API Key.
 - Adjust speaker output volume (0–100); the value is persisted in NVS and applied at audio initialization.
+- Select a Gemini Live prebuilt voice and persist it in NVS.
+- Edit and persist the Gemini Live System Prompt; the current firmware limit is 3,000 UTF-8 bytes because the deployed NVS partition is 16 KB.
+- Use built-in editable prompt templates for personal assistant, companion, technology expert, coding assistant, language teacher, and customer support.
+- View Wi-Fi SSID/RSSI, IP, gateway, DNS, Internet probe state, SoftAP address, Gemini/TLS state, free/minimum heap, uptime, firmware build, and speaker volume on the dashboard.
 - Display the running firmware Build Number and OTA slot capacity.
 - Upload an application-only `.bin` file or a `.zip` containing exactly one application BIN. ZIP extraction and CRC32 validation happen in the browser; the ESP32 receives only the BIN.
 - Show file name, size, target Build Number, upload percentage, flash/validation stage, and the actual Build Number after reboot.
@@ -35,6 +39,10 @@ OTA updates do not erase the NVS namespaces used by Wi-Fi (`chatai_net`), Gemini
 | GET | `/api/wifi/status` | Returns Wi-Fi connection/provisioning state |
 | POST | `/api/wifi/connect` | Starts a Wi-Fi connection; commits credentials after Internet verification |
 | GET | `/api/gemini/status` | Returns only whether a key is configured |
+| GET | `/api/gemini/settings` | Returns saved voice and System Prompt; never returns the API Key |
+| POST | `/api/gemini/voice` | Validates and saves a supported Live API prebuilt voice |
+| POST | `/api/gemini/prompt` | Validates and saves the System Prompt (up to 3,000 UTF-8 bytes) |
+| GET | `/api/device/status` | Returns live network, Gemini, heap, uptime, firmware, and audio telemetry |
 | POST | `/api/audio/volume` | Saves speaker output volume (0–100) in NVS |
 | GET | `/api/firmware/status` | Returns running Build Number, marker, active slot, inactive OTA slot, and slot capacity |
 | POST | `/api/gemini/key` | Validate and save a key |
@@ -45,7 +53,7 @@ Mutating requests require same-origin validation and the per-boot CSRF token. Th
 
 ## Current feature boundaries
 
-The current Standalone firmware does not yet expose microphone gain, bot name, custom system prompt, language selection, wake-word controls, or OLED idle-mode selection. These controls are intentionally omitted from the Web Admin rather than presented as non-functional switches. OLED save notifications are supported for Wi-Fi, Gemini API Key, and speaker volume. A separate sound-confirmation tone is not enabled because the speaker is shared with Gemini Live playback and there is no independent notification buzzer/mixer path.
+The current Standalone firmware does not yet expose microphone gain, bot name, language selection, wake-word controls, or OLED idle-mode selection. Gemini Live voice preview is not implemented: the current Live API setup accepts the selected voice when a session starts, but the firmware has no independent preview endpoint or safe preview playback path. These controls are intentionally omitted from the Web Admin rather than presented as non-functional switches. OLED save notifications are supported for Wi-Fi, Gemini API Key, and speaker volume. A separate sound-confirmation tone is not enabled because the speaker is shared with Gemini Live playback and there is no independent notification buzzer/mixer path. Saving a voice or System Prompt sends an OLED notification and requests a new Gemini Live session when an API Key is configured.
 
 ## Security
 
