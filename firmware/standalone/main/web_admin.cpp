@@ -304,19 +304,6 @@ async function pollAdminWifiStatus() {
     if (!response.ok) throw new Error("Không đọc được trạng thái Wi-Fi (HTTP " + response.status + ")");
     const state = await response.json();
     wifiAdminStatus.textContent = state.message + (state.ip ? " IP: " + state.ip : "");
-   document.getElementById("dashSsid").textContent = data.ssid || (data.wifi_connected ? "Đã kết nối" : "Chưa kết nối");
-   document.getElementById("dashRssi").textContent = data.wifi_connected ? data.rssi + " dBm" : "—";
-   document.getElementById("dashIp").textContent = data.ip || "Chưa có IP";
-   document.getElementById("dashGateway").textContent = (data.gateway || "—") + " / " + (data.dns || "—");
-   document.getElementById("dashInternet").textContent = data.internet_available ? "Đã xác minh" : "Chưa có Internet";
-   document.getElementById("dashAp").textContent = data.softap_ip || "Không hoạt động";
-   document.getElementById("dashGemini").textContent = data.gemini_ready ? "Sẵn sàng" : data.gemini_tls_fatal ? "Lỗi TLS" : data.gemini_error ? "Có lỗi" : "Đang kết nối";
-   document.getElementById("dashKey").textContent = data.key_configured ? "Đã lưu" : "Chưa cấu hình";
-   document.getElementById("dashVolume").textContent = data.speaker_volume + "%";
-   document.getElementById("dashHeap").textContent = data.free_heap + " byte";
-   document.getElementById("dashMinHeap").textContent = data.min_free_heap + " byte";
-   document.getElementById("dashUptime").textContent = Math.floor(data.uptime_seconds/3600) + " giờ " + Math.floor((data.uptime_seconds%3600)/60) + " phút";
-   document.getElementById("dashBuild").textContent = "#" + data.build_number;
     if ((state.state === 1 || state.state === 2 || state.state === 5) && wifiPollAttempts++ < 60) {
       setTimeout(pollAdminWifiStatus, 1500);
     } else if (state.state === 3) {
@@ -734,6 +721,19 @@ async function refreshDeviceStatus() {
     (data.ip ? " · IP: " + data.ip : "") +
     (data.gateway ? " · Gateway: " + data.gateway : "");
   wifiAdminStatus.textContent = state + (data.ip ? " · IP: " + data.ip : "");
+   document.getElementById("dashSsid").textContent = data.ssid || (data.wifi_connected ? "Đã kết nối" : "Chưa kết nối");
+   document.getElementById("dashRssi").textContent = data.wifi_connected ? data.rssi + " dBm" : "—";
+   document.getElementById("dashIp").textContent = data.ip || "Chưa có IP";
+   document.getElementById("dashGateway").textContent = (data.gateway || "—") + " / " + (data.dns || "—");
+   document.getElementById("dashInternet").textContent = data.internet_available ? "Đã xác minh" : "Chưa có Internet";
+   document.getElementById("dashAp").textContent = data.softap_ip || "Không hoạt động";
+   document.getElementById("dashGemini").textContent = data.gemini_ready ? "Sẵn sàng" : data.gemini_tls_fatal ? "Lỗi TLS" : data.gemini_error ? "Có lỗi" : "Đang kết nối";
+   document.getElementById("dashKey").textContent = data.key_configured ? "Đã lưu" : "Chưa cấu hình";
+   document.getElementById("dashVolume").textContent = data.speaker_volume + "%";
+   document.getElementById("dashHeap").textContent = data.free_heap + " byte";
+   document.getElementById("dashMinHeap").textContent = data.min_free_heap + " byte";
+   document.getElementById("dashUptime").textContent = Math.floor(data.uptime_seconds/3600) + " giờ " + Math.floor((data.uptime_seconds%3600)/60) + " phút";
+   document.getElementById("dashBuild").textContent = "#" + data.build_number;
 }
 
 async function refreshStatus() {
