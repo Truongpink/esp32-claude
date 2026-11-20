@@ -640,7 +640,7 @@ esp_err_t WifiPostHandler(httpd_req_t* request) {
     chatai::display::Notify("WI-FI", "Dang ket noi");
     httpd_resp_set_type(request, "application/json; charset=utf-8");
     httpd_resp_set_hdr(request, "Cache-Control", "no-store");
-    return httpd_resp_sendstr(request, "{\\"accepted\\":true}");
+    return httpd_resp_sendstr(request, "{\"accepted\":true}");
 }
 
 esp_err_t WifiStatusHandler(httpd_req_t* request) {
@@ -667,7 +667,7 @@ esp_err_t WifiStatusHandler(httpd_req_t* request) {
     const std::string ip = chatai::network::NetworkManager::GetIpAddress();
     char body[384]{};
     std::snprintf(body, sizeof(body),
-                  "{\\"state\\":%d,\\"message\\":\\"%s\\",\\"ip\\":\\"%s\\"}",
+                  "{\"state\":%d,\"message\":\"%s\",\"ip\":\"%s\"}",
                   state, message, ip.c_str());
     httpd_resp_set_type(request, "application/json; charset=utf-8");
     httpd_resp_set_hdr(request, "Cache-Control", "no-store");
