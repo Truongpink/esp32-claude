@@ -1,4 +1,5 @@
 #include "audio_manager.h"
+#include "diagnostic_manager.h"
 
 #include <algorithm>
 #include <array>
@@ -146,8 +147,10 @@ esp_err_t Initialize() {
     }
     if (err != ESP_OK) {
         ESP_LOGE(kTag, "Speaker amplifier GPIO setup failed: %s", esp_err_to_name(err));
+        chatai::diagnostics::Add("AMP_ENABLE", "FAIL", esp_err_to_name(err));
         return err;
     }
+    chatai::diagnostics::Add("AMP_ENABLE", "OK", "speaker amplifier GPIO17 set HIGH");
 
     err = ConfigureSpeaker();
     if (err == ESP_OK) {
