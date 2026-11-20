@@ -12,6 +12,7 @@
 #include "audio_manager.h"
 #include "display_manager.h"
 #include "gemini_live_client.h"
+#include "diagnostic_manager.h"
 
 namespace chatai::buttons {
 namespace {
@@ -71,6 +72,17 @@ bool UpdateButton(ButtonState& button, TickType_t now) {
     return false;
 }
 
+void ReportButtonTransition(const char* name, const ButtonState& button) {
+    char detail[128]{};
+    std::snprintf(detail, sizeof(detail),
+                  "button=%s gpio=%d state=%s active_level=%d task_stack_watermark=%u",
+                  name, static_cast<int>(button.pin),
+                  button.stable_pressed ? "PRESSED" : "RELEASED",
+                  button.active_high ? 1 : 0,
+                  static_cast<unsigned>(uxTaskGetStackHighWaterMark(nullptr)));
+    chatai::diagnostics::Add("BUTTON", "INFO", detail);
+}
+
 void AdjustVolume(int delta) {
     const int volume = std::clamp(chatai::audio::GetOutputVolume() + delta, 0, 100);
     chatai::audio::SetOutputVolume(volume);
@@ -84,14 +96,18 @@ void ButtonTask(void*) {
     while (true) {
         const TickType_t now = xTaskGetTickCount();
 
-        if (UpdateButton(g_boot, now) && !g_boot.stable_pressed) {
+        if (UpdateButton(g_boot, now)) {
+            ReportButtonTransition("BOOT", g_boot);
+            if (!g_boot.stable_pressed) {
             const bool enabled = !chatai::gemini::IsChatEnabled();
             chatai::gemini::SetChatEnabled(enabled);
             chatai::display::Notify("CHAT AI", enabled ? "Bật nghe liên tục" : "Đã tắt nghe");
             ESP_LOGI(kTag, "Chat listening %s", enabled ? "enabled" : "disabled");
+            }
         }
 
         if (UpdateButton(g_touch, now)) {
+            ReportButtonTransition("PTT", g_touch);
             chatai::gemini::SetPushToTalk(g_touch.stable_pressed);
             chatai::display::Notify("CHAT AI",
                 g_touch.stable_pressed ? "Đang nghe" :
@@ -99,6 +115,7 @@ void ButtonTask(void*) {
         }
 
         if (UpdateButton(g_volume_up, now)) {
+            ReportButtonTransition("VOLUME_UP", g_volume_up);
             if (g_volume_up.stable_pressed) {
                 AdjustVolume(10);
                 g_volume_up.next_repeat = now + pdMS_TO_TICKS(450);
@@ -110,6 +127,7 @@ void ButtonTask(void*) {
         }
 
         if (UpdateButton(g_volume_down, now)) {
+            ReportButtonTransition("VOLUME_DOWN", g_volume_down);
             if (g_volume_down.stable_pressed) {
                 AdjustVolume(-10);
                 g_volume_down.next_repeat = now + pdMS_TO_TICKS(450);
@@ -141,6 +159,8 @@ esp_err_t Initialize() {
     }
 
     ESP_LOGI(kTag, "Buttons ready: BOOT=GPIO0, PTT=GPIO43, VOL+=GPIO40, VOL-=GPIO39");
+    chatai::diagnostics::Add("BUTTON", "READY",
+        "mapping=BOOT:GPIO0(active_low),PTT:GPIO43(active_high),VOL_UP:GPIO40(active_low),VOL_DOWN:GPIO39(active_low)");
     return ESP_OK;
 }
 }  // namespace chatai::buttons
