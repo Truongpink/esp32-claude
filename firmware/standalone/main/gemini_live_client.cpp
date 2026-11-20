@@ -18,6 +18,7 @@
 #include <esp_log.h>
 #include <esp_netif_sntp.h>
 #include <esp_random.h>
+#include <esp_timer.h>
 #include <esp_websocket_client.h>
 #include <esp_tls.h>
 #include <freertos/FreeRTOS.h>
@@ -1087,7 +1088,54 @@ void MicrophoneWorker(void*) {
     uint32_t mic_sample_count = 0;
     uint32_t mic_clipped_count = 0;
 
+    int64_t pipeline_window_started_us = esp_timer_get_time();
+    uint64_t pipeline_read_total_us = 0;
+    uint64_t pipeline_read_max_us = 0;
+    uint64_t pipeline_encode_total_us = 0;
+    uint64_t pipeline_encode_max_us = 0;
+    uint64_t pipeline_lock_wait_total_us = 0;
+    uint64_t pipeline_lock_wait_max_us = 0;
+    uint64_t pipeline_send_total_us = 0;
+    uint64_t pipeline_send_max_us = 0;
+    uint32_t pipeline_read_calls = 0;
+    uint32_t pipeline_encode_calls = 0;
+    uint32_t pipeline_send_calls = 0;
+    uint32_t pipeline_send_failures = 0;
+    uint32_t pipeline_iterations = 0;
+
     while (true) {
+        const int64_t pipeline_now_us = esp_timer_get_time();
+        if (pipeline_now_us - pipeline_window_started_us >= 5000000) {
+            char detail[288]{};
+            std::snprintf(detail, sizeof(detail),
+                "window_us=%llu loops=%lu read_calls=%lu read_avg_us=%llu read_max_us=%llu "
+                "encode_calls=%lu encode_avg_us=%llu encode_max_us=%llu "
+                "lock_avg_us=%llu lock_max_us=%llu send_calls=%lu send_avg_us=%llu "
+                "send_max_us=%llu send_fail=%lu",
+                static_cast<unsigned long long>(pipeline_now_us - pipeline_window_started_us),
+                static_cast<unsigned long>(pipeline_iterations),
+                static_cast<unsigned long>(pipeline_read_calls),
+                static_cast<unsigned long long>(pipeline_read_calls ? pipeline_read_total_us / pipeline_read_calls : 0),
+                static_cast<unsigned long long>(pipeline_read_max_us),
+                static_cast<unsigned long>(pipeline_encode_calls),
+                static_cast<unsigned long long>(pipeline_encode_calls ? pipeline_encode_total_us / pipeline_encode_calls : 0),
+                static_cast<unsigned long long>(pipeline_encode_max_us),
+                static_cast<unsigned long long>(pipeline_send_calls ? pipeline_lock_wait_total_us / pipeline_send_calls : 0),
+                static_cast<unsigned long long>(pipeline_lock_wait_max_us),
+                static_cast<unsigned long>(pipeline_send_calls),
+                static_cast<unsigned long long>(pipeline_send_calls ? pipeline_send_total_us / pipeline_send_calls : 0),
+                static_cast<unsigned long long>(pipeline_send_max_us),
+                static_cast<unsigned long>(pipeline_send_failures));
+            chatai::diagnostics::Add("MIC_PIPELINE", "INFO", detail);
+            pipeline_window_started_us = pipeline_now_us;
+            pipeline_read_total_us = pipeline_read_max_us = 0;
+            pipeline_encode_total_us = pipeline_encode_max_us = 0;
+            pipeline_lock_wait_total_us = pipeline_lock_wait_max_us = 0;
+            pipeline_send_total_us = pipeline_send_max_us = 0;
+            pipeline_read_calls = pipeline_encode_calls = pipeline_send_calls = 0;
+            pipeline_send_failures = pipeline_iterations = 0;
+        }
+        ++pipeline_iterations;
         const bool should_listen = ShouldListen();
         if (!listen_state_initialized || should_listen != last_should_listen) {
             char detail[144]{};
@@ -1179,12 +1227,18 @@ void MicrophoneWorker(void*) {
         }
 
         size_t samples_read = 0;
+        const int64_t read_started_us = esp_timer_get_time();
         if (!microphone_read_attempt_recorded) {
             chatai::diagnostics::SetCrashContext("MIC_READ_BEGIN", "first I2S RX read");
             microphone_read_attempt_recorded = true;
         }
         const esp_err_t read_result = chatai::audio::ReadMicrophonePcm16(
             pcm, kMicChunkSamples, &samples_read, 100);
+        const uint64_t read_elapsed_us = static_cast<uint64_t>(
+            std::max<int64_t>(0, esp_timer_get_time() - read_started_us));
+        pipeline_read_total_us += read_elapsed_us;
+        pipeline_read_max_us = std::max(pipeline_read_max_us, read_elapsed_us);
+        ++pipeline_read_calls;
         if (read_result == ESP_ERR_TIMEOUT) continue;
         if (read_result != ESP_OK || samples_read == 0) {
             ESP_LOGW(kTag, "Microphone read failed: %s", esp_err_to_name(read_result));
@@ -1273,9 +1327,15 @@ void MicrophoneWorker(void*) {
         }
 
         size_t encoded_size = 0;
+        const int64_t encode_started_us = esp_timer_get_time();
         const int encode_result = mbedtls_base64_encode(
             encoded, sizeof(encoded), &encoded_size,
             reinterpret_cast<const unsigned char*>(pcm), samples_read * sizeof(int16_t));
+        const uint64_t encode_elapsed_us = static_cast<uint64_t>(
+            std::max<int64_t>(0, esp_timer_get_time() - encode_started_us));
+        pipeline_encode_total_us += encode_elapsed_us;
+        pipeline_encode_max_us = std::max(pipeline_encode_max_us, encode_elapsed_us);
+        ++pipeline_encode_calls;
         if (encode_result != 0 || encoded_size >= sizeof(encoded)) {
             ESP_LOGE(kTag, "Could not encode microphone PCM chunk");
             continue;
@@ -1292,12 +1352,24 @@ void MicrophoneWorker(void*) {
             continue;
         }
 
+        const int64_t lock_wait_started_us = esp_timer_get_time();
         std::lock_guard<std::mutex> lock(g_send_mutex);
+        const uint64_t lock_wait_us = static_cast<uint64_t>(
+            std::max<int64_t>(0, esp_timer_get_time() - lock_wait_started_us));
+        pipeline_lock_wait_total_us += lock_wait_us;
+        pipeline_lock_wait_max_us = std::max(pipeline_lock_wait_max_us, lock_wait_us);
         if (g_ready.load() && g_client != nullptr &&
             esp_websocket_client_is_connected(g_client)) {
+            const int64_t send_started_us = esp_timer_get_time();
             const int sent = esp_websocket_client_send_text(
                 g_client, message, message_size, pdMS_TO_TICKS(1000));
+            const uint64_t send_elapsed_us = static_cast<uint64_t>(
+                std::max<int64_t>(0, esp_timer_get_time() - send_started_us));
+            pipeline_send_total_us += send_elapsed_us;
+            pipeline_send_max_us = std::max(pipeline_send_max_us, send_elapsed_us);
+            ++pipeline_send_calls;
             if (sent != message_size) {
+                ++pipeline_send_failures;
                 ESP_LOGW(kTag, "Microphone audio send was incomplete");
             } else {
                 const uint32_t sent_tick = static_cast<uint32_t>(xTaskGetTickCount());
