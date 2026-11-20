@@ -81,6 +81,13 @@ void ReportButtonTransition(const char* name, const ButtonState& button) {
                   button.active_high ? 1 : 0,
                   static_cast<unsigned>(uxTaskGetStackHighWaterMark(nullptr)));
     chatai::diagnostics::Add("BUTTON", "INFO", detail);
+    if (name != nullptr && std::strcmp(name, "PTT") == 0) {
+        if (button.stable_pressed) {
+            chatai::diagnostics::SetCrashContext("PTT_PRESS", detail);
+        } else {
+            chatai::diagnostics::ClearCrashContext();
+        }
+    }
 }
 
 void AdjustVolume(int delta) {
