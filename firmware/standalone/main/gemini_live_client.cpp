@@ -23,6 +23,7 @@
 #include <freertos/task.h>
 #include <mbedtls/base64.h>
 #include <mbedtls/error.h>
+#include <mbedtls/esp_debug.h>
 
 #include "audio_manager.h"
 #include "gemini_settings.h"
@@ -170,6 +171,14 @@ void ReportTimeSuccess(const char* detail) {
 
 esp_err_t AttachGeminiCertificateBundle(void* tls_config) {
     const esp_err_t result = esp_crt_bundle_attach(tls_config);
+#if CONFIG_MBEDTLS_DEBUG
+    if (result == ESP_OK && tls_config != nullptr) {
+        // Attach warning-level MbedTLS diagnostics to this TLS session so the
+        // next handshake failure exposes the certificate verification path.
+        mbedtls_esp_enable_debug_log(
+            static_cast<mbedtls_ssl_config*>(tls_config), 2);
+    }
+#endif
     char detail[112]{};
     std::snprintf(detail, sizeof(detail), "esp_crt_bundle_attach=%s(0x%08x)",
                   esp_err_to_name(result), static_cast<unsigned>(result));
