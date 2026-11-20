@@ -8,6 +8,8 @@
 #include <string>
 
 #include <esp_timer.h>
+#include <esp_attr.h>
+#include <esp_system.h>
 
 #include <esp_log.h>
 
@@ -18,6 +20,34 @@ std::mutex g_mutex;
 std::string g_log;
 std::atomic<bool> g_time_synchronized{false};
 std::atomic<const char*> g_time_source{"UNSYNCED"};
+
+constexpr uint32_t kCrashContextMagic = 0x43484149;
+struct RetainedCrashContext {
+    uint32_t magic;
+    uint32_t sequence;
+    uint32_t checksum;
+    char stage[24];
+    char detail[80];
+};
+RTC_NOINIT_ATTR RetainedCrashContext g_retained_crash_context{};
+std::mutex g_crash_context_mutex;
+
+uint32_t CrashContextChecksum(const RetainedCrashContext& context) {
+    uint32_t hash = 2166136261u;
+    const auto* bytes = reinterpret_cast<const uint8_t*>(&context);
+    for (size_t i = 0; i < sizeof(context); ++i) {
+        if (i >= offsetof(RetainedCrashContext, checksum) &&
+            i < offsetof(RetainedCrashContext, checksum) + sizeof(context.checksum)) continue;
+        hash = (hash ^ bytes[i]) * 16777619u;
+    }
+    return hash;
+}
+
+bool IsCrashContextValid(const RetainedCrashContext& context) {
+    return context.magic == kCrashContextMagic &&
+           context.checksum == CrashContextChecksum(context) &&
+           context.stage[0] != '\\0';
+}
 }
 
 namespace chatai::diagnostics {
@@ -101,6 +131,39 @@ std::string Get() {
 void Clear() {
     std::lock_guard<std::mutex> lock(g_mutex);
     g_log.clear();
+}
+
+void SetCrashContext(const char* stage, const char* detail) {
+    if (stage == nullptr || *stage == '\\0') return;
+    std::lock_guard<std::mutex> lock(g_crash_context_mutex);
+    RetainedCrashContext next{};
+    next.magic = kCrashContextMagic;
+    next.sequence = IsCrashContextValid(g_retained_crash_context)
+        ? g_retained_crash_context.sequence + 1 : 1;
+    std::snprintf(next.stage, sizeof(next.stage), "%s", stage);
+    if (detail != nullptr) {
+        std::snprintf(next.detail, sizeof(next.detail), "%s", detail);
+    }
+    next.checksum = CrashContextChecksum(next);
+    g_retained_crash_context = next;
+}
+
+void RestorePreviousCrashContext() {
+    RetainedCrashContext previous{};
+    {
+        std::lock_guard<std::mutex> lock(g_crash_context_mutex);
+        if (!IsCrashContextValid(g_retained_crash_context)) return;
+        previous = g_retained_crash_context;
+        g_retained_crash_context.magic = 0;
+        g_retained_crash_context.checksum = 0;
+    }
+
+    char detail[144]{};
+    std::snprintf(detail, sizeof(detail),
+                  "previous_reset_reason=%d last_stage=%s sequence=%lu %s",
+                  static_cast<int>(esp_reset_reason()), previous.stage,
+                  static_cast<unsigned long>(previous.sequence), previous.detail);
+    Add("PREVIOUS_BOOT", "WARN", detail);
 }
 
 }  // namespace chatai::diagnostics
