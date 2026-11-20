@@ -5,6 +5,7 @@
 #include <array>
 #include <atomic>
 #include <climits>
+#include <cstdio>
 #include <mutex>
 
 #include <driver/gpio.h>
@@ -36,6 +37,7 @@ i2s_chan_handle_t s_speaker_tx = nullptr;
 std::atomic<bool> s_mic_enabled{false};
 std::atomic<bool> s_speaker_enabled{false};
 std::atomic<int> s_output_volume{100};
+std::atomic<bool> s_mic_raw_reported{false};
 std::mutex s_state_mutex;
 std::mutex s_mic_io_mutex;
 std::mutex s_speaker_io_mutex;
@@ -165,6 +167,10 @@ esp_err_t Initialize() {
 
     ESP_LOGW(kTag, "I2S ready; microphone GPIO 5/4/6 remains a provisional, unverified mapping");
     ESP_LOGI(kTag, "Speaker: I2S0, 24 kHz PCM16; microphone: I2S1, 16 kHz 32-bit input");
+    char volume_detail[48]{};
+    std::snprintf(volume_detail, sizeof(volume_detail), "saved_output_volume=%d%%",
+                  s_output_volume.load());
+    chatai::diagnostics::Add("SPEAKER_VOLUME", "INFO", volume_detail);
     return ESP_OK;
 }
 
@@ -233,8 +239,26 @@ esp_err_t ReadMicrophonePcm16(int16_t* destination, size_t requested_samples,
             return ESP_ERR_INVALID_SIZE;
         }
         const size_t received = bytes_read / sizeof(int32_t);
+        if (received > 0 && !s_mic_raw_reported.exchange(true)) {
+            int32_t raw_min = INT32_MAX;
+            int32_t raw_max = INT32_MIN;
+            for (size_t i = 0; i < received; ++i) {
+                raw_min = std::min(raw_min, raw_samples[i]);
+                raw_max = std::max(raw_max, raw_samples[i]);
+            }
+            char raw_detail[160]{};
+            std::snprintf(raw_detail, sizeof(raw_detail),
+                          "samples=%lu raw_min=%ld raw_max=%ld first=%08lx/%08lx/%08lx/%08lx",
+                          static_cast<unsigned long>(received),
+                          static_cast<long>(raw_min), static_cast<long>(raw_max),
+                          static_cast<unsigned long>(static_cast<uint32_t>(raw_samples[0])),
+                          static_cast<unsigned long>(static_cast<uint32_t>(raw_samples[std::min<size_t>(1, received - 1)])),
+                          static_cast<unsigned long>(static_cast<uint32_t>(raw_samples[std::min<size_t>(2, received - 1)])),
+                          static_cast<unsigned long>(static_cast<uint32_t>(raw_samples[std::min<size_t>(3, received - 1)])));
+            chatai::diagnostics::Add("MIC_RAW", "INFO", raw_detail);
+        }
         for (size_t i = 0; i < received; ++i) {
-            // Convert 32-bit I2S microphone samples to PCM16.
+            // Match the upstream XH-S3E-AI Xiaozhi 32-bit I2S-to-PCM16 conversion.
             const int32_t value = raw_samples[i] >> 12;
             destination[*samples_read + i] = static_cast<int16_t>(
                 std::clamp<int32_t>(value, INT16_MIN, INT16_MAX));

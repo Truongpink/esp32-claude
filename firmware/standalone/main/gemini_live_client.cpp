@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <cmath>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -206,114 +207,93 @@ void ReportWebSocketCloseFrame(const esp_websocket_event_data_t* event) {
 
     char detail[192]{};
     std::snprintf(detail, sizeof(detail),
-                  "source=received_close_frame close_code=%d payload_len=%d "
-                  "reason_len_logged=%d reason=\"%s\"",
-                  event->close_status_code, event->payload_len,
-                  reason_length, reason_length > 0 ? reason : "empty_or_unavailable");
+                  "source=received_close_frame close_code=%d payload_len=%d reason_len_logged=%d reason=\"%s\"",
+                  event->close_status_code, event->payload_len, reason_length, reason);
     chatai::diagnostics::Add("WS_CLOSE", "INFO", detail);
 }
 
-void ReportTlsFailure(const char* detail, int error_code, uint32_t cert_flags) {
-    const uint32_t now = static_cast<uint32_t>(xTaskGetTickCount());
-    const bool was_active = g_tls_failure_active.exchange(true);
-    const int previous_error = g_last_tls_error.exchange(error_code);
-    const uint32_t previous_flags = g_last_tls_cert_flags.exchange(cert_flags);
-
-    if (!was_active || previous_error != error_code || previous_flags != cert_flags) {
-        g_tls_suppressed_count.store(0);
-        g_tls_failure_started_tick.store(now);
-        g_tls_last_summary_tick.store(now);
-        chatai::diagnostics::Add("TLS", "FAIL", detail);
-        return;
-    }
-
-    const uint32_t suppressed = g_tls_suppressed_count.fetch_add(1) + 1;
-    const uint32_t last_summary = g_tls_last_summary_tick.load();
-    if (now - last_summary >= pdMS_TO_TICKS(kFailureSummaryIntervalMs)) {
-        char summary[128]{};
-        const uint32_t duration = (now - g_tls_failure_started_tick.load()) /
-                                  configTICK_RATE_HZ;
-        std::snprintf(summary, sizeof(summary),
-                      "same_error_count=%lu duration=%lus",
-                      static_cast<unsigned long>(suppressed),
-                      static_cast<unsigned long>(duration));
-        chatai::diagnostics::Add("TLS", "WARN", summary);
-        g_tls_last_summary_tick.store(now);
-    }
-}
-
-void ReportTlsRecovered() {
-    if (!g_tls_failure_active.exchange(false)) return;
-    const uint32_t now = static_cast<uint32_t>(xTaskGetTickCount());
-    const uint32_t failures = g_tls_suppressed_count.exchange(0) + 1;
-    const uint32_t duration = (now - g_tls_failure_started_tick.load()) /
-                              configTICK_RATE_HZ;
-    char detail[128]{};
-    std::snprintf(detail, sizeof(detail),
-                  "recovered_after_failures=%lu duration=%lus",
-                  static_cast<unsigned long>(failures),
-                  static_cast<unsigned long>(duration));
-    chatai::diagnostics::Add("TLS", "OK", detail);
-    g_tls_fatal.store(false);
-    g_retry_blocked.store(false);
-}
-
 void NotifyConnectionError(const char* title, const char* message) {
-    if (!g_connection_notification_active.exchange(true)) {
-        chatai::display::Notify(title, message, 4000);
-    }
+    if (g_connection_notification_active.exchange(true)) return;
+    chatai::display::Notify(title, message, 4000);
 }
 
 void ReportTimeFailure(const char* detail) {
-    chatai::diagnostics::SetTimeSyncStatus(false);
     if (!g_time_failure_reported.exchange(true)) {
-        ESP_LOGW(kTag, "System time is not NTP-verified for Gemini TLS: %s", detail);
+        ESP_LOGE(kTag, "System time is not synchronized: %s", detail);
         chatai::diagnostics::Add("TIME", "FAIL", detail);
+        NotifyConnectionError("THOI GIAN", "Chua dong bo NTP");
     }
 }
 
 void ReportTimeSuccess(const char* detail) {
-    chatai::diagnostics::SetTimeSyncStatus(true, "SNTP");
-    const bool recovered = g_time_failure_reported.exchange(false);
-    if (recovered || !g_time_success_reported.exchange(true)) {
-        char time_detail[128]{};
-        std::snprintf(time_detail, sizeof(time_detail), "%s; timezone=Asia/Ho_Chi_Minh UTC+07:00",
-                      recovered ? "system clock synchronized" : detail);
-        chatai::diagnostics::Add("TIME", "OK", time_detail);
+    if (!g_time_success_reported.exchange(true)) {
+        chatai::diagnostics::SetTimeSyncStatus(true, "SNTP");
+        ESP_LOGI(kTag, "System time synchronized by SNTP");
+        chatai::diagnostics::Add("TIME", "OK", detail);
     }
 }
 
-esp_err_t AttachGeminiCertificateBundle(void* tls_config) {
-    const esp_err_t result = esp_crt_bundle_attach(tls_config);
-#if defined(CONFIG_MBEDTLS_DEBUG) && CONFIG_MBEDTLS_DEBUG
-    if (result == ESP_OK && tls_config != nullptr) {
-        mbedtls_esp_enable_debug_log(
-            static_cast<mbedtls_ssl_config*>(tls_config), CONFIG_MBEDTLS_DEBUG_LEVEL);
-        esp_log_level_set("esp-tls", ESP_LOG_DEBUG);
-        esp_log_level_set("esp-x509-crt-bundle", ESP_LOG_DEBUG);
-        char debug_detail[80]{};
-        std::snprintf(debug_detail, sizeof(debug_detail),
-                      "MbedTLS debug compiled in; level=%d", CONFIG_MBEDTLS_DEBUG_LEVEL);
-        chatai::diagnostics::Add("TLS_DEBUG", "OK", debug_detail);
+void ReportTlsFailure(const char* detail, int mbedtls_error, uint32_t cert_flags) {
+    const bool first = !g_tls_failure_active.exchange(true);
+    if (first) {
+        g_tls_failure_started_tick.store(static_cast<uint32_t>(xTaskGetTickCount()));
+        g_tls_last_summary_tick.store(g_tls_failure_started_tick.load());
+        g_last_tls_error.store(mbedtls_error);
+        g_last_tls_cert_flags.store(cert_flags);
+        ESP_LOGE(kTag, "Gemini TLS failure: %s", detail);
+        chatai::diagnostics::Add("TLS", "FAIL", detail);
+        NotifyConnectionError("TLS GEMINI", "Loi xac minh bao mat");
+        return;
     }
-#else
-    chatai::diagnostics::Add("TLS_DEBUG", "FAIL",
-                             "CONFIG_MBEDTLS_DEBUG is disabled in this firmware build");
-#endif
-    char detail[112]{};
-    std::snprintf(detail, sizeof(detail), "esp_crt_bundle_attach=%s(0x%08x)",
-                  esp_err_to_name(result), static_cast<unsigned>(result));
-    if (result == ESP_OK) {
-        if (!g_tls_bundle_success_reported.exchange(true)) {
-            ESP_LOGI(kTag, "Gemini certificate bundle attached");
-            chatai::diagnostics::Add("TLS_CA", "OK", detail);
-        }
-    } else if (!g_tls_bundle_failure_reported.exchange(true)) {
-        ESP_LOGE(kTag, "Gemini certificate bundle attach failed: %s",
-                 esp_err_to_name(result));
+
+    g_tls_suppressed_count.fetch_add(1);
+    const uint32_t now = static_cast<uint32_t>(xTaskGetTickCount());
+    const uint32_t last = g_tls_last_summary_tick.load();
+    if (static_cast<uint32_t>(now - last) <
+        pdMS_TO_TICKS(kFailureSummaryIntervalMs)) return;
+
+    g_tls_last_summary_tick.store(now);
+    char summary[176]{};
+    std::snprintf(summary, sizeof(summary),
+                  "ongoing_seconds=%lu suppressed=%lu last_mbedtls=%d last_cert_flags=0x%x",
+                  static_cast<unsigned long>(ElapsedSeconds(now, g_tls_failure_started_tick.load())),
+                  static_cast<unsigned long>(g_tls_suppressed_count.exchange(0)),
+                  g_last_tls_error.load(), static_cast<unsigned>(g_last_tls_cert_flags.load()));
+    chatai::diagnostics::Add("TLS", "WARN", summary);
+}
+
+void ReportTlsRecovered() {
+    if (g_tls_failure_active.exchange(false)) {
+        const uint32_t now = static_cast<uint32_t>(xTaskGetTickCount());
+        char detail[112]{};
+        std::snprintf(detail, sizeof(detail),
+                      "TLS recovered after %lu seconds; suppressed=%lu",
+                      static_cast<unsigned long>(ElapsedSeconds(now, g_tls_failure_started_tick.load())),
+                      static_cast<unsigned long>(g_tls_suppressed_count.exchange(0)));
+        ESP_LOGI(kTag, "Gemini TLS recovered");
+        chatai::diagnostics::Add("TLS", "RECOVERED", detail);
+    }
+}
+
+void ReportTlsBundleFailure(const char* detail) {
+    if (!g_tls_bundle_failure_reported.exchange(true))
         chatai::diagnostics::Add("TLS_CA", "FAIL", detail);
+}
+
+int AttachGeminiCertificateBundle(void* config_pointer) {
+    const int result = esp_crt_bundle_attach(config_pointer);
+    if (result == ESP_OK) {
+        if (!g_tls_bundle_success_reported.exchange(true))
+            chatai::diagnostics::Add("TLS_CA", "OK", "esp_crt_bundle_attach=ESP_OK(0x00000000)");
+    } else {
+        char detail[96]{};
+        std::snprintf(detail, sizeof(detail), "esp_crt_bundle_attach=%s(0x%08x)",
+                      esp_err_to_name(result), static_cast<unsigned>(result));
+        ReportTlsBundleFailure(detail);
     }
-    if (result == ESP_OK && !g_tls_config_reported.exchange(true)) {
+
+#if defined(CONFIG_MBEDTLS_DEBUG) && CONFIG_MBEDTLS_DEBUG
+    if (!g_tls_config_reported.exchange(true)) {
         const char* cross_signed = "disabled";
         const char* time_date = "disabled";
         const char* full_bundle = "disabled";
@@ -684,13 +664,13 @@ void ReportWebSocketDisconnectError(const esp_websocket_event_data_t* event) {
                 std::snprintf(mbedtls_message, sizeof(mbedtls_message),
                               "not reported");
             }
-    
+
             const size_t internal_free =
                 heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
             const size_t internal_largest =
                 heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
             const std::time_t system_time = std::time(nullptr);
-    
+
             char detail[416]{};
             std::snprintf(detail, sizeof(detail),
                           "host=generativelanguage.googleapis.com esp=%s(0x%08x) "
@@ -725,7 +705,7 @@ void ReportWebSocketDisconnectError(const esp_websocket_event_data_t* event) {
             }
             break;
         }
-    
+
         case WEBSOCKET_ERROR_TYPE_HANDSHAKE: {
             const int http_status = event->error_handle.esp_ws_handshake_status_code;
             char detail[80]{};
@@ -738,15 +718,15 @@ void ReportWebSocketDisconnectError(const esp_websocket_event_data_t* event) {
             }
             break;
         }
-    
+
         case WEBSOCKET_ERROR_TYPE_PONG_TIMEOUT:
             chatai::diagnostics::Add("WS", "FAIL", "WebSocket PONG timeout");
             break;
-    
+
         case WEBSOCKET_ERROR_TYPE_SERVER_CLOSE:
             chatai::diagnostics::Add("WS", "FAIL", "server closed WebSocket connection");
             break;
-    
+
         case WEBSOCKET_ERROR_TYPE_NONE:
         default: {
             char detail[64]{};
@@ -996,6 +976,14 @@ void MicrophoneWorker(void*) {
     bool microphone_enabled = false;
     bool microphone_error_reported = false;
     bool audio_stream_active = false;
+    TickType_t mic_stats_started = 0;
+    int32_t mic_min = INT16_MAX;
+    int32_t mic_max = INT16_MIN;
+    uint64_t mic_sum_abs = 0;
+    uint64_t mic_sum_squares = 0;
+    int64_t mic_sum = 0;
+    uint32_t mic_sample_count = 0;
+    uint32_t mic_clipped_count = 0;
 
     while (true) {
         const bool should_listen = ShouldListen();
@@ -1070,6 +1058,14 @@ void MicrophoneWorker(void*) {
             microphone_error_reported = false;
             microphone_read_reported = false;
             microphone_read_attempt_recorded = false;
+            mic_stats_started = xTaskGetTickCount();
+            mic_min = INT16_MAX;
+            mic_max = INT16_MIN;
+            mic_sum_abs = 0;
+            mic_sum_squares = 0;
+            mic_sum = 0;
+            mic_sample_count = 0;
+            mic_clipped_count = 0;
             chatai::diagnostics::SetCrashContext("MIC_ENABLED", "I2S RX channel enabled");
             ESP_LOGI(kTag, "Microphone streaming started: PCM16 mono 16 kHz");
             char detail[128]{};
@@ -1124,6 +1120,48 @@ void MicrophoneWorker(void*) {
             chatai::diagnostics::Add("MIC_SAMPLE_LEVEL", "INFO", level_detail);
             chatai::diagnostics::SetCrashContext("MIC_READ_OK", level_detail);
             microphone_read_reported = true;
+        }
+
+        for (size_t i = 0; i < samples_read; ++i) {
+            const int32_t sample = pcm[i];
+            const int32_t magnitude = sample < 0 ? -sample : sample;
+            mic_min = std::min(mic_min, sample);
+            mic_max = std::max(mic_max, sample);
+            mic_sum_abs += static_cast<uint32_t>(magnitude);
+            mic_sum_squares += static_cast<uint64_t>(magnitude) * magnitude;
+            mic_sum += sample;
+            if (magnitude >= 32760) ++mic_clipped_count;
+            ++mic_sample_count;
+        }
+
+        const TickType_t stats_now = xTaskGetTickCount();
+        if (mic_sample_count > 0 &&
+            stats_now - mic_stats_started >= pdMS_TO_TICKS(5000)) {
+            const uint32_t peak = static_cast<uint32_t>(
+                std::max(std::abs(mic_min), std::abs(mic_max)));
+            const double rms = std::sqrt(
+                static_cast<double>(mic_sum_squares) / mic_sample_count);
+            const double dc_offset = static_cast<double>(mic_sum) / mic_sample_count;
+            const double clipped_percent =
+                100.0 * static_cast<double>(mic_clipped_count) / mic_sample_count;
+            char level_detail[192]{};
+            std::snprintf(level_detail, sizeof(level_detail),
+                          "window_ms=5000 samples=%lu min=%ld max=%ld peak=%lu "
+                          "mean_abs=%lu rms=%.1f dc=%.1f clipped=%.2f%%",
+                          static_cast<unsigned long>(mic_sample_count),
+                          static_cast<long>(mic_min), static_cast<long>(mic_max),
+                          static_cast<unsigned long>(peak),
+                          static_cast<unsigned long>(mic_sum_abs / mic_sample_count),
+                          rms, dc_offset, clipped_percent);
+            chatai::diagnostics::Add("MIC_LEVEL", "INFO", level_detail);
+            mic_stats_started = stats_now;
+            mic_min = INT16_MAX;
+            mic_max = INT16_MIN;
+            mic_sum_abs = 0;
+            mic_sum_squares = 0;
+            mic_sum = 0;
+            mic_sample_count = 0;
+            mic_clipped_count = 0;
         }
 
         size_t encoded_size = 0;
@@ -1213,19 +1251,40 @@ void SpeakerWorker(void*) {
         }
 
         g_speaking.store(true);
+        int32_t pcm_peak = 0;
+        for (size_t i = 0; i < chunk->sample_count; ++i) {
+            const int32_t sample = chunk->samples[i];
+            pcm_peak = std::max(pcm_peak, sample < 0 ? -sample : sample);
+        }
+
         size_t samples_written = 0;
         const esp_err_t write_result = chatai::audio::WriteSpeakerPcm16(
             chunk->samples, chunk->sample_count, &samples_written, 100);
+        const size_t requested_bytes = chunk->sample_count * sizeof(int32_t);
+        const size_t written_bytes = samples_written * sizeof(int32_t);
+        const int output_volume = chatai::audio::GetOutputVolume();
         if (write_result != ESP_OK || samples_written != chunk->sample_count) {
-            ESP_LOGW(kTag, "Speaker write incomplete: %s", esp_err_to_name(write_result));
+            char detail[160]{};
+            std::snprintf(detail, sizeof(detail),
+                          "result=%s samples=%lu/%lu bytes=%lu/%lu volume=%d peak=%ld",
+                          esp_err_to_name(write_result),
+                          static_cast<unsigned long>(samples_written),
+                          static_cast<unsigned long>(chunk->sample_count),
+                          static_cast<unsigned long>(written_bytes),
+                          static_cast<unsigned long>(requested_bytes),
+                          output_volume, static_cast<long>(pcm_peak));
+            ESP_LOGW(kTag, "Speaker write incomplete: %s", detail);
             if (!speaker_write_error_reported) {
-                chatai::diagnostics::Add("SPEAKER_WRITE", "FAIL", esp_err_to_name(write_result));
+                chatai::diagnostics::Add("SPEAKER_WRITE", "FAIL", detail);
                 speaker_write_error_reported = true;
             }
         } else if (!speaker_write_reported) {
-            char detail[96]{};
-            std::snprintf(detail, sizeof(detail), "first_write_samples=%lu",
-                          static_cast<unsigned long>(samples_written));
+            char detail[160]{};
+            std::snprintf(detail, sizeof(detail),
+                          "samples=%lu bytes=%lu volume=%d pcm_peak=%ld",
+                          static_cast<unsigned long>(samples_written),
+                          static_cast<unsigned long>(written_bytes),
+                          output_volume, static_cast<long>(pcm_peak));
             chatai::diagnostics::SetCrashContext("SPEAKER_WRITE_OK", detail);
             chatai::diagnostics::Add("SPEAKER_WRITE", "OK", detail);
             speaker_write_reported = true;
@@ -1458,7 +1517,16 @@ bool HasError() {
     return g_error.load();
 }
 
-void SetChatEnabled(bool enabled) { g_chat_enabled.store(enabled); }
+void SetChatEnabled(bool enabled) {
+    const bool was_enabled = g_chat_enabled.exchange(enabled);
+    if (enabled && !was_enabled && !g_ready.load() &&
+        !g_waiting_setup.load() &&
+        (g_client_failed.load() || g_retry_blocked.load())) {
+        chatai::diagnostics::Add("CHAT", "INFO",
+            "continuous listening requested after Gemini session ended; reconnecting");
+        RequestReconnect();
+    }
+}
 bool IsChatEnabled() { return g_chat_enabled.load(); }
 void SetPushToTalk(bool pressed) {
     const bool was_pressed = g_push_to_talk.exchange(pressed);

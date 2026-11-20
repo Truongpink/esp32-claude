@@ -18,6 +18,7 @@
 #include "firmware_info.h"
 #include "button_manager.h"
 #include "diagnostic_manager.h"
+#include "status_led_manager.h"
 
 namespace {
 constexpr char kTag[] = "ChatAI";
@@ -59,7 +60,6 @@ const char* ResetReasonName(esp_reset_reason_t reason) {
         case ESP_RST_TASK_WDT: return "TASK_WATCHDOG";
         case ESP_RST_WDT: return "WATCHDOG";
         case ESP_RST_DEEPSLEEP: return "DEEP_SLEEP";
-        case ESP_RST_BROWNOUT: return "BROWNOUT";
         case ESP_RST_SDIO: return "SDIO";
         default: return "OTHER";
     }
@@ -161,6 +161,11 @@ extern "C" void app_main(void) {
         return;
     }
 
+    const esp_err_t led_result = chatai::status_led::Initialize();
+    if (led_result != ESP_OK) {
+        ESP_LOGW(kTag, "Status LED unavailable: %s", esp_err_to_name(led_result));
+    }
+
     const esp_err_t buttons_result = chatai::buttons::Initialize();
     if (buttons_result != ESP_OK) {
         ESP_LOGW(kTag, "Hardware button initialization failed: %s", esp_err_to_name(buttons_result));
@@ -182,8 +187,7 @@ extern "C" void app_main(void) {
         image_state == ESP_OTA_IMG_PENDING_VERIFY) {
         const esp_err_t validation_result = esp_ota_mark_app_valid_cancel_rollback();
         if (validation_result != ESP_OK) {
-            ESP_LOGE(kTag, "Could not confirm OTA image: %s",
-                     esp_err_to_name(validation_result));
+            ESP_LOGE(kTag, "Could not confirm OTA image: %s", esp_err_to_name(validation_result));
             esp_restart();
             return;
         }
