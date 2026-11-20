@@ -139,6 +139,7 @@ void ResetWebSocketSessionMetrics() {
     g_ws_last_server_content_tick.store(0);
     g_ws_audio_rx_count.store(0);
     g_ws_last_audio_rx_tick.store(0);
+    g_audio_response_reported.store(false);
     g_ws_summary_reported.store(false);
 }
 
