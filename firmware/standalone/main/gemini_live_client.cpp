@@ -66,6 +66,8 @@ bool g_sntp_initialized = false;
 bool g_sntp_started = false;
 bool g_sntp_sync_confirmed = false;
 std::atomic<uint32_t> g_audio_epoch{0};
+std::atomic<bool> g_discard_current_response{false};
+std::atomic<bool> g_stop_speaker_requested{false};
 std::atomic<bool> g_audio_response_reported{false};
 std::atomic<bool> g_audio_reject_reported{false};
 std::atomic<bool> g_server_content_reported{false};
@@ -542,6 +544,7 @@ void ReportAudioRejectOnce(const char* reason) {
 }
 
 void QueueServerAudio(const cJSON* inline_data) {
+    if (g_discard_current_response.load()) return;
     const cJSON* mime = cJSON_GetObjectItemCaseSensitive(inline_data, "mimeType");
     const cJSON* data = cJSON_GetObjectItemCaseSensitive(inline_data, "data");
     if (!cJSON_IsString(mime) || !cJSON_IsString(data) ||
@@ -583,6 +586,10 @@ void QueueServerAudio(const cJSON* inline_data) {
 
     chunk->epoch = g_audio_epoch.load();
     chunk->sample_count = decoded_size / sizeof(int16_t);
+    if (g_discard_current_response.load() || chunk->epoch != g_audio_epoch.load()) {
+        std::free(chunk);
+        return;
+    }
     if (xQueueSend(g_audio_queue, &chunk, 0) != pdTRUE) {
         std::free(chunk);
         ESP_LOGW(kTag, "Gemini playback queue full; dropping audio chunk");
@@ -686,8 +693,9 @@ void HandleServerMessage(const std::string& message) {
         if (cJSON_IsTrue(interrupted)) {
             g_audio_epoch.fetch_add(1);
             ClearAudioQueue();
+            g_discard_current_response.store(false);
             g_speaking.store(false);
-            chatai::audio::EnableSpeaker(false);
+            g_stop_speaker_requested.store(true);
             ESP_LOGI(kTag, "Gemini interrupted playback; queued audio cleared");
         }
 
@@ -703,6 +711,9 @@ void HandleServerMessage(const std::string& message) {
                     ? cJSON_GetObjectItemCaseSensitive(part, "inlineData") : nullptr;
                 if (cJSON_IsObject(inline_data)) QueueServerAudio(inline_data);
             }
+        }
+        if (cJSON_IsTrue(turn_complete)) {
+            g_discard_current_response.store(false);
         }
     }
 
@@ -854,6 +865,8 @@ void WebSocketEventHandler(void* handler_arg, esp_event_base_t, int32_t event_id
             g_waiting_setup.store(true);
             g_setup_started_tick.store(static_cast<uint32_t>(xTaskGetTickCount()));
             g_speaking.store(false);
+            g_discard_current_response.store(false);
+            g_stop_speaker_requested.store(true);
             g_error.store(false);
             g_client_failed.store(false);
             g_connection_failure_reported.store(false);
@@ -1028,6 +1041,8 @@ void WebSocketEventHandler(void* handler_arg, esp_event_base_t, int32_t event_id
             g_waiting_setup.store(false);
             g_ready.store(false);
             g_speaking.store(false);
+            g_discard_current_response.store(false);
+            g_stop_speaker_requested.store(true);
             g_error.store(true);
             g_client_failed.store(true);
             g_audio_epoch.fetch_add(1);
@@ -1045,6 +1060,8 @@ void WebSocketEventHandler(void* handler_arg, esp_event_base_t, int32_t event_id
             g_waiting_setup.store(false);
             g_ready.store(false);
             g_speaking.store(false);
+            g_discard_current_response.store(false);
+            g_stop_speaker_requested.store(true);
             g_error.store(true);
             g_client_failed.store(true);
             g_audio_epoch.fetch_add(1);
@@ -1393,6 +1410,13 @@ void SpeakerWorker(void*) {
     bool speaker_write_error_reported = false;
 
     while (true) {
+        if (g_stop_speaker_requested.exchange(false)) {
+            if (speaker_enabled) {
+                chatai::audio::EnableSpeaker(false);
+                speaker_enabled = false;
+            }
+            g_speaking.store(false);
+        }
         if (g_audio_queue == nullptr ||
             xQueueReceive(g_audio_queue, &chunk, pdMS_TO_TICKS(100)) != pdTRUE) {
             if (speaker_enabled && g_audio_queue != nullptr &&
@@ -1713,6 +1737,16 @@ bool IsTlsFatal() {
 
 bool IsSpeaking() {
     return g_speaking.load();
+}
+
+void AbortSpeaking() {
+    if (!g_speaking.exchange(false)) return;
+    g_discard_current_response.store(true);
+    g_audio_epoch.fetch_add(1);
+    ClearAudioQueue();
+    g_stop_speaker_requested.store(true);
+    chatai::diagnostics::Add("PLAYBACK", "STOPPED",
+        "local playback stopped by BOOT; server generation may continue until turnComplete or incoming speech interruption");
 }
 
 bool HasError() {
