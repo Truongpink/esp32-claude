@@ -1,42 +1,51 @@
 # ChatAI TPIOS local Web Admin
 
-The Standalone firmware provides a local Web Admin for configuring the Gemini API Key on the ESP32-S3.
+The Standalone firmware provides a local Web Admin for Wi-Fi provisioning, Gemini API Key management, speaker volume, diagnostics, and OTA updates on the ESP32-S3.
 
 ## Access
 
 - After the device joins the same home Wi-Fi network as the phone or computer, open `http://chatai.local/` or `http://chatai.local/admin`.
 - The `.local` address is provided by mDNS; a fixed DHCP address is not required.
 - If the router or client network blocks mDNS multicast, use the device's current LAN IP as a fallback.
-- During Wi-Fi provisioning, connect to the open setup access point `ChatAI-TPIOS-XXXXXX` and open `http://192.168.4.1/`. Captive DNS redirects HTTP connectivity checks to the setup page.
+- During Wi-Fi provisioning, connect to the open setup access point `ChatAI-TPIOS-XXXXXX` and open `http://192.168.50.1/`. Captive DNS redirects HTTP connectivity checks to the setup page.
 
 ## Gemini API Key controls
 
 The Web Admin supports:
 
+- Scan nearby Wi-Fi networks and connect to a selected SSID; new credentials are committed only after Internet verification.
 - View whether an API Key is configured (the key value is never returned).
 - Save or replace a Gemini API Key.
 - Delete the saved Gemini API Key.
+- Adjust speaker output volume (0–100); the value is persisted in NVS and applied at audio initialization.
 - Display the running firmware Build Number and OTA slot capacity.
 - Upload an application-only `.bin` file or a `.zip` containing exactly one application BIN. ZIP extraction and CRC32 validation happen in the browser; the ESP32 receives only the BIN.
 - Show file name, size, target Build Number, upload percentage, flash/validation stage, and the actual Build Number after reboot.
 
 The key is stored in NVS namespace `chatai_ai`, key `gemini_key`. The browser input is cleared after saving or deleting. A blank key is not returned as a substitute for the saved value.
 
-After a successful OTA image is selected, the firmware removes only Wi-Fi SSID/password entries from `chatai_net` and the legacy Xiaozhi `wifi` namespace. The next boot starts the setup access point and requires Wi-Fi provisioning again. The `chatai_ai` namespace is not erased, so the Gemini API Key remains saved. No full NVS or flash erase is performed.
+OTA updates do not erase the NVS namespaces used by Wi-Fi (`chatai_net`), Gemini (`chatai_ai`), or speaker volume (`chatai_cfg`). Saved Wi-Fi credentials and the Gemini API Key are retained across OTA. No full NVS or flash erase is performed.
 
 ## HTTP endpoints
 
 | Method | Path | Purpose |
 |---|---|---|
 | GET | `/admin` | Web Admin page |
-| GET | `/api/wifi/scan` | Scans nearby Wi-Fi networks while provisioning is active |
+| GET | `/api/wifi/scan` | Scans nearby Wi-Fi networks while connected or provisioning |
+| GET | `/api/wifi/status` | Returns Wi-Fi connection/provisioning state |
+| POST | `/api/wifi/connect` | Starts a Wi-Fi connection; commits credentials after Internet verification |
 | GET | `/api/gemini/status` | Returns only whether a key is configured |
+| POST | `/api/audio/volume` | Saves speaker output volume (0–100) in NVS |
 | GET | `/api/firmware/status` | Returns running Build Number, marker, active slot, inactive OTA slot, and slot capacity |
 | POST | `/api/gemini/key` | Validate and save a key |
 | DELETE | `/api/gemini/key` | Delete the saved Gemini API Key |
 | POST | `/api/ota` | Stream and validate an application BIN into the inactive OTA slot |
 
 Mutating requests require same-origin validation and the per-boot CSRF token. The browser accepts BIN or ZIP, but always uploads only the extracted raw application BIN. ZIP64, multi-disk archives, encrypted BINs, unsafe paths, multiple BIN candidates, unsupported compression, invalid size, and CRC32 mismatches are rejected before upload. The ESP32 rejects images larger than the inactive OTA slot and changes the boot partition only after `esp_ota_end()` validates the image.
+
+## Current feature boundaries
+
+The current Standalone firmware does not yet expose microphone gain, bot name, custom system prompt, language selection, wake-word controls, or OLED idle-mode selection. These controls are intentionally omitted from the Web Admin rather than presented as non-functional switches. OLED save notifications are supported for Wi-Fi, Gemini API Key, and speaker volume. A separate sound-confirmation tone is not enabled because the speaker is shared with Gemini Live playback and there is no independent notification buzzer/mixer path.
 
 ## Security
 
