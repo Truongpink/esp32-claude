@@ -506,10 +506,9 @@ std::string BuildSetupMessage() {
     if (root == nullptr) return {};
     cJSON* setup = cJSON_AddObjectToObject(root, "setup");
     cJSON_AddStringToObject(setup, "model", "models/gemini-3.8-live");
-    cJSON_AddBoolToObject(setup, "explicitVADSignal", true);
-    cJSON* generation = cJSON_AddObjectToObject(setup, "generationConfig");
-    cJSON* modalities = cJSON_AddArrayToObject(generation, "responseModalities");
+    cJSON* modalities = cJSON_AddArrayToObject(setup, "responseModalities");
     cJSON_AddItemToArray(modalities, cJSON_CreateString("AUDIO"));
+    cJSON* generation = cJSON_AddObjectToObject(setup, "generationConfig");
     cJSON* speech = cJSON_AddObjectToObject(generation, "speechConfig");
     cJSON* voice_config = cJSON_AddObjectToObject(speech, "voiceConfig");
     cJSON* prebuilt = cJSON_AddObjectToObject(voice_config, "prebuiltVoiceConfig");
