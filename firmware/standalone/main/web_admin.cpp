@@ -764,7 +764,7 @@ esp_err_t DeviceStatusHandler(httpd_req_t* request) {
         "{\"wifi_connected\":%s,\"internet_available\":%s,"
         "\"key_configured\":%s,\"gemini_ready\":%s,"
         "\"gemini_error\":%s,\"gemini_tls_fatal\":%s,"
-        "\"ip\":\"%s\",\"gateway\":\"%s\",\\\"speaker_volume\\\":%d}",
+        "\"ip\":\"%s\",\"gateway\":\"%s\",\"speaker_volume\":%d}",
         wifi_connected ? "true" : "false",
         internet_available ? "true" : "false",
         key_configured ? "true" : "false",
