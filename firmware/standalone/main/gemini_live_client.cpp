@@ -173,7 +173,7 @@ esp_err_t AttachGeminiCertificateBundle(void* tls_config) {
     const esp_err_t result = esp_crt_bundle_attach(tls_config);
 #if CONFIG_MBEDTLS_DEBUG
     if (result == ESP_OK && tls_config != nullptr) {
-        // Attach warning-level MbedTLS diagnostics to this TLS session so the
+        // Attach info-level MbedTLS diagnostics to this TLS session so the
         // next handshake failure exposes the certificate verification path.
         mbedtls_esp_enable_debug_log(
             static_cast<mbedtls_ssl_config*>(tls_config), 2);
