@@ -20,7 +20,7 @@ The only supported repository build is the manual Standalone workflow:
 2. Select **Run workflow** on `main`.
 3. Download the versioned `ChatAI-TPIOS-N` artifact.
 
-The workflow checks out the latest `main` commit and records its SHA in the workflow log and release notes. It builds the next Build Number after the latest published `build-N` release. The Actions artifact and GitHub Release include both `ChatAI-TPIOS-N.bin` and `ChatAI-TPIOS-N.zip`; the ZIP contains exactly one file, `ChatAI-TPIOS-N.bin`. The workflow verifies the ESP application image format, ZIP integrity and contents, and the 16 MB OTA slot size before publishing.
+The workflow checks out the latest `main` commit and records its SHA in the workflow log and release notes. It builds the next Build Number after the latest published `build-N` release. The Actions artifact contains only `ChatAI-TPIOS-N.bin` (GitHub packages the artifact as a downloadable ZIP). The GitHub Release publishes both `ChatAI-TPIOS-N.bin` and `ChatAI-TPIOS-N.zip`; the release ZIP contains exactly one file, `ChatAI-TPIOS-N.bin`. The workflow verifies the ESP application image format, ZIP integrity and contents, and the 16 MB OTA slot size before publishing.
 
 The BIN is the application image only. The device's local Web Admin accepts either the BIN directly or the matching ZIP and extracts the BIN before upload. ESP32 confirms installation only after the new image boots and the bootloader accepts it; Web Admin records the actual BIN filename only after that confirmation. If confirmation is not received, the previously recorded filename remains unchanged. The standalone firmware targets the existing 16 MB dual-slot layout; the installed bootloader and partition table are retained during application-only OTA.
 
