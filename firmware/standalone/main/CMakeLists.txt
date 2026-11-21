@@ -16,7 +16,7 @@ idf_component_register(
     INCLUDE_DIRS "."
     REQUIRES app_update spi_flash nvs_flash esp_event esp_netif esp_wifi lwip esp_http_server
              mdns esp_driver_i2c esp_driver_i2s esp_driver_gpio esp_driver_rmt esp_websocket_client
-             freertos mbedtls esp_timer esp-tls led_strip
+             freertos mbedtls esp_timer esp-tls led_strip spiffs esp_psram
 )
 
 target_compile_definitions(${COMPONENT_LIB} PRIVATE CHATAI_FIRMWARE_BUILD=${CHATAI_FIRMWARE_BUILD})

@@ -168,7 +168,7 @@ select,input[type=text]{width:100%;min-width:0;padding:13px;border:1px solid #ff
 </select>
 <label for="systemPrompt">System Prompt</label>
 <textarea id="systemPrompt" placeholder="Mô tả vai trò, tính cách, ngôn ngữ và quy tắc phản hồi của AI..."></textarea>
-<p class="hint"><span id="promptBytes">0</span>/3000 byte UTF-8. Giới hạn lưu theo dung lượng NVS hiện tại.</p>
+<p class="hint"><span id="promptBytes">0</span> byte UTF-8 · tối đa <span id="promptMaxBytes">0</span> byte theo bộ nhớ thiết bị.</p>
 <div class="actions"><button id="savePrompt">Lưu System Prompt</button><button id="resetPrompt" class="secondary">Khôi phục mặc định</button></div>
 <p id="promptResult" class="hint" role="status" aria-live="polite"></p>
 </section>
@@ -224,7 +224,9 @@ const voiceResult = document.getElementById("voiceResult");
 const promptInput = document.getElementById("systemPrompt");
 const promptTemplate = document.getElementById("promptTemplate");
 const promptBytes = document.getElementById("promptBytes");
+const promptMaxBytesLabel = document.getElementById("promptMaxBytes");
 const promptResult = document.getElementById("promptResult");
+let maxPromptBytes = 0;
 const wifiSsidInput = document.getElementById("wifiSsid");
 const wifiPasswordInput = document.getElementById("wifiPassword");
 const wifiAdminStatus = document.getElementById("wifiAdminStatus");
@@ -694,11 +696,15 @@ coding:"Bạn là trợ lý lập trình cấp cao. Đọc code và ngữ cảnh
 language:"Bạn là giáo viên ngoại ngữ kiên nhẫn. Điều chỉnh độ khó theo người học, sửa lỗi nhẹ nhàng, đưa ví dụ thực tế và giải thích bằng tiếng Việt khi cần.",
 support:"Bạn là trợ lý chăm sóc khách hàng chuyên nghiệp. Lắng nghe, xác nhận nhu cầu, hướng dẫn từng bước. Không hứa điều chưa chắc chắn."
 };
-function updatePromptBytes(){promptBytes.textContent=new TextEncoder().encode(promptInput.value).length;}
+function updatePromptBytes(){
+ const bytes=new TextEncoder().encode(promptInput.value).length;
+ promptBytes.textContent=bytes.toLocaleString("vi-VN");
+ promptMaxBytesLabel.textContent=maxPromptBytes?maxPromptBytes.toLocaleString("vi-VN"):"không khả dụng";
+}
 promptInput.addEventListener("input",updatePromptBytes);
 promptTemplate.addEventListener("change",()=>{if(promptTemplate.value!=="custom"){promptInput.value=promptTemplates[promptTemplate.value]||"";updatePromptBytes();}});
 async function loadGeminiSettings(){
- try{const response=await fetch("/api/gemini/settings",{cache:"no-store"});const data=await response.json();if(!response.ok)throw new Error(data.error||"Không tải được cấu hình Gemini");voiceSelect.value=data.voice||"Kore";promptInput.value=data.system_prompt||"";updatePromptBytes();}
+ try{const response=await fetch("/api/gemini/settings",{cache:"no-store"});const data=await response.json();if(!response.ok)throw new Error(data.error||"Không tải được cấu hình Gemini");voiceSelect.value=data.voice||"Kore";promptInput.value=data.system_prompt||"";maxPromptBytes=Number(data.max_prompt_bytes)||0;updatePromptBytes();}
  catch(error){voiceResult.textContent=error.message;}
 }
 async function saveGeminiSetting(url,payload,resultElement,button){
@@ -707,11 +713,20 @@ async function saveGeminiSetting(url,payload,resultElement,button){
  catch(error){resultElement.textContent=error.message;}finally{button.disabled=false;}
 }
 document.getElementById("saveVoice").addEventListener("click",()=>saveGeminiSetting("/api/gemini/voice",{voice:voiceSelect.value},voiceResult,document.getElementById("saveVoice")));
-document.getElementById("savePrompt").addEventListener("click",()=>{
+document.getElementById("savePrompt").addEventListener("click",async()=>{
  const bytes=new TextEncoder().encode(promptInput.value).length;
  if(bytes===0){promptResult.textContent="System Prompt không được để trống.";return;}
- if(bytes>3000){promptResult.textContent="Prompt hiện có "+bytes+" byte; bộ nhớ cấu hình hiện tại chỉ lưu tối đa 3000 byte. Hãy rút gọn nội dung trước khi lưu.";return;}
- saveGeminiSetting("/api/gemini/prompt",{system_prompt:promptInput.value},promptResult,document.getElementById("savePrompt"));
+ if(!maxPromptBytes){promptResult.textContent="Vùng lưu Prompt chưa sẵn sàng. Hãy kiểm tra phân vùng assets của thiết bị.";return;}
+ if(bytes>maxPromptBytes){promptResult.textContent="Prompt hiện có "+bytes+" byte, vượt dung lượng lưu tối đa "+maxPromptBytes+" byte của thiết bị.";return;}
+ const button=document.getElementById("savePrompt");
+ button.disabled=true;promptResult.textContent="Đang lưu System Prompt...";
+ try{
+  const response=await fetch("/api/gemini/prompt",{method:"POST",cache:"no-store",headers:{"Content-Type":"text/plain; charset=utf-8","X-ChatAI-CSRF":csrfToken},body:promptInput.value});
+  const data=await response.json().catch(()=>({}));
+  if(!response.ok)throw new Error(data.error||("Lưu System Prompt thất bại (HTTP "+response.status+")"));
+  promptResult.textContent=data.message||"Đã lưu System Prompt.";
+ }catch(error){promptResult.textContent=error.message;}
+ finally{button.disabled=false;}
 });
 document.getElementById("resetPrompt").addEventListener("click",()=>{promptInput.value="Bạn là trợ lý ChatAI TPIOS. Hãy giao tiếp tự nhiên, thân thiện và rõ ràng bằng tiếng Việt. Chỉ trả lời bằng giọng nói trong phiên hội thoại thời gian thực.";promptTemplate.value="custom";updatePromptBytes();});
 document.getElementById("refreshDashboard").addEventListener("click",()=>refreshDeviceStatus().catch(error=>{deviceStatus.textContent=error.message;}));
@@ -902,8 +917,10 @@ bool IsAuthorizedMutation(httpd_req_t* request) {
     return g_csrf_token == token;
 }
 
-bool ReadBody(httpd_req_t* request, std::string& body) {
-    if (request->content_len == 0 || request->content_len > kMaxRequestBody) return false;
+bool ReadBody(httpd_req_t* request, std::string& body,
+              size_t max_size = kMaxRequestBody) {
+    if (request->content_len <= 0 ||
+        static_cast<size_t>(request->content_len) > max_size) return false;
     body.assign(request->content_len, '\0');
     size_t received = 0;
     while (received < body.size()) {
@@ -1064,20 +1081,66 @@ esp_err_t GeminiVoicePostHandler(httpd_req_t* request) {
 
 esp_err_t GeminiPromptPostHandler(httpd_req_t* request) {
     if (!IsAuthorizedMutation(request)) return SendError(request, "403 Forbidden", "Yêu cầu không hợp lệ");
-    std::string body;
-    if (!ReadBody(request, body)) return SendError(request, "413 Payload Too Large", "Prompt vượt giới hạn dữ liệu");
-    cJSON* root = cJSON_ParseWithLength(body.c_str(), body.size());
-    const cJSON* item = cJSON_IsObject(root) ? cJSON_GetObjectItemCaseSensitive(root, "system_prompt") : nullptr;
-    const bool valid = cJSON_IsString(item) && item->valuestring != nullptr;
-    const std::string prompt = valid ? item->valuestring : "";
-    if (root != nullptr) cJSON_Delete(root);
-    if (!valid || prompt.empty()) return SendError(request, "400 Bad Request", "System Prompt không được để trống");
-    if (prompt.size() > chatai::settings::GetMaxGeminiSystemPromptBytes()) return SendError(request, "413 Payload Too Large", "System Prompt vượt quá 3000 byte UTF-8");
+
+    const size_t max_prompt_bytes = chatai::settings::GetMaxGeminiSystemPromptBytes();
+    if (max_prompt_bytes == 0) {
+        return SendError(request, "503 Service Unavailable",
+                         "Phân vùng assets chưa sẵn sàng; firmware không tự format để bảo vệ dữ liệu.");
+    }
+
+    char content_type[64]{};
+    const size_t content_type_length =
+        httpd_req_get_hdr_value_len(request, "Content-Type");
+    const bool plain_text = content_type_length > 0 &&
+        content_type_length < sizeof(content_type) &&
+        httpd_req_get_hdr_value_str(request, "Content-Type",
+                                    content_type, sizeof(content_type)) == ESP_OK &&
+        std::strncmp(content_type, "text/plain", 10) == 0;
+
+    std::string prompt;
+    if (plain_text) {
+        if (!ReadBody(request, prompt, max_prompt_bytes)) {
+            return SendError(request, "413 Payload Too Large",
+                             "Prompt vượt dung lượng lưu tối đa trên thiết bị.");
+        }
+    } else {
+        // Keep the previous JSON request format working for older Web Admin clients.
+        std::string body;
+        if (!ReadBody(request, body)) {
+            return SendError(request, "413 Payload Too Large", "Prompt vượt giới hạn dữ liệu");
+        }
+        cJSON* root = cJSON_ParseWithLength(body.c_str(), body.size());
+        const cJSON* item = cJSON_IsObject(root)
+            ? cJSON_GetObjectItemCaseSensitive(root, "system_prompt") : nullptr;
+        const bool valid = cJSON_IsString(item) && item->valuestring != nullptr;
+        if (valid) prompt = item->valuestring;
+        if (root != nullptr) cJSON_Delete(root);
+        if (!valid) {
+            return SendError(request, "400 Bad Request", "System Prompt không hợp lệ");
+        }
+    }
+
+    if (prompt.empty()) {
+        return SendError(request, "400 Bad Request", "System Prompt không được để trống");
+    }
+    if (prompt.size() > max_prompt_bytes) {
+        return SendError(request, "413 Payload Too Large",
+                         "System Prompt vượt dung lượng lưu tối đa trên thiết bị.");
+    }
+
     const esp_err_t result = chatai::settings::SaveGeminiSystemPrompt(prompt);
-    if (result != ESP_OK) return SendError(request, "500 Internal Server Error", "Không thể lưu System Prompt vào NVS");
+    if (result == ESP_ERR_INVALID_SIZE) {
+        return SendError(request, "413 Payload Too Large",
+                         "System Prompt vượt dung lượng lưu tối đa trên thiết bị.");
+    }
+    if (result != ESP_OK) {
+        return SendError(request, "500 Internal Server Error",
+                         "Không thể ghi đầy đủ System Prompt vào phân vùng assets.");
+    }
     chatai::display::Notify("GEMINI", "Da luu System Prompt");
     if (chatai::settings::HasGeminiApiKey()) chatai::gemini::RequestReconnect();
-    return SendJson(request, "200 OK", "{\"message\":\"Đã lưu System Prompt. Phiên Gemini Live mới sẽ áp dụng.\"}");
+    return SendJson(request, "200 OK",
+        R"({"message":"Đã lưu System Prompt. Phiên Gemini Live mới sẽ áp dụng."})");
 }
 
 esp_err_t GeminiStatusHandler(httpd_req_t* request) {

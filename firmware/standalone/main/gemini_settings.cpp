@@ -2,19 +2,163 @@
 
 #include <nvs.h>
 #include <algorithm>
+#include <cstdint>
+#include <cstdio>
 #include <cstring>
+#include <mutex>
+#include <string>
 #include <esp_log.h>
+#include <esp_spiffs.h>
 
 namespace {
 constexpr char kNvsNamespace[] = "chatai_ai";
 constexpr char kApiKey[] = "gemini_key";
 constexpr char kVoice[] = "voice";
 constexpr char kSystemPrompt[] = "system_prompt";
-constexpr size_t kMaxSystemPromptBytes = 3000;
+constexpr size_t kLegacySystemPromptBytes = 3000;
+constexpr size_t kMaxSystemPromptBytes = 128 * 1024;
+constexpr char kPromptStoragePath0[] = "/assets/system_prompt_0.bin";
+constexpr char kPromptStoragePath1[] = "/assets/system_prompt_1.bin";
+constexpr uint32_t kPromptMagic = 0x43545052;  // "CTPR"
+constexpr uint32_t kPromptVersion = 1;
 constexpr const char* kDefaultVoice = "Kore";
 constexpr const char* kDefaultSystemPrompt = "Bạn là trợ lý ChatAI TPIOS. Hãy giao tiếp tự nhiên, thân thiện và rõ ràng bằng tiếng Việt. Chỉ trả lời bằng giọng nói trong phiên hội thoại thời gian thực.";
 constexpr size_t kMaxApiKeyLength = 256;
+
+struct PromptFileHeader {
+    uint32_t magic;
+    uint32_t version;
+    uint32_t sequence;
+    uint32_t length;
+    uint32_t crc32;
+};
+static_assert(sizeof(PromptFileHeader) == 20, "Unexpected prompt file header size");
+
+std::mutex g_prompt_mutex;
+std::once_flag g_prompt_mount_once;
+bool g_prompt_storage_ready = false;
+
+esp_err_t MountPromptStorage() {
+    std::call_once(g_prompt_mount_once, [] {
+        esp_vfs_spiffs_conf_t config{};
+        config.base_path = "/assets";
+        config.partition_label = "assets";
+        config.max_files = 2;
+        // Preserve any existing assets; never format this partition automatically.
+        config.format_if_mount_failed = false;
+        const esp_err_t result = esp_vfs_spiffs_register(&config);
+        g_prompt_storage_ready = result == ESP_OK;
+        if (result != ESP_OK) {
+            ESP_LOGE("ChatAI-Settings",
+                     "Prompt storage mount failed; assets were not formatted: %s",
+                     esp_err_to_name(result));
+        }
+    });
+    return g_prompt_storage_ready ? ESP_OK : ESP_ERR_INVALID_STATE;
 }
+
+uint32_t UpdateCrc32(uint32_t crc, const uint8_t* data, size_t length) {
+    for (size_t i = 0; i < length; ++i) {
+        crc ^= data[i];
+        for (int bit = 0; bit < 8; ++bit) {
+            crc = (crc >> 1) ^ (0xEDB88320u & (0u - (crc & 1u)));
+        }
+    }
+    return crc;
+}
+
+uint32_t PromptCrc32(const std::string& prompt) {
+    return UpdateCrc32(0xFFFFFFFFu,
+        reinterpret_cast<const uint8_t*>(prompt.data()), prompt.size()) ^ 0xFFFFFFFFu;
+}
+
+const char* PromptPath(int slot) {
+    return slot == 0 ? kPromptStoragePath0 : kPromptStoragePath1;
+}
+
+bool ReadPromptSlotHeader(int slot, PromptFileHeader* header) {
+    FILE* file = std::fopen(PromptPath(slot), "rb");
+    if (file == nullptr) return false;
+
+    const bool header_read = std::fread(header, sizeof(*header), 1, file) == 1;
+    if (!header_read || header->magic != kPromptMagic ||
+        header->version != kPromptVersion || header->length == 0 ||
+        header->length > kMaxSystemPromptBytes) {
+        std::fclose(file);
+        return false;
+    }
+
+    uint8_t buffer[1024];
+    size_t remaining = header->length;
+    uint32_t crc = 0xFFFFFFFFu;
+    bool valid = true;
+    while (remaining > 0) {
+        const size_t count = std::min(remaining, sizeof(buffer));
+        if (std::fread(buffer, 1, count, file) != count) {
+            valid = false;
+            break;
+        }
+        crc = UpdateCrc32(crc, buffer, count);
+        remaining -= count;
+    }
+    std::fclose(file);
+    return valid && (crc ^ 0xFFFFFFFFu) == header->crc32;
+}
+
+bool LoadPromptSlot(int slot, const PromptFileHeader& header, std::string* prompt) {
+    FILE* file = std::fopen(PromptPath(slot), "rb");
+    if (file == nullptr) return false;
+    if (std::fseek(file, static_cast<long>(sizeof(PromptFileHeader)), SEEK_SET) != 0) {
+        std::fclose(file);
+        return false;
+    }
+    prompt->assign(header.length, '\0');
+    const bool read_ok = std::fread(prompt->data(), 1, header.length, file) == header.length;
+    std::fclose(file);
+    if (!read_ok) {
+        prompt->clear();
+        return false;
+    }
+    return true;
+}
+
+std::string GetLegacyNvsSystemPrompt() {
+    nvs_handle_t handle;
+    if (nvs_open(kNvsNamespace, NVS_READONLY, &handle) != ESP_OK) {
+        return kDefaultSystemPrompt;
+    }
+    size_t size = 0;
+    if (nvs_get_str(handle, kSystemPrompt, nullptr, &size) != ESP_OK ||
+        size <= 1 || size > kLegacySystemPromptBytes + 1) {
+        nvs_close(handle);
+        return kDefaultSystemPrompt;
+    }
+    std::string value(size, '\0');
+    const esp_err_t result = nvs_get_str(handle, kSystemPrompt, value.data(), &size);
+    nvs_close(handle);
+    if (result != ESP_OK) return kDefaultSystemPrompt;
+    value.resize(size - 1);
+    return value;
+}
+
+void RemoveLegacyNvsPrompt() {
+    nvs_handle_t handle;
+    if (nvs_open(kNvsNamespace, NVS_READWRITE, &handle) != ESP_OK) return;
+    const esp_err_t erase_result = nvs_erase_key(handle, kSystemPrompt);
+    if (erase_result == ESP_OK) {
+        const esp_err_t commit_result = nvs_commit(handle);
+        if (commit_result != ESP_OK) {
+            ESP_LOGW("ChatAI-Settings", "Could not reclaim legacy NVS prompt: %s",
+                     esp_err_to_name(commit_result));
+        }
+    }
+    nvs_close(handle);
+}
+
+bool IsNewerSequence(uint32_t left, uint32_t right) {
+    return static_cast<int32_t>(left - right) > 0;
+}
+}  // namespace
 
 namespace chatai::settings {
 
@@ -46,7 +190,6 @@ esp_err_t MigrateLegacyGeminiApiKey() {
     }
     return result;
 }
-
 
 bool IsSupportedGeminiVoice(const std::string& voice) {
     static constexpr const char* kVoices[] = {
@@ -90,34 +233,77 @@ esp_err_t SaveGeminiVoice(const std::string& voice) {
 }
 
 std::string GetGeminiSystemPrompt() {
-    nvs_handle_t handle;
-    if (nvs_open(kNvsNamespace, NVS_READONLY, &handle) != ESP_OK) return kDefaultSystemPrompt;
-    size_t size = 0;
-    if (nvs_get_str(handle, kSystemPrompt, nullptr, &size) != ESP_OK ||
-        size <= 1 || size > kMaxSystemPromptBytes + 1) {
-        nvs_close(handle);
-        return kDefaultSystemPrompt;
+    std::lock_guard<std::mutex> lock(g_prompt_mutex);
+    if (MountPromptStorage() == ESP_OK) {
+        PromptFileHeader headers[2]{};
+        const bool valid0 = ReadPromptSlotHeader(0, &headers[0]);
+        const bool valid1 = ReadPromptSlotHeader(1, &headers[1]);
+        if (valid0 || valid1) {
+            const int selected = valid0 && valid1
+                ? (IsNewerSequence(headers[1].sequence, headers[0].sequence) ? 1 : 0)
+                : (valid1 ? 1 : 0);
+            std::string prompt;
+            if (LoadPromptSlot(selected, headers[selected], &prompt)) return prompt;
+        }
     }
-    std::string value(size, '\0');
-    const esp_err_t result = nvs_get_str(handle, kSystemPrompt, value.data(), &size);
-    nvs_close(handle);
-    if (result != ESP_OK) return kDefaultSystemPrompt;
-    value.resize(size - 1);
-    return value;
+    // Keep prompts saved by older firmware readable until the first new-format save.
+    return GetLegacyNvsSystemPrompt();
 }
 
 esp_err_t SaveGeminiSystemPrompt(const std::string& prompt) {
-    if (prompt.empty() || prompt.size() > kMaxSystemPromptBytes) return ESP_ERR_INVALID_SIZE;
-    nvs_handle_t handle;
-    esp_err_t result = nvs_open(kNvsNamespace, NVS_READWRITE, &handle);
-    if (result != ESP_OK) return result;
-    result = nvs_set_str(handle, kSystemPrompt, prompt.c_str());
-    if (result == ESP_OK) result = nvs_commit(handle);
-    nvs_close(handle);
-    return result;
+    if (prompt.empty() || prompt.size() > kMaxSystemPromptBytes) {
+        return ESP_ERR_INVALID_SIZE;
+    }
+
+    std::lock_guard<std::mutex> lock(g_prompt_mutex);
+    const esp_err_t mount_result = MountPromptStorage();
+    if (mount_result != ESP_OK) return mount_result;
+
+    PromptFileHeader headers[2]{};
+    const bool valid0 = ReadPromptSlotHeader(0, &headers[0]);
+    const bool valid1 = ReadPromptSlotHeader(1, &headers[1]);
+    const int active = valid0 && valid1
+        ? (IsNewerSequence(headers[1].sequence, headers[0].sequence) ? 1 : 0)
+        : (valid0 ? 0 : (valid1 ? 1 : -1));
+    const int target = active == 0 ? 1 : 0;
+    const uint32_t sequence = active < 0 ? 1 : headers[active].sequence + 1;
+
+    FILE* file = std::fopen(PromptPath(target), "wb");
+    if (file == nullptr) return ESP_FAIL;
+
+    const bool payload_written =
+        std::fwrite(prompt.data(), 1, prompt.size(), file) == prompt.size() &&
+        std::fflush(file) == 0;
+    const PromptFileHeader header{
+        kPromptMagic, kPromptVersion, sequence,
+        static_cast<uint32_t>(prompt.size()), PromptCrc32(prompt)
+    };
+    const bool header_written = payload_written &&
+        std::fseek(file, 0, SEEK_SET) == 0 &&
+        std::fwrite(&header, sizeof(header), 1, file) == 1 &&
+        std::fflush(file) == 0;
+    const bool close_ok = std::fclose(file) == 0;
+    if (!payload_written || !header_written || !close_ok) return ESP_FAIL;
+
+    PromptFileHeader verified{};
+    if (!ReadPromptSlotHeader(target, &verified) ||
+        verified.sequence != sequence || verified.length != prompt.size()) {
+        return ESP_FAIL;
+    }
+
+    RemoveLegacyNvsPrompt();
+    return ESP_OK;
 }
 
-size_t GetMaxGeminiSystemPromptBytes() { return kMaxSystemPromptBytes; }
+size_t GetMaxGeminiSystemPromptBytes() {
+    std::lock_guard<std::mutex> lock(g_prompt_mutex);
+    if (MountPromptStorage() != ESP_OK) return 0;
+    size_t total = 0;
+    size_t used = 0;
+    if (esp_spiffs_info("assets", &total, &used) != ESP_OK ||
+        total <= used + 4096) return 0;
+    return std::min(kMaxSystemPromptBytes, total - used - 4096);
+}
 
 bool HasGeminiApiKey() {
     nvs_handle_t handle;
