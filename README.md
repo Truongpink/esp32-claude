@@ -18,11 +18,11 @@ The only supported repository build is the manual Standalone workflow:
 
 1. Open **GitHub → Actions → Build ChatAI TPIOS standalone firmware**.
 2. Select **Run workflow** on `main`.
-3. Download the `ChatAI_TPIOS` artifact.
+3. Download the versioned `ChatAI-TPIOS-N` artifact.
 
-The artifact contains exactly one file: `ChatAI_TPIOS.bin`. The workflow defaults to a non-release build using the latest official Build Number. To publish an official firmware release, explicitly enable `publish_release`; the next Build Number is derived from published `build-N` releases and is only consumed when the build passes and the release is published. GitHub Actions packages downloadable artifacts as ZIP files automatically, so the downloaded container is a ZIP, but it contains no bootloader, partition table, or other files.
+The workflow checks out the latest `main` commit and records its SHA in the workflow log and release notes. It builds the next Build Number after the latest published `build-N` release. The Actions artifact and GitHub Release include both `ChatAI-TPIOS-N.bin` and `ChatAI-TPIOS-N.zip`; the ZIP contains exactly one file, `ChatAI-TPIOS-N.bin`. The workflow verifies the ESP application image format, ZIP integrity and contents, and the 16 MB OTA slot size before publishing.
 
-The BIN is the application image only. It is intended for OTA through the device's local Web Admin, which accepts either the BIN directly or a ZIP containing exactly one application BIN (the browser extracts and validates the ZIP before uploading the BIN). The standalone firmware now targets the existing 16 MB dual-slot layout used by the earlier OTA firmware; the installed bootloader and partition table are retained during application-only OTA.
+The BIN is the application image only. The device's local Web Admin accepts either the BIN directly or the matching ZIP and extracts the BIN before upload. ESP32 confirms installation only after the new image boots and the bootloader accepts it; Web Admin records the actual BIN filename only after that confirmation. If confirmation is not received, the previously recorded filename remains unchanged. The standalone firmware targets the existing 16 MB dual-slot layout; the installed bootloader and partition table are retained during application-only OTA.
 
 ## Local build
 
