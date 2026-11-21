@@ -48,6 +48,13 @@ constexpr size_t kMicEncodedBufferSize = 4300;
 constexpr size_t kMicMessageBufferSize = 5000;
 constexpr uint32_t kFailureSummaryIntervalMs = 300000;
 constexpr UBaseType_t kAudioQueueLength = 8;
+constexpr UBaseType_t kOutgoingAudioQueueLength = 8;
+
+struct OutgoingAudioMessage {
+    bool stream_end;
+    size_t length;
+    char data[kMicMessageBufferSize];
+};
 
 struct AudioChunk {
     uint32_t epoch;
@@ -117,6 +124,9 @@ std::atomic<uint32_t> g_client_generation{0};
 std::mutex g_event_mutex;
 esp_websocket_client_handle_t g_client = nullptr;
 QueueHandle_t g_audio_queue = nullptr;
+QueueHandle_t g_outgoing_audio_queue = nullptr;
+std::atomic<uint32_t> g_outgoing_audio_dropped{0}, g_outgoing_audio_send_failures{0}, g_outgoing_audio_send_calls{0};
+std::atomic<uint64_t> g_outgoing_audio_send_total_us{0}, g_outgoing_audio_send_max_us{0};
 enum class IncomingMessageType : uint8_t { kNone, kText, kBinary };
 std::string g_incoming_message;
 size_t g_incoming_frame_bytes = 0;
@@ -539,6 +549,45 @@ void ClearAudioQueue() {
     }
 }
 
+void ClearOutgoingAudioQueue() {
+    if (g_outgoing_audio_queue == nullptr) return;
+    OutgoingAudioMessage* item = nullptr;
+    while (xQueueReceive(g_outgoing_audio_queue, &item, 0) == pdTRUE) {
+        std::free(item);
+    }
+}
+
+bool QueueOutgoingAudio(const char* data, size_t length, bool stream_end = false) {
+    if (g_outgoing_audio_queue == nullptr || length >= kMicMessageBufferSize ||
+        (!stream_end && (data == nullptr || length == 0))) {
+        return false;
+    }
+
+    auto* item = static_cast<OutgoingAudioMessage*>(
+        std::malloc(sizeof(OutgoingAudioMessage)));
+    if (item == nullptr) {
+        g_outgoing_audio_dropped.fetch_add(1);
+        return false;
+    }
+
+    item->stream_end = stream_end;
+    item->length = length;
+    if (length > 0) std::memcpy(item->data, data, length);
+
+    if (xQueueSend(g_outgoing_audio_queue, &item, 0) == pdTRUE) return true;
+
+    // The sender is behind. Drop the oldest chunk and retain the newest audio.
+    OutgoingAudioMessage* oldest = nullptr;
+    if (xQueueReceive(g_outgoing_audio_queue, &oldest, 0) == pdTRUE) {
+        std::free(oldest);
+        g_outgoing_audio_dropped.fetch_add(1);
+    }
+    if (xQueueSend(g_outgoing_audio_queue, &item, 0) == pdTRUE) return true;
+
+    std::free(item);
+    g_outgoing_audio_dropped.fetch_add(1);
+    return false;
+}
 void ReportAudioRejectOnce(const char* reason) {
     if (!g_audio_reject_reported.exchange(true)) {
         chatai::diagnostics::Add("GEMINI_AUDIO_RX", "WARN", reason);
@@ -671,12 +720,14 @@ void HandleServerMessage(const std::string& message) {
             const cJSON* complete_reason =
                 cJSON_GetObjectItemCaseSensitive(server_content, "turnCompleteReason");
             char detail[144]{};
-            std::snprintf(detail, sizeof(detail),
-                "interaction_status=%.32s reason=%.48s model_turn=%d",
+            const cJSON* completed_model_turn = cJSON_GetObjectItemCaseSensitive(server_content, "modelTurn");
+            const cJSON* completed_parts = cJSON_IsObject(completed_model_turn) ? cJSON_GetObjectItemCaseSensitive(completed_model_turn, "parts") : nullptr;
+            const int part_count = cJSON_IsArray(completed_parts) ? cJSON_GetArraySize(completed_parts) : 0;
+            std::snprintf(detail, sizeof(detail), "interaction_status=%.32s reason=%.48s model_turn=%d parts=%d",
                 cJSON_IsString(interaction_status) ? interaction_status->valuestring : "unknown",
                 cJSON_IsString(complete_reason) ? complete_reason->valuestring : "unspecified",
-                cJSON_IsObject(cJSON_GetObjectItemCaseSensitive(server_content, "modelTurn")) ? 1 : 0);
-            chatai::diagnostics::Add("GEMINI_TURN", "COMPLETE", detail);
+                cJSON_IsObject(completed_model_turn) ? 1 : 0, part_count);
+            chatai::diagnostics::Add("GEMINI_TURN", part_count > 0 ? "COMPLETE" : "EMPTY", detail);
         } else if (!g_server_content_reported.exchange(true)) {
             const cJSON* model_turn =
                 cJSON_GetObjectItemCaseSensitive(server_content, "modelTurn");
@@ -1049,6 +1100,7 @@ void WebSocketEventHandler(void* handler_arg, esp_event_base_t, int32_t event_id
             g_client_failed.store(true);
             g_audio_epoch.fetch_add(1);
             ClearAudioQueue();
+            ClearOutgoingAudioQueue();
             ReportWebSocketSessionSummary("transport_disconnect");
             ReportWebSocketDisconnectError(event);
             if (!g_connection_failure_reported.exchange(true)) {
@@ -1068,6 +1120,7 @@ void WebSocketEventHandler(void* handler_arg, esp_event_base_t, int32_t event_id
             g_client_failed.store(true);
             g_audio_epoch.fetch_add(1);
             ClearAudioQueue();
+            ClearOutgoingAudioQueue();
             if (!g_connection_failure_reported.exchange(true)) {
                 const int close_code = event != nullptr ? event->close_status_code : 0;
                 ESP_LOGW(kTag, "Gemini Live WebSocket closed; code=%d", close_code);
@@ -1086,6 +1139,82 @@ void WebSocketEventHandler(void* handler_arg, esp_event_base_t, int32_t event_id
     }
 }
 
+void OutgoingAudioWorker(void*) {
+    TickType_t report_tick = xTaskGetTickCount();
+    OutgoingAudioMessage* item = nullptr;
+
+    while (true) {
+        if (g_outgoing_audio_queue == nullptr ||
+            xQueueReceive(g_outgoing_audio_queue, &item, pdMS_TO_TICKS(100)) != pdTRUE) {
+            continue;
+        }
+        if (item == nullptr) continue;
+
+        const int64_t send_started_us = esp_timer_get_time();
+        int sent = -1;
+        {
+            std::lock_guard<std::mutex> lock(g_send_mutex);
+            if (g_ready.load() && g_client != nullptr &&
+                esp_websocket_client_is_connected(g_client)) {
+                sent = esp_websocket_client_send_text(
+                    g_client, item->data, item->length, pdMS_TO_TICKS(1000));
+            }
+        }
+
+        const uint64_t elapsed_us = static_cast<uint64_t>(
+            std::max<int64_t>(0, esp_timer_get_time() - send_started_us));
+        g_outgoing_audio_send_calls.fetch_add(1);
+        g_outgoing_audio_send_total_us.fetch_add(elapsed_us);
+        uint64_t previous_max = g_outgoing_audio_send_max_us.load();
+        while (elapsed_us > previous_max &&
+               !g_outgoing_audio_send_max_us.compare_exchange_weak(previous_max, elapsed_us)) {
+        }
+
+        if (sent != static_cast<int>(item->length)) {
+            g_outgoing_audio_send_failures.fetch_add(1);
+        } else {
+            const uint32_t sent_tick = static_cast<uint32_t>(xTaskGetTickCount());
+            g_ws_app_tx_count.fetch_add(1);
+            g_ws_last_app_tx_tick.store(sent_tick);
+            if (item->stream_end) {
+                g_ws_stream_end_count.fetch_add(1);
+                g_ws_last_stream_end_tick.store(sent_tick);
+                chatai::diagnostics::Add("AUDIO_STREAM_END", "OK", "audioStreamEnd sent");
+            } else {
+                g_ws_audio_tx_count.fetch_add(1);
+                g_ws_last_audio_tx_tick.store(sent_tick);
+                if (!g_audio_input_reported.exchange(true)) {
+                    chatai::diagnostics::SetCrashContext(
+                        "AUDIO_TX", "first microphone PCM chunk sent");
+                    chatai::diagnostics::Add(
+                        "AUDIO_TX", "OK", "microphone PCM sent to Gemini Live");
+                }
+            }
+        }
+
+        std::free(item);
+        item = nullptr;
+
+        const TickType_t now = xTaskGetTickCount();
+        if (now - report_tick >= pdMS_TO_TICKS(5000)) {
+            const uint32_t calls = g_outgoing_audio_send_calls.exchange(0);
+            const uint64_t total_us = g_outgoing_audio_send_total_us.exchange(0);
+            const uint64_t max_us = g_outgoing_audio_send_max_us.exchange(0);
+            char detail[224]{};
+            std::snprintf(detail, sizeof(detail),
+                "window_ms=5000 send_calls=%lu send_avg_us=%llu send_max_us=%llu "
+                "send_fail=%lu queue_depth=%lu queue_dropped=%lu",
+                static_cast<unsigned long>(calls),
+                static_cast<unsigned long long>(calls ? total_us / calls : 0),
+                static_cast<unsigned long long>(max_us),
+                static_cast<unsigned long>(g_outgoing_audio_send_failures.exchange(0)),
+                static_cast<unsigned long>(uxQueueMessagesWaiting(g_outgoing_audio_queue)),
+                static_cast<unsigned long>(g_outgoing_audio_dropped.exchange(0)));
+            chatai::diagnostics::Add("AUDIO_TX_PIPELINE", "INFO", detail);
+            report_tick = now;
+        }
+    }
+}
 void MicrophoneWorker(void*) {
     bool listen_state_initialized = false;
     bool last_should_listen = false;
@@ -1112,14 +1241,8 @@ void MicrophoneWorker(void*) {
     uint64_t pipeline_read_max_us = 0;
     uint64_t pipeline_encode_total_us = 0;
     uint64_t pipeline_encode_max_us = 0;
-    uint64_t pipeline_lock_wait_total_us = 0;
-    uint64_t pipeline_lock_wait_max_us = 0;
-    uint64_t pipeline_send_total_us = 0;
-    uint64_t pipeline_send_max_us = 0;
     uint32_t pipeline_read_calls = 0;
     uint32_t pipeline_encode_calls = 0;
-    uint32_t pipeline_send_calls = 0;
-    uint32_t pipeline_send_failures = 0;
     uint32_t pipeline_iterations = 0;
 
     while (true) {
@@ -1128,9 +1251,7 @@ void MicrophoneWorker(void*) {
             char detail[288]{};
             std::snprintf(detail, sizeof(detail),
                 "window_us=%llu loops=%lu read_calls=%lu read_avg_us=%llu read_max_us=%llu "
-                "encode_calls=%lu encode_avg_us=%llu encode_max_us=%llu "
-                "lock_avg_us=%llu lock_max_us=%llu send_calls=%lu send_avg_us=%llu "
-                "send_max_us=%llu send_fail=%lu",
+                "encode_calls=%lu encode_avg_us=%llu encode_max_us=%llu",
                 static_cast<unsigned long long>(pipeline_now_us - pipeline_window_started_us),
                 static_cast<unsigned long>(pipeline_iterations),
                 static_cast<unsigned long>(pipeline_read_calls),
@@ -1138,21 +1259,13 @@ void MicrophoneWorker(void*) {
                 static_cast<unsigned long long>(pipeline_read_max_us),
                 static_cast<unsigned long>(pipeline_encode_calls),
                 static_cast<unsigned long long>(pipeline_encode_calls ? pipeline_encode_total_us / pipeline_encode_calls : 0),
-                static_cast<unsigned long long>(pipeline_encode_max_us),
-                static_cast<unsigned long long>(pipeline_send_calls ? pipeline_lock_wait_total_us / pipeline_send_calls : 0),
-                static_cast<unsigned long long>(pipeline_lock_wait_max_us),
-                static_cast<unsigned long>(pipeline_send_calls),
-                static_cast<unsigned long long>(pipeline_send_calls ? pipeline_send_total_us / pipeline_send_calls : 0),
-                static_cast<unsigned long long>(pipeline_send_max_us),
-                static_cast<unsigned long>(pipeline_send_failures));
+                static_cast<unsigned long long>(pipeline_encode_max_us));
             chatai::diagnostics::Add("MIC_PIPELINE", "INFO", detail);
             pipeline_window_started_us = pipeline_now_us;
             pipeline_read_total_us = pipeline_read_max_us = 0;
             pipeline_encode_total_us = pipeline_encode_max_us = 0;
-            pipeline_lock_wait_total_us = pipeline_lock_wait_max_us = 0;
-            pipeline_send_total_us = pipeline_send_max_us = 0;
-            pipeline_read_calls = pipeline_encode_calls = pipeline_send_calls = 0;
-            pipeline_send_failures = pipeline_iterations = 0;
+            pipeline_read_calls = pipeline_encode_calls = 0;
+            pipeline_iterations = 0;
         }
         ++pipeline_iterations;
         const bool should_listen = ShouldListen();
@@ -1179,17 +1292,7 @@ void MicrophoneWorker(void*) {
             if (audio_stream_active && transport_ready) {
                 static constexpr char kAudioStreamEnd[] =
                     "{\"realtimeInput\":{\"audioStreamEnd\":true}}";
-                std::lock_guard<std::mutex> lock(g_send_mutex);
-                if (g_client != nullptr && esp_websocket_client_is_connected(g_client)) {
-                    const int sent = esp_websocket_client_send_text(g_client, kAudioStreamEnd,
-                        sizeof(kAudioStreamEnd) - 1, pdMS_TO_TICKS(1000));
-                    if (sent == static_cast<int>(sizeof(kAudioStreamEnd) - 1)) {
-                        g_ws_app_tx_count.fetch_add(1);
-                        g_ws_last_app_tx_tick.store(static_cast<uint32_t>(xTaskGetTickCount()));
-                        g_ws_stream_end_count.fetch_add(1);
-                        g_ws_last_stream_end_tick.store(static_cast<uint32_t>(xTaskGetTickCount()));
-                    }
-                }
+                QueueOutgoingAudio(kAudioStreamEnd, sizeof(kAudioStreamEnd) - 1, true);
             }
             audio_stream_active = false;
             if (microphone_enabled) {
@@ -1371,37 +1474,8 @@ void MicrophoneWorker(void*) {
             continue;
         }
 
-        const int64_t lock_wait_started_us = esp_timer_get_time();
-        std::lock_guard<std::mutex> lock(g_send_mutex);
-        const uint64_t lock_wait_us = static_cast<uint64_t>(
-            std::max<int64_t>(0, esp_timer_get_time() - lock_wait_started_us));
-        pipeline_lock_wait_total_us += lock_wait_us;
-        pipeline_lock_wait_max_us = std::max(pipeline_lock_wait_max_us, lock_wait_us);
-        if (g_ready.load() && g_client != nullptr &&
-            esp_websocket_client_is_connected(g_client)) {
-            const int64_t send_started_us = esp_timer_get_time();
-            const int sent = esp_websocket_client_send_text(
-                g_client, message, message_size, pdMS_TO_TICKS(1000));
-            const uint64_t send_elapsed_us = static_cast<uint64_t>(
-                std::max<int64_t>(0, esp_timer_get_time() - send_started_us));
-            pipeline_send_total_us += send_elapsed_us;
-            pipeline_send_max_us = std::max(pipeline_send_max_us, send_elapsed_us);
-            ++pipeline_send_calls;
-            if (sent != message_size) {
-                ++pipeline_send_failures;
-                ESP_LOGW(kTag, "Microphone audio send was incomplete");
-            } else {
-                const uint32_t sent_tick = static_cast<uint32_t>(xTaskGetTickCount());
-                g_ws_app_tx_count.fetch_add(1);
-                g_ws_last_app_tx_tick.store(sent_tick);
-                g_ws_audio_tx_count.fetch_add(1);
-                g_ws_last_audio_tx_tick.store(sent_tick);
-                audio_stream_active = true;
-                if (!g_audio_input_reported.exchange(true)) {
-                    chatai::diagnostics::SetCrashContext("AUDIO_TX", "first microphone PCM chunk sent");
-                    chatai::diagnostics::Add("AUDIO_TX", "OK", "microphone PCM sent to Gemini Live");
-                }
-            }
+        if (g_ready.load() && QueueOutgoingAudio(message, static_cast<size_t>(message_size))) {
+            audio_stream_active = true;
         }
     }
 }
@@ -1538,6 +1612,7 @@ void GeminiWorker(void*) {
                 g_speaking.store(false);
                 g_audio_epoch.fetch_add(1);
                 ClearAudioQueue();
+                ClearOutgoingAudioQueue();
                 g_client_failed.store(false);
 
                 if (stop_result != ESP_OK) {
@@ -1712,11 +1787,14 @@ esp_err_t Initialize() {
         return ESP_ERR_NO_MEM;
     }
 
-    BaseType_t result = xTaskCreate(
-        SpeakerWorker, "chatai_spk", 6144, nullptr, 5, nullptr);
-    if (result == pdPASS) {
-        result = xTaskCreate(MicrophoneWorker, "chatai_mic", 8192, nullptr, 5, nullptr);
+    g_outgoing_audio_queue = xQueueCreate(kOutgoingAudioQueueLength, sizeof(OutgoingAudioMessage*));
+    if (g_outgoing_audio_queue == nullptr) {
+        vQueueDelete(g_audio_queue); g_audio_queue=nullptr; g_task_started.store(false);
+        ESP_LOGE(kTag, "Could not create Gemini microphone TX queue"); return ESP_ERR_NO_MEM;
     }
+    BaseType_t result = xTaskCreate(SpeakerWorker, "chatai_spk", 6144, nullptr, 5, nullptr);
+    if (result == pdPASS) result = xTaskCreate(OutgoingAudioWorker, "chatai_tx", 4096, nullptr, 5, nullptr);
+    if (result == pdPASS) result = xTaskCreate(MicrophoneWorker, "chatai_mic", 8192, nullptr, 5, nullptr);
     if (result == pdPASS) {
         result = xTaskCreate(GeminiWorker, "chatai_gemini", 6144, nullptr, 5, nullptr);
     }
