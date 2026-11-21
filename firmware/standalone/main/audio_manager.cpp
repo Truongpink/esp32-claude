@@ -220,6 +220,7 @@ esp_err_t ReadMicrophonePcm16(int16_t* destination, size_t requested_samples,
     uint64_t conversion_total_us = 0;
     uint64_t conversion_max_us = 0;
     uint32_t driver_read_calls = 0;
+    uint32_t samples_total = 0;
     uint32_t partial_reads = 0;
     uint32_t timeout_count = 0;
     std::unique_lock<std::mutex> io_lock(s_mic_io_mutex, std::defer_lock);
@@ -233,7 +234,7 @@ esp_err_t ReadMicrophonePcm16(int16_t* destination, size_t requested_samples,
         static uint64_t mutex_total_us = 0, mutex_max_us = 0;
         static uint64_t driver_total_us = 0, driver_max_us = 0;
         static uint64_t conversion_sum_us = 0, conversion_peak_us = 0;
-        static uint32_t calls = 0, reads = 0, partials = 0, timeouts = 0;
+        static uint32_t calls = 0, reads = 0, samples = 0, partials = 0, timeouts = 0;
         call_total_us += call_elapsed_us;
         call_max_us = std::max(call_max_us, call_elapsed_us);
         mutex_total_us += mutex_wait_us;
@@ -244,6 +245,7 @@ esp_err_t ReadMicrophonePcm16(int16_t* destination, size_t requested_samples,
         conversion_peak_us = std::max(conversion_peak_us, conversion_max_us);
         calls++;
         reads += driver_read_calls;
+        samples += samples_total;
         partials += partial_reads;
         timeouts += timeout_count;
         const int64_t now_us = esp_timer_get_time();
@@ -252,8 +254,8 @@ esp_err_t ReadMicrophonePcm16(int16_t* destination, size_t requested_samples,
             std::snprintf(detail, sizeof(detail),
                 "calls=%lu call_avg_us=%llu call_max_us=%llu "
                 "mutex_avg_us=%llu mutex_max_us=%llu i2s_calls=%lu "
-                "i2s_avg_us=%llu i2s_max_us=%llu convert_avg_us=%llu "
-                "convert_max_us=%llu partial=%lu timeout=%lu",
+                "i2s_avg_us=%llu i2s_max_us=%llu samples_per_read=%lu "
+                "convert_avg_us=%llu convert_max_us=%llu partial=%lu timeout=%lu",
                 static_cast<unsigned long>(calls),
                 static_cast<unsigned long long>(calls ? call_total_us / calls : 0),
                 static_cast<unsigned long long>(call_max_us),
@@ -262,6 +264,7 @@ esp_err_t ReadMicrophonePcm16(int16_t* destination, size_t requested_samples,
                 static_cast<unsigned long>(reads),
                 static_cast<unsigned long long>(reads ? driver_total_us / reads : 0),
                 static_cast<unsigned long long>(driver_max_us),
+                static_cast<unsigned long>(reads ? samples / reads : 0),
                 static_cast<unsigned long long>(reads ? conversion_sum_us / reads : 0),
                 static_cast<unsigned long long>(conversion_peak_us),
                 static_cast<unsigned long>(partials),
@@ -270,7 +273,7 @@ esp_err_t ReadMicrophonePcm16(int16_t* destination, size_t requested_samples,
             window_started_us = now_us;
             call_total_us = call_max_us = mutex_total_us = mutex_max_us = 0;
             driver_total_us = driver_max_us = conversion_sum_us = conversion_peak_us = 0;
-            calls = reads = partials = timeouts = 0;
+            calls = reads = samples = partials = timeouts = 0;
         }
         return result;
     };
@@ -312,6 +315,7 @@ esp_err_t ReadMicrophonePcm16(int16_t* destination, size_t requested_samples,
             return finish(ESP_ERR_INVALID_SIZE);
         }
         const size_t received = bytes_read / sizeof(int32_t);
+        samples_total += static_cast<uint32_t>(received);
         if (received < chunk) ++partial_reads;
         if (received > 0 && !s_mic_raw_reported.exchange(true)) {
             int32_t raw_min = INT32_MAX;
