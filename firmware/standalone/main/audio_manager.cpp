@@ -222,8 +222,10 @@ esp_err_t ReadMicrophonePcm16(int16_t* destination, size_t requested_samples,
     uint32_t driver_read_calls = 0;
     uint32_t partial_reads = 0;
     uint32_t timeout_count = 0;
+    std::unique_lock<std::mutex> io_lock(s_mic_io_mutex, std::defer_lock);
 
     const auto finish = [&](esp_err_t result) {
+        if (io_lock.owns_lock()) io_lock.unlock();
         const uint64_t call_elapsed_us = static_cast<uint64_t>(
             std::max<int64_t>(0, esp_timer_get_time() - call_started_us));
         static int64_t window_started_us = esp_timer_get_time();
@@ -278,7 +280,7 @@ esp_err_t ReadMicrophonePcm16(int16_t* destination, size_t requested_samples,
     }
     *samples_read = 0;
     const int64_t mutex_started_us = esp_timer_get_time();
-    std::unique_lock<std::mutex> io_lock(s_mic_io_mutex);
+    io_lock.lock();
     mutex_wait_us = static_cast<uint64_t>(
         std::max<int64_t>(0, esp_timer_get_time() - mutex_started_us));
 
