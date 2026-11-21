@@ -679,8 +679,15 @@ void HandleServerMessage(const std::string& message) {
         return;
     }
 
+    static bool turn_model_turn_seen = false;
+    static uint32_t turn_model_part_count = 0;
+    static uint32_t turn_audio_part_count = 0;
+
     const cJSON* setup_complete = cJSON_GetObjectItemCaseSensitive(root, "setupComplete");
     if (cJSON_IsObject(setup_complete)) {
+        turn_model_turn_seen = false;
+        turn_model_part_count = 0;
+        turn_audio_part_count = 0;
         g_waiting_setup.store(false);
         g_ready.store(true);
         g_error.store(false);
@@ -712,38 +719,12 @@ void HandleServerMessage(const std::string& message) {
             }
         }
 
-        const cJSON* turn_complete =
-            cJSON_GetObjectItemCaseSensitive(server_content, "turnComplete");
-        if (cJSON_IsTrue(turn_complete)) {
-            const cJSON* interaction_status =
-                cJSON_GetObjectItemCaseSensitive(server_content, "interactionStatus");
-            const cJSON* complete_reason =
-                cJSON_GetObjectItemCaseSensitive(server_content, "turnCompleteReason");
-            char detail[144]{};
-            const cJSON* completed_model_turn = cJSON_GetObjectItemCaseSensitive(server_content, "modelTurn");
-            const cJSON* completed_parts = cJSON_IsObject(completed_model_turn) ? cJSON_GetObjectItemCaseSensitive(completed_model_turn, "parts") : nullptr;
-            const int part_count = cJSON_IsArray(completed_parts) ? cJSON_GetArraySize(completed_parts) : 0;
-            std::snprintf(detail, sizeof(detail), "interaction_status=%.32s reason=%.48s model_turn=%d parts=%d",
-                cJSON_IsString(interaction_status) ? interaction_status->valuestring : "unknown",
-                cJSON_IsString(complete_reason) ? complete_reason->valuestring : "unspecified",
-                cJSON_IsObject(completed_model_turn) ? 1 : 0, part_count);
-            chatai::diagnostics::Add("GEMINI_TURN", part_count > 0 ? "COMPLETE" : "EMPTY", detail);
-        } else if (!g_server_content_reported.exchange(true)) {
-            const cJSON* model_turn =
-                cJSON_GetObjectItemCaseSensitive(server_content, "modelTurn");
-            const cJSON* parts = cJSON_IsObject(model_turn)
-                ? cJSON_GetObjectItemCaseSensitive(model_turn, "parts") : nullptr;
-            char detail[112]{};
-            std::snprintf(detail, sizeof(detail),
-                "first serverContent received; model_turn=%d parts=%d",
-                cJSON_IsObject(model_turn) ? 1 : 0,
-                cJSON_IsArray(parts) ? cJSON_GetArraySize(parts) : 0);
-            chatai::diagnostics::Add("GEMINI_SERVER_CONTENT", "INFO", detail);
-        }
-
         const cJSON* interrupted =
             cJSON_GetObjectItemCaseSensitive(server_content, "interrupted");
         if (cJSON_IsTrue(interrupted)) {
+            turn_model_turn_seen = false;
+            turn_model_part_count = 0;
+            turn_audio_part_count = 0;
             g_audio_epoch.fetch_add(1);
             ClearAudioQueue();
             g_discard_current_response.store(false);
@@ -752,21 +733,55 @@ void HandleServerMessage(const std::string& message) {
             ESP_LOGI(kTag, "Gemini interrupted playback; queued audio cleared");
         }
 
+        // Accumulate parts across all serverContent messages in this turn.
         const cJSON* model_turn =
             cJSON_GetObjectItemCaseSensitive(server_content, "modelTurn");
         const cJSON* parts = cJSON_IsObject(model_turn)
             ? cJSON_GetObjectItemCaseSensitive(model_turn, "parts") : nullptr;
+        if (cJSON_IsObject(model_turn)) turn_model_turn_seen = true;
         if (cJSON_IsArray(parts)) {
             const int count = cJSON_GetArraySize(parts);
+            turn_model_part_count += static_cast<uint32_t>(count);
             for (int i = 0; i < count; ++i) {
                 const cJSON* part = cJSON_GetArrayItem(parts, i);
                 const cJSON* inline_data = cJSON_IsObject(part)
                     ? cJSON_GetObjectItemCaseSensitive(part, "inlineData") : nullptr;
-                if (cJSON_IsObject(inline_data)) QueueServerAudio(inline_data);
+                if (cJSON_IsObject(inline_data)) {
+                    ++turn_audio_part_count;
+                    QueueServerAudio(inline_data);
+                }
             }
         }
+
+        const cJSON* turn_complete =
+            cJSON_GetObjectItemCaseSensitive(server_content, "turnComplete");
         if (cJSON_IsTrue(turn_complete)) {
+            const cJSON* interaction_status =
+                cJSON_GetObjectItemCaseSensitive(server_content, "interactionStatus");
+            const cJSON* complete_reason =
+                cJSON_GetObjectItemCaseSensitive(server_content, "turnCompleteReason");
+            char detail[192]{};
+            std::snprintf(detail, sizeof(detail),
+                "interaction_status=%.32s reason=%.40s model_turn=%d model_parts=%lu audio_parts=%lu",
+                cJSON_IsString(interaction_status) ? interaction_status->valuestring : "unknown",
+                cJSON_IsString(complete_reason) ? complete_reason->valuestring : "unspecified",
+                turn_model_turn_seen ? 1 : 0,
+                static_cast<unsigned long>(turn_model_part_count),
+                static_cast<unsigned long>(turn_audio_part_count));
+            const char* turn_status = turn_audio_part_count > 0 ? "COMPLETE" :
+                (turn_model_part_count > 0 ? "MODEL_NO_AUDIO" : "EMPTY");
+            chatai::diagnostics::Add("GEMINI_TURN", turn_status, detail);
+            turn_model_turn_seen = false;
+            turn_model_part_count = 0;
+            turn_audio_part_count = 0;
             g_discard_current_response.store(false);
+        } else if (!g_server_content_reported.exchange(true)) {
+            char detail[112]{};
+            std::snprintf(detail, sizeof(detail),
+                "first serverContent received; model_turn=%d parts=%d",
+                cJSON_IsObject(model_turn) ? 1 : 0,
+                cJSON_IsArray(parts) ? cJSON_GetArraySize(parts) : 0);
+            chatai::diagnostics::Add("GEMINI_SERVER_CONTENT", "INFO", detail);
         }
     }
 
@@ -1281,13 +1296,11 @@ void MicrophoneWorker(void*) {
             last_should_listen = should_listen;
             listen_state_initialized = true;
         }
-        bool transport_ready = g_ready.load() &&
+        // g_ready is cleared by the WebSocket lifecycle before teardown.
+        // Do not take g_send_mutex here: the TX worker may hold it while a
+        // WebSocket send waits, which must never stall microphone capture.
+        const bool transport_ready = g_ready.load() &&
             chatai::network::NetworkManager::IsInternetAvailable();
-        {
-            std::lock_guard<std::mutex> lock(g_send_mutex);
-            transport_ready = transport_ready && g_client != nullptr &&
-                esp_websocket_client_is_connected(g_client);
-        }
         if (!transport_ready || !should_listen) {
             if (audio_stream_active && transport_ready) {
                 static constexpr char kAudioStreamEnd[] =
