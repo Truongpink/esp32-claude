@@ -153,7 +153,7 @@ std::atomic<uint64_t> g_outgoing_audio_mutex_hold_total_us{0}, g_outgoing_audio_
 std::atomic<uint64_t> g_outgoing_audio_age_total_us{0}, g_outgoing_audio_age_max_us{0};
 std::atomic<uint64_t> g_outgoing_audio_malloc_total_us{0}, g_outgoing_audio_copy_total_us{0};
 std::atomic<uint64_t> g_outgoing_audio_enqueue_total_us{0};
-std::atomic<uint32_t> g_outgoing_audio_queue_calls{0};
+std::atomic<uint32_t> g_outgoing_audio_queue_calls{0}, g_outgoing_audio_queue_full{0};
 std::atomic<uint32_t> g_outgoing_audio_queue_max_depth{0};
 enum class IncomingMessageType : uint8_t { kNone, kText, kBinary };
 std::string g_incoming_message;
@@ -624,6 +624,7 @@ bool QueueOutgoingAudio(const char* data, size_t length, bool stream_end = false
     g_outgoing_audio_enqueue_total_us.fetch_add(static_cast<uint64_t>(
         std::max<int64_t>(0, esp_timer_get_time() - enqueue_started_us)));
 
+    g_outgoing_audio_queue_full.fetch_add(1);
     // The sender is behind. Drop the oldest chunk and retain the newest audio.
     OutgoingAudioMessage* oldest = nullptr;
     if (xQueueReceive(g_outgoing_audio_queue, &oldest, 0) == pdTRUE) {
@@ -1316,13 +1317,14 @@ void OutgoingAudioWorker(void*) {
             const uint64_t enqueue_total = g_outgoing_audio_enqueue_total_us.exchange(0);
             const uint32_t queue_max = g_outgoing_audio_queue_max_depth.exchange(0);
             const uint32_t queue_attempts = g_outgoing_audio_queue_calls.exchange(0);
+            const uint32_t queue_full = g_outgoing_audio_queue_full.exchange(0);
             char detail[480]{};
             std::snprintf(detail, sizeof(detail),
                 "window_ms=5000 calls=%lu send_avg_us=%llu send_max_us=%llu "
                 "mutex_wait_avg_us=%llu mutex_wait_max_us=%llu ws_send_avg_us=%llu ws_send_max_us=%llu "
                 "mutex_hold_avg_us=%llu mutex_hold_max_us=%llu age_avg_ms=%llu age_max_ms=%llu "
                 "malloc_avg_us=%llu copy_avg_us=%llu enqueue_avg_us=%llu queue_attempts=%lu "
-                "send_fail=%lu queue_depth=%lu queue_max=%lu queue_dropped=%lu",
+                "send_fail=%lu queue_depth=%lu queue_max=%lu queue_full=%lu queue_dropped=%lu",
                 static_cast<unsigned long>(calls),
                 static_cast<unsigned long long>(calls ? total_us / calls : 0),
                 static_cast<unsigned long long>(max_us),
@@ -1341,6 +1343,7 @@ void OutgoingAudioWorker(void*) {
                 static_cast<unsigned long>(g_outgoing_audio_send_failures.exchange(0)),
                 static_cast<unsigned long>(uxQueueMessagesWaiting(g_outgoing_audio_queue)),
                 static_cast<unsigned long>(queue_max),
+                static_cast<unsigned long>(queue_full),
                 static_cast<unsigned long>(g_outgoing_audio_dropped.exchange(0)));
             chatai::diagnostics::Add("AUDIO_TX_PIPELINE", "INFO", detail);
             report_tick = now;
