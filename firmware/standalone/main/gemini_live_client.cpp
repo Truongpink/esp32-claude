@@ -160,10 +160,11 @@ std::atomic<uint64_t> g_outgoing_audio_enqueue_total_us{0};
 std::atomic<uint32_t> g_outgoing_audio_queue_calls{0}, g_outgoing_audio_queue_full{0};
 std::atomic<uint32_t> g_outgoing_audio_queue_max_depth{0};
 std::atomic<uint32_t> g_audio_turn_id{1}, g_audio_turn_completed_id{0}, g_audio_turn_aborted_id{0};
+std::atomic<uint32_t> g_audio_playback_turn_id{0};
 std::atomic<uint32_t> g_rx_chunks{0}, g_rx_silent{0}, g_rx_nonzero{0}, g_rx_decode_fail{0};
 std::atomic<uint32_t> g_rx_enqueued{0}, g_rx_queue_high{0}, g_rx_drop_invalid{0};
 std::atomic<uint32_t> g_rx_drop_mime{0}, g_rx_drop_size{0}, g_rx_drop_alloc{0}, g_rx_drop_decode{0};
-std::atomic<uint32_t> g_rx_drop_stale{0}, g_rx_drop_queue{0}, g_rx_drop_discarded{0}, g_rx_drop_cleared{0};
+std::atomic<uint32_t> g_rx_drop_stale{0}, g_rx_drop_queue{0}, g_rx_drop_discarded{0};
 std::atomic<uint64_t> g_rx_encoded_bytes{0}, g_rx_decoded_bytes{0}, g_rx_samples{0};
 std::atomic<uint32_t> g_rx_peak_max{0};
 std::atomic<int32_t> g_rx_pcm_min{INT16_MAX}, g_rx_pcm_max{INT16_MIN};
@@ -594,7 +595,7 @@ void ResetAudioRxMetrics() {
     g_rx_enqueued.store(0); g_rx_queue_high.store(0); g_rx_drop_invalid.store(0);
     g_rx_drop_mime.store(0); g_rx_drop_size.store(0); g_rx_drop_alloc.store(0);
     g_rx_drop_decode.store(0); g_rx_drop_stale.store(0); g_rx_drop_queue.store(0);
-    g_rx_drop_discarded.store(0); g_rx_drop_cleared.store(0);
+    g_rx_drop_discarded.store(0);
     g_rx_encoded_bytes.store(0); g_rx_decoded_bytes.store(0); g_rx_samples.store(0);
     g_rx_peak_max.store(0); g_rx_pcm_min.store(INT16_MAX); g_rx_pcm_max.store(INT16_MIN);
 }
@@ -604,34 +605,40 @@ void ReportAudioRxMetrics(const char* reason,uint32_t turn_id) {
     const uint32_t qhigh=g_rx_queue_high.exchange(0),invalid=g_rx_drop_invalid.exchange(0);
     const uint32_t mime=g_rx_drop_mime.exchange(0),size=g_rx_drop_size.exchange(0),alloc=g_rx_drop_alloc.exchange(0);
     const uint32_t decode=g_rx_drop_decode.exchange(0),stale=g_rx_drop_stale.exchange(0);
-    const uint32_t qdrop=g_rx_drop_queue.exchange(0),discarded=g_rx_drop_discarded.exchange(0),cleared=g_rx_drop_cleared.exchange(0);
+    const uint32_t qdrop=g_rx_drop_queue.exchange(0),discarded=g_rx_drop_discarded.exchange(0);
     const uint64_t enc=g_rx_encoded_bytes.exchange(0),dec=g_rx_decoded_bytes.exchange(0),samples=g_rx_samples.exchange(0);
     const uint32_t peak=g_rx_peak_max.exchange(0);
     const int32_t min=g_rx_pcm_min.exchange(INT16_MAX),max=g_rx_pcm_max.exchange(INT16_MIN);
     if(chunks==0&&decode_fail==0&&enqueued==0&&invalid==0&&mime==0&&size==0&&alloc==0&&decode==0&&
-       stale==0&&qdrop==0&&discarded==0&&cleared==0) return;
+       stale==0&&qdrop==0&&discarded==0) return;
     char d[512]{};
     std::snprintf(d,sizeof(d),
       "turn_id=%lu reason=%s chunks=%lu encoded_bytes=%llu decoded_bytes=%llu samples=%llu audio_ms=%llu "
       "silent=%lu nonzero=%lu pcm_min=%ld pcm_max=%ld peak_max=%lu enqueued=%lu queue_depth=%lu queue_high=%lu "
       "decode_fail=%lu drop_invalid=%lu drop_mime=%lu drop_size=%lu drop_alloc=%lu drop_decode=%lu "
-      "drop_stale=%lu drop_queue_full=%lu drop_discarded=%lu drop_queue_clear=%lu",
+      "drop_stale=%lu drop_queue_full=%lu drop_discarded=%lu",
       (unsigned long)turn_id,reason?reason:"unknown",(unsigned long)chunks,(unsigned long long)enc,
       (unsigned long long)dec,(unsigned long long)samples,(unsigned long long)(samples*1000/24000),
       (unsigned long)silent,(unsigned long)nonzero,(long)(min==INT16_MAX?0:min),(long)(max==INT16_MIN?0:max),
       (unsigned long)peak,(unsigned long)enqueued,(unsigned long)(g_audio_queue?uxQueueMessagesWaiting(g_audio_queue):0),
       (unsigned long)qhigh,(unsigned long)decode_fail,(unsigned long)invalid,(unsigned long)mime,
       (unsigned long)size,(unsigned long)alloc,(unsigned long)decode,(unsigned long)stale,
-      (unsigned long)qdrop,(unsigned long)discarded,(unsigned long)cleared);
+      (unsigned long)qdrop,(unsigned long)discarded);
     chatai::diagnostics::Add("GEMINI_AUDIO_TURN_RX","INFO",d);
 }
 void ClearAudioQueue(const char* reason="unspecified") {
-    const uint32_t turn_id=g_audio_turn_id.load(); g_audio_turn_aborted_id.store(turn_id);
-    uint32_t cleared=0; AudioChunk* chunk=nullptr;
-    if(g_audio_queue) while(xQueueReceive(g_audio_queue,&chunk,0)==pdTRUE){std::free(chunk);++cleared;}
-    g_rx_drop_cleared.fetch_add(cleared);
-    if(cleared){char d[128]{};std::snprintf(d,sizeof(d),"turn_id=%lu reason=%s cleared_chunks=%lu",
-      (unsigned long)turn_id,reason?reason:"unknown",(unsigned long)cleared);
+    const uint32_t turn_id=g_audio_turn_id.load();
+    uint32_t cleared=0,first_turn_id=0,last_turn_id=0; AudioChunk* chunk=nullptr;
+    if(g_audio_queue) while(xQueueReceive(g_audio_queue,&chunk,0)==pdTRUE){
+        if(first_turn_id==0) first_turn_id=chunk->turn_id;
+        last_turn_id=chunk->turn_id; std::free(chunk); ++cleared;
+    }
+    const uint32_t active_turn=g_audio_playback_turn_id.load();
+    if(active_turn!=0) g_audio_turn_aborted_id.store(active_turn);
+    else if(cleared!=0) g_audio_turn_aborted_id.store(last_turn_id);
+    if(cleared){char d[160]{};std::snprintf(d,sizeof(d),
+      "reason=%s cleared_chunks=%lu first_turn_id=%lu last_turn_id=%lu",
+      reason?reason:"unknown",(unsigned long)cleared,(unsigned long)first_turn_id,(unsigned long)last_turn_id);
       chatai::diagnostics::Add("GEMINI_AUDIO_QUEUE_CLEAR","WARN",d);}
     ReportAudioRxMetrics(reason,turn_id);
 }
@@ -1781,6 +1788,8 @@ void SpeakerWorker(void*) {
           (unsigned long)playback_failures,(unsigned long)playback_enable_failures,
           (unsigned long)(g_audio_queue?uxQueueMessagesWaiting(g_audio_queue):0));
         chatai::diagnostics::Add("GEMINI_PLAYBACK",status,d);
+        g_audio_playback_turn_id.store(0);
+        if(g_audio_turn_aborted_id.load()==playback_turn) g_audio_turn_aborted_id.store(0);
         playback_turn=playback_chunks=playback_failures=playback_enable_failures=playback_peak=0;
         playback_samples=playback_written=0;playback_started_us=0;
     };
@@ -1796,7 +1805,7 @@ void SpeakerWorker(void*) {
             const bool empty=g_audio_queue&&uxQueueMessagesWaiting(g_audio_queue)==0;
             if(speaker_enabled&&empty){chatai::audio::EnableSpeaker(false);speaker_enabled=false;g_speaking.store(false);}
             if(empty&&playback_turn){
-                if(g_audio_turn_aborted_id.load()>=playback_turn)report_playback("ABORTED");
+                if(g_audio_turn_aborted_id.load()==playback_turn)report_playback("ABORTED");
                 else if(g_audio_turn_completed_id.load()>=playback_turn)report_playback("DRAINED");
             }
             continue;
@@ -1810,7 +1819,11 @@ void SpeakerWorker(void*) {
         }
 
         if(playback_turn&&playback_turn!=chunk->turn_id)report_playback("PARTIAL_TURN_SWITCH");
-        if(!playback_turn){playback_turn=chunk->turn_id;playback_started_us=esp_timer_get_time();}
+        if(!playback_turn){
+            playback_turn=chunk->turn_id;
+            playback_started_us=esp_timer_get_time();
+            g_audio_playback_turn_id.store(playback_turn);
+        }
         ++playback_chunks;playback_samples+=chunk->sample_count;
         int32_t pcm_peak=0;
         for(size_t i=0;i<chunk->sample_count;++i){const int32_t v=chunk->samples[i];pcm_peak=std::max(pcm_peak,v<0?-v:v);}
