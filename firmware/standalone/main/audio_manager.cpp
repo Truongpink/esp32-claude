@@ -11,6 +11,7 @@
 #include <driver/gpio.h>
 #include <driver/i2s_std.h>
 #include <esp_log.h>
+#include <esp_timer.h>
 #include <nvs.h>
 
 namespace chatai::audio {
@@ -212,33 +213,104 @@ esp_err_t EnableSpeaker(bool enable) {
 
 esp_err_t ReadMicrophonePcm16(int16_t* destination, size_t requested_samples,
                               size_t* samples_read, uint32_t timeout_ms) {
+    const int64_t call_started_us = esp_timer_get_time();
+    uint64_t mutex_wait_us = 0;
+    uint64_t driver_read_total_us = 0;
+    uint64_t driver_read_max_us = 0;
+    uint64_t conversion_total_us = 0;
+    uint64_t conversion_max_us = 0;
+    uint32_t driver_read_calls = 0;
+    uint32_t partial_reads = 0;
+    uint32_t timeout_count = 0;
+
+    const auto finish = [&](esp_err_t result) {
+        const uint64_t call_elapsed_us = static_cast<uint64_t>(
+            std::max<int64_t>(0, esp_timer_get_time() - call_started_us));
+        static int64_t window_started_us = esp_timer_get_time();
+        static uint64_t call_total_us = 0, call_max_us = 0;
+        static uint64_t mutex_total_us = 0, mutex_max_us = 0;
+        static uint64_t driver_total_us = 0, driver_max_us = 0;
+        static uint64_t conversion_sum_us = 0, conversion_peak_us = 0;
+        static uint32_t calls = 0, reads = 0, partials = 0, timeouts = 0;
+        call_total_us += call_elapsed_us;
+        call_max_us = std::max(call_max_us, call_elapsed_us);
+        mutex_total_us += mutex_wait_us;
+        mutex_max_us = std::max(mutex_max_us, mutex_wait_us);
+        driver_total_us += driver_read_total_us;
+        driver_max_us = std::max(driver_max_us, driver_read_max_us);
+        conversion_sum_us += conversion_total_us;
+        conversion_peak_us = std::max(conversion_peak_us, conversion_max_us);
+        calls++;
+        reads += driver_read_calls;
+        partials += partial_reads;
+        timeouts += timeout_count;
+        const int64_t now_us = esp_timer_get_time();
+        if (now_us - window_started_us >= 5000000) {
+            char detail[320]{};
+            std::snprintf(detail, sizeof(detail),
+                "calls=%lu call_avg_us=%llu call_max_us=%llu "
+                "mutex_avg_us=%llu mutex_max_us=%llu i2s_calls=%lu "
+                "i2s_avg_us=%llu i2s_max_us=%llu convert_avg_us=%llu "
+                "convert_max_us=%llu partial=%lu timeout=%lu",
+                static_cast<unsigned long>(calls),
+                static_cast<unsigned long long>(calls ? call_total_us / calls : 0),
+                static_cast<unsigned long long>(call_max_us),
+                static_cast<unsigned long long>(calls ? mutex_total_us / calls : 0),
+                static_cast<unsigned long long>(mutex_max_us),
+                static_cast<unsigned long>(reads),
+                static_cast<unsigned long long>(reads ? driver_total_us / reads : 0),
+                static_cast<unsigned long long>(driver_max_us),
+                static_cast<unsigned long long>(reads ? conversion_sum_us / reads : 0),
+                static_cast<unsigned long long>(conversion_peak_us),
+                static_cast<unsigned long>(partials),
+                static_cast<unsigned long>(timeouts));
+            chatai::diagnostics::Add("MIC_IO", "INFO", detail);
+            window_started_us = now_us;
+            call_total_us = call_max_us = mutex_total_us = mutex_max_us = 0;
+            driver_total_us = driver_max_us = conversion_sum_us = conversion_peak_us = 0;
+            calls = reads = partials = timeouts = 0;
+        }
+        return result;
+    };
+
     if (destination == nullptr || samples_read == nullptr || requested_samples == 0) {
-        return ESP_ERR_INVALID_ARG;
+        return finish(ESP_ERR_INVALID_ARG);
     }
     *samples_read = 0;
-    std::lock_guard<std::mutex> io_lock(s_mic_io_mutex);
+    const int64_t mutex_started_us = esp_timer_get_time();
+    std::unique_lock<std::mutex> io_lock(s_mic_io_mutex);
+    mutex_wait_us = static_cast<uint64_t>(
+        std::max<int64_t>(0, esp_timer_get_time() - mutex_started_us));
 
     if (s_mic_rx == nullptr || !s_mic_enabled.load()) {
-        return ESP_ERR_INVALID_STATE;
+        return finish(ESP_ERR_INVALID_STATE);
     }
 
     std::array<int32_t, kReadChunkSamples> raw_samples{};
     while (*samples_read < requested_samples) {
         const size_t chunk = std::min(kReadChunkSamples, requested_samples - *samples_read);
         size_t bytes_read = 0;
+        const int64_t driver_started_us = esp_timer_get_time();
         const esp_err_t err = i2s_channel_read(
             s_mic_rx, raw_samples.data(), chunk * sizeof(int32_t),
             &bytes_read, timeout_ms);
+        const uint64_t driver_elapsed_us = static_cast<uint64_t>(
+            std::max<int64_t>(0, esp_timer_get_time() - driver_started_us));
+        driver_read_total_us += driver_elapsed_us;
+        driver_read_max_us = std::max(driver_read_max_us, driver_elapsed_us);
+        ++driver_read_calls;
 
         if (err != ESP_OK) {
-            return (*samples_read > 0 && err == ESP_ERR_TIMEOUT) ? ESP_OK : err;
+            if (err == ESP_ERR_TIMEOUT) ++timeout_count;
+            return finish((*samples_read > 0 && err == ESP_ERR_TIMEOUT) ? ESP_OK : err);
         }
 
         if (bytes_read % sizeof(int32_t) != 0 ||
             bytes_read > chunk * sizeof(int32_t)) {
-            return ESP_ERR_INVALID_SIZE;
+            return finish(ESP_ERR_INVALID_SIZE);
         }
         const size_t received = bytes_read / sizeof(int32_t);
+        if (received < chunk) ++partial_reads;
         if (received > 0 && !s_mic_raw_reported.exchange(true)) {
             int32_t raw_min = INT32_MAX;
             int32_t raw_max = INT32_MIN;
@@ -257,12 +329,17 @@ esp_err_t ReadMicrophonePcm16(int16_t* destination, size_t requested_samples,
                           static_cast<unsigned long>(static_cast<uint32_t>(raw_samples[std::min<size_t>(3, received - 1)])));
             chatai::diagnostics::Add("MIC_RAW", "INFO", raw_detail);
         }
+        const int64_t conversion_started_us = esp_timer_get_time();
         for (size_t i = 0; i < received; ++i) {
             // Match the upstream XH-S3E-AI Xiaozhi 32-bit I2S-to-PCM16 conversion.
             const int32_t value = raw_samples[i] >> 12;
             destination[*samples_read + i] = static_cast<int16_t>(
                 std::clamp<int32_t>(value, INT16_MIN, INT16_MAX));
         }
+        const uint64_t conversion_elapsed_us = static_cast<uint64_t>(
+            std::max<int64_t>(0, esp_timer_get_time() - conversion_started_us));
+        conversion_total_us += conversion_elapsed_us;
+        conversion_max_us = std::max(conversion_max_us, conversion_elapsed_us);
         *samples_read += received;
 
         if (received == 0) {
@@ -270,7 +347,7 @@ esp_err_t ReadMicrophonePcm16(int16_t* destination, size_t requested_samples,
         }
     }
 
-    return *samples_read > 0 ? ESP_OK : ESP_ERR_TIMEOUT;
+    return finish(*samples_read > 0 ? ESP_OK : ESP_ERR_TIMEOUT);
 }
 
 esp_err_t WriteSpeakerPcm16(const int16_t* samples, size_t sample_count,
