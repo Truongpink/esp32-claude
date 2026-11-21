@@ -52,6 +52,7 @@ constexpr UBaseType_t kOutgoingAudioQueueLength = 8;
 
 struct OutgoingAudioMessage {
     bool stream_end;
+    uint32_t generation;
     size_t length;
     char data[kMicMessageBufferSize];
 };
@@ -126,6 +127,7 @@ esp_websocket_client_handle_t g_client = nullptr;
 QueueHandle_t g_audio_queue = nullptr;
 QueueHandle_t g_outgoing_audio_queue = nullptr;
 std::atomic<uint32_t> g_outgoing_audio_dropped{0}, g_outgoing_audio_send_failures{0}, g_outgoing_audio_send_calls{0};
+std::atomic<uint32_t> g_mic_tx_generation{0};
 std::atomic<uint64_t> g_outgoing_audio_send_total_us{0}, g_outgoing_audio_send_max_us{0};
 enum class IncomingMessageType : uint8_t { kNone, kText, kBinary };
 std::string g_incoming_message;
@@ -571,6 +573,7 @@ bool QueueOutgoingAudio(const char* data, size_t length, bool stream_end = false
     }
 
     item->stream_end = stream_end;
+    item->generation = g_mic_tx_generation.load();
     item->length = length;
     if (length > 0) std::memcpy(item->data, data, length);
 
@@ -1169,7 +1172,10 @@ void OutgoingAudioWorker(void*) {
         int sent = -1;
         {
             std::lock_guard<std::mutex> lock(g_send_mutex);
-            if (g_ready.load() && g_client != nullptr &&
+            if (item->generation == g_mic_tx_generation.load() &&
+                g_ready.load() &&
+                chatai::network::NetworkManager::IsInternetAvailable() &&
+                g_client != nullptr &&
                 esp_websocket_client_is_connected(g_client)) {
                 sent = esp_websocket_client_send_text(
                     g_client, item->data, item->length, pdMS_TO_TICKS(1000));
@@ -1310,6 +1316,7 @@ void MicrophoneWorker(void*) {
                         "I2S capture remains active; Gemini audio TX paused");
                     chatai::diagnostics::Add("MIC_TX_PAUSED", "INFO",
                         "reason=Gemini transport not ready");
+                    g_mic_tx_generation.fetch_add(1);
                     ClearOutgoingAudioQueue();
                     audio_stream_active = false;
                 } else if (transport_state_initialized) {
