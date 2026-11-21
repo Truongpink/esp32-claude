@@ -64,6 +64,7 @@ struct OutgoingAudioMessage {
 
 struct AudioChunk {
     uint32_t epoch;
+    uint32_t turn_id;
     size_t sample_count;
     int16_t samples[kMaxOutputSamples];
 };
@@ -100,7 +101,6 @@ bool g_sntp_sync_confirmed = false;
 std::atomic<uint32_t> g_audio_epoch{0};
 std::atomic<bool> g_discard_current_response{false};
 std::atomic<bool> g_stop_speaker_requested{false};
-std::atomic<bool> g_audio_response_reported{false};
 std::atomic<bool> g_audio_reject_reported{false};
 std::atomic<bool> g_server_content_reported{false};
 std::atomic<int> g_last_speech_state{-1};
@@ -159,6 +159,14 @@ std::atomic<uint64_t> g_outgoing_audio_malloc_total_us{0}, g_outgoing_audio_copy
 std::atomic<uint64_t> g_outgoing_audio_enqueue_total_us{0};
 std::atomic<uint32_t> g_outgoing_audio_queue_calls{0}, g_outgoing_audio_queue_full{0};
 std::atomic<uint32_t> g_outgoing_audio_queue_max_depth{0};
+std::atomic<uint32_t> g_audio_turn_id{1}, g_audio_turn_completed_id{0}, g_audio_turn_aborted_id{0};
+std::atomic<uint32_t> g_rx_chunks{0}, g_rx_silent{0}, g_rx_nonzero{0}, g_rx_decode_fail{0};
+std::atomic<uint32_t> g_rx_enqueued{0}, g_rx_queue_high{0}, g_rx_drop_invalid{0};
+std::atomic<uint32_t> g_rx_drop_mime{0}, g_rx_drop_size{0}, g_rx_drop_alloc{0}, g_rx_drop_decode{0};
+std::atomic<uint32_t> g_rx_drop_stale{0}, g_rx_drop_queue{0}, g_rx_drop_discarded{0}, g_rx_drop_cleared{0};
+std::atomic<uint64_t> g_rx_encoded_bytes{0}, g_rx_decoded_bytes{0}, g_rx_samples{0};
+std::atomic<uint32_t> g_rx_peak_max{0};
+std::atomic<int32_t> g_rx_pcm_min{INT16_MAX}, g_rx_pcm_max{INT16_MIN};
 enum class IncomingMessageType : uint8_t { kNone, kText, kBinary };
 std::string g_incoming_message;
 size_t g_incoming_frame_bytes = 0;
@@ -189,7 +197,6 @@ void ResetWebSocketSessionMetrics() {
     g_ws_last_server_content_tick.store(0);
     g_ws_audio_rx_count.store(0);
     g_ws_last_audio_rx_tick.store(0);
-    g_audio_response_reported.store(false);
     g_audio_reject_reported.store(false);
     g_server_content_reported.store(false);
     g_last_speech_state.store(-1);
@@ -573,12 +580,60 @@ std::string BuildSetupMessage() {
     return message;
 }
 
-void ClearAudioQueue() {
-    if (g_audio_queue == nullptr) return;
-    AudioChunk* chunk = nullptr;
-    while (xQueueReceive(g_audio_queue, &chunk, 0) == pdTRUE) {
-        std::free(chunk);
-    }
+void AtomicMax(std::atomic<uint32_t>& target,uint32_t value) {
+    uint32_t old=target.load(); while(value>old&&!target.compare_exchange_weak(old,value)) {}
+}
+void AtomicMin(std::atomic<int32_t>& target,int32_t value) {
+    int32_t old=target.load(); while(value<old&&!target.compare_exchange_weak(old,value)) {}
+}
+void AtomicSignedMax(std::atomic<int32_t>& target,int32_t value) {
+    int32_t old=target.load(); while(value>old&&!target.compare_exchange_weak(old,value)) {}
+}
+void ResetAudioRxMetrics() {
+    g_rx_chunks.store(0); g_rx_silent.store(0); g_rx_nonzero.store(0); g_rx_decode_fail.store(0);
+    g_rx_enqueued.store(0); g_rx_queue_high.store(0); g_rx_drop_invalid.store(0);
+    g_rx_drop_mime.store(0); g_rx_drop_size.store(0); g_rx_drop_alloc.store(0);
+    g_rx_drop_decode.store(0); g_rx_drop_stale.store(0); g_rx_drop_queue.store(0);
+    g_rx_drop_discarded.store(0); g_rx_drop_cleared.store(0);
+    g_rx_encoded_bytes.store(0); g_rx_decoded_bytes.store(0); g_rx_samples.store(0);
+    g_rx_peak_max.store(0); g_rx_pcm_min.store(INT16_MAX); g_rx_pcm_max.store(INT16_MIN);
+}
+void ReportAudioRxMetrics(const char* reason,uint32_t turn_id) {
+    const uint32_t chunks=g_rx_chunks.exchange(0),silent=g_rx_silent.exchange(0),nonzero=g_rx_nonzero.exchange(0);
+    const uint32_t decode_fail=g_rx_decode_fail.exchange(0),enqueued=g_rx_enqueued.exchange(0);
+    const uint32_t qhigh=g_rx_queue_high.exchange(0),invalid=g_rx_drop_invalid.exchange(0);
+    const uint32_t mime=g_rx_drop_mime.exchange(0),size=g_rx_drop_size.exchange(0),alloc=g_rx_drop_alloc.exchange(0);
+    const uint32_t decode=g_rx_drop_decode.exchange(0),stale=g_rx_drop_stale.exchange(0);
+    const uint32_t qdrop=g_rx_drop_queue.exchange(0),discarded=g_rx_drop_discarded.exchange(0),cleared=g_rx_drop_cleared.exchange(0);
+    const uint64_t enc=g_rx_encoded_bytes.exchange(0),dec=g_rx_decoded_bytes.exchange(0),samples=g_rx_samples.exchange(0);
+    const uint32_t peak=g_rx_peak_max.exchange(0);
+    const int32_t min=g_rx_pcm_min.exchange(INT16_MAX),max=g_rx_pcm_max.exchange(INT16_MIN);
+    if(chunks==0&&decode_fail==0&&enqueued==0&&invalid==0&&mime==0&&size==0&&alloc==0&&decode==0&&
+       stale==0&&qdrop==0&&discarded==0&&cleared==0) return;
+    char d[512]{};
+    std::snprintf(d,sizeof(d),
+      "turn_id=%lu reason=%s chunks=%lu encoded_bytes=%llu decoded_bytes=%llu samples=%llu audio_ms=%llu "
+      "silent=%lu nonzero=%lu pcm_min=%ld pcm_max=%ld peak_max=%lu enqueued=%lu queue_depth=%lu queue_high=%lu "
+      "decode_fail=%lu drop_invalid=%lu drop_mime=%lu drop_size=%lu drop_alloc=%lu drop_decode=%lu "
+      "drop_stale=%lu drop_queue_full=%lu drop_discarded=%lu drop_queue_clear=%lu",
+      (unsigned long)turn_id,reason?reason:"unknown",(unsigned long)chunks,(unsigned long long)enc,
+      (unsigned long long)dec,(unsigned long long)samples,(unsigned long long)(samples*1000/24000),
+      (unsigned long)silent,(unsigned long)nonzero,(long)(min==INT16_MAX?0:min),(long)(max==INT16_MIN?0:max),
+      (unsigned long)peak,(unsigned long)enqueued,(unsigned long)(g_audio_queue?uxQueueMessagesWaiting(g_audio_queue):0),
+      (unsigned long)qhigh,(unsigned long)decode_fail,(unsigned long)invalid,(unsigned long)mime,
+      (unsigned long)size,(unsigned long)alloc,(unsigned long)decode,(unsigned long)stale,
+      (unsigned long)qdrop,(unsigned long)discarded,(unsigned long)cleared);
+    chatai::diagnostics::Add("GEMINI_AUDIO_TURN_RX","INFO",d);
+}
+void ClearAudioQueue(const char* reason="unspecified") {
+    const uint32_t turn_id=g_audio_turn_id.load(); g_audio_turn_aborted_id.store(turn_id);
+    uint32_t cleared=0; AudioChunk* chunk=nullptr;
+    if(g_audio_queue) while(xQueueReceive(g_audio_queue,&chunk,0)==pdTRUE){std::free(chunk);++cleared;}
+    g_rx_drop_cleared.fetch_add(cleared);
+    if(cleared){char d[128]{};std::snprintf(d,sizeof(d),"turn_id=%lu reason=%s cleared_chunks=%lu",
+      (unsigned long)turn_id,reason?reason:"unknown",(unsigned long)cleared);
+      chatai::diagnostics::Add("GEMINI_AUDIO_QUEUE_CLEAR","WARN",d);}
+    ReportAudioRxMetrics(reason,turn_id);
 }
 
 void ClearOutgoingAudioQueue() {
@@ -653,84 +708,53 @@ bool QueueOutgoingAudio(const char* data, size_t length, bool stream_end = false
     return false;
 }
 void ReportAudioRejectOnce(const char* reason) {
-    if (!g_audio_reject_reported.exchange(true)) {
-        chatai::diagnostics::Add("GEMINI_AUDIO_RX", "WARN", reason);
-    }
+    if(!g_audio_reject_reported.exchange(true)) chatai::diagnostics::Add("GEMINI_AUDIO_RX","WARN",reason);
 }
-
 void QueueServerAudio(const cJSON* inline_data) {
-    if (g_discard_current_response.load()) return;
-    const cJSON* mime = cJSON_GetObjectItemCaseSensitive(inline_data, "mimeType");
-    const cJSON* data = cJSON_GetObjectItemCaseSensitive(inline_data, "data");
-    if (!cJSON_IsString(mime) || !cJSON_IsString(data) ||
-        data->valuestring == nullptr || g_audio_queue == nullptr) {
-        ReportAudioRejectOnce("audio inlineData missing MIME/data or playback queue unavailable");
-        return;
+    if(g_discard_current_response.load()){g_rx_drop_discarded.fetch_add(1);return;}
+    const cJSON* mime=cJSON_GetObjectItemCaseSensitive(inline_data,"mimeType");
+    const cJSON* data=cJSON_GetObjectItemCaseSensitive(inline_data,"data");
+    if(!cJSON_IsString(mime)||!cJSON_IsString(data)||data->valuestring==nullptr||g_audio_queue==nullptr){
+        g_rx_drop_invalid.fetch_add(1);ReportAudioRejectOnce("audio inlineData missing MIME/data or playback queue unavailable");return;
     }
-    if (std::strncmp(mime->valuestring, "audio/pcm;rate=24000", 20) != 0) {
-        char detail[112]{};
-        std::snprintf(detail, sizeof(detail), "unsupported audio MIME type: %.80s",
-                      mime->valuestring);
-        ReportAudioRejectOnce(detail);
-        return;
+    if(std::strncmp(mime->valuestring,"audio/pcm;rate=24000",20)!=0){
+        g_rx_drop_mime.fetch_add(1);char d[112]{};
+        std::snprintf(d,sizeof(d),"unsupported audio MIME type: %.80s",mime->valuestring);
+        ReportAudioRejectOnce(d);return;
     }
-
-    const size_t encoded_size = std::strlen(data->valuestring);
-    if (encoded_size == 0 || encoded_size > kMaxAudioBase64Bytes) {
-        ESP_LOGW(kTag, "Discarded oversized Gemini audio chunk");
-        return;
+    const size_t encoded_size=std::strlen(data->valuestring);
+    if(encoded_size==0||encoded_size>kMaxAudioBase64Bytes){
+        g_rx_drop_size.fetch_add(1);ESP_LOGW(kTag,"Discarded empty or oversized Gemini audio chunk");return;
     }
-
-    auto* chunk = static_cast<AudioChunk*>(std::malloc(sizeof(AudioChunk)));
-    if (chunk == nullptr) {
-        ESP_LOGW(kTag, "Not enough memory for Gemini audio chunk");
-        return;
+    g_rx_encoded_bytes.fetch_add(encoded_size);
+    auto* chunk=static_cast<AudioChunk*>(std::malloc(sizeof(AudioChunk)));
+    if(!chunk){g_rx_drop_alloc.fetch_add(1);ESP_LOGW(kTag,"Not enough memory for Gemini audio chunk");return;}
+    size_t decoded_size=0;
+    const int result=mbedtls_base64_decode(reinterpret_cast<unsigned char*>(chunk->samples),sizeof(chunk->samples),
+      &decoded_size,reinterpret_cast<const unsigned char*>(data->valuestring),encoded_size);
+    if(result!=0||decoded_size==0||decoded_size%sizeof(int16_t)!=0||decoded_size>sizeof(chunk->samples)){
+        g_rx_decode_fail.fetch_add(1);g_rx_drop_decode.fetch_add(1);std::free(chunk);
+        ESP_LOGW(kTag,"Discarded invalid Gemini PCM chunk");return;
     }
-
-    size_t decoded_size = 0;
-    const int result = mbedtls_base64_decode(
-        reinterpret_cast<unsigned char*>(chunk->samples), sizeof(chunk->samples),
-        &decoded_size, reinterpret_cast<const unsigned char*>(data->valuestring),
-        encoded_size);
-    if (result != 0 || decoded_size == 0 ||
-        decoded_size % sizeof(int16_t) != 0 || decoded_size > sizeof(chunk->samples)) {
-        std::free(chunk);
-        ESP_LOGW(kTag, "Discarded invalid Gemini PCM chunk");
-        return;
+    chunk->epoch=g_audio_epoch.load();chunk->turn_id=g_audio_turn_id.load();
+    chunk->sample_count=decoded_size/sizeof(int16_t);
+    g_rx_chunks.fetch_add(1);g_rx_decoded_bytes.fetch_add(decoded_size);g_rx_samples.fetch_add(chunk->sample_count);
+    int32_t pcm_min=INT16_MAX,pcm_max=INT16_MIN;uint32_t peak=0;
+    for(size_t i=0;i<chunk->sample_count;++i){
+        const int32_t sample=chunk->samples[i];pcm_min=std::min(pcm_min,sample);pcm_max=std::max(pcm_max,sample);
+        peak=std::max(peak,static_cast<uint32_t>(sample<0?-sample:sample));
     }
-
-    chunk->epoch = g_audio_epoch.load();
-    chunk->sample_count = decoded_size / sizeof(int16_t);
-    if (g_discard_current_response.load() || chunk->epoch != g_audio_epoch.load()) {
-        std::free(chunk);
-        return;
+    if(peak==0)g_rx_silent.fetch_add(1);else g_rx_nonzero.fetch_add(1);
+    AtomicMin(g_rx_pcm_min,pcm_min);AtomicSignedMax(g_rx_pcm_max,pcm_max);AtomicMax(g_rx_peak_max,peak);
+    if(g_discard_current_response.load()||chunk->epoch!=g_audio_epoch.load()){
+        g_rx_drop_stale.fetch_add(1);std::free(chunk);return;
     }
-    if (xQueueSend(g_audio_queue, &chunk, 0) != pdTRUE) {
-        std::free(chunk);
-        ESP_LOGW(kTag, "Gemini playback queue full; dropping audio chunk");
-    } else {
-        g_ws_audio_rx_count.fetch_add(1);
+    if(xQueueSend(g_audio_queue,&chunk,0)!=pdTRUE){
+        g_rx_drop_queue.fetch_add(1);std::free(chunk);ESP_LOGW(kTag,"Gemini playback queue full; dropping audio chunk");
+    }else{
+        g_rx_enqueued.fetch_add(1);g_ws_audio_rx_count.fetch_add(1);
         g_ws_last_audio_rx_tick.store(static_cast<uint32_t>(xTaskGetTickCount()));
-        if (!g_audio_response_reported.exchange(true)) {
-            int16_t pcm_min = INT16_MAX;
-            int16_t pcm_max = INT16_MIN;
-            for (size_t i = 0; i < chunk->sample_count; ++i) {
-                pcm_min = std::min(pcm_min, chunk->samples[i]);
-                pcm_max = std::max(pcm_max, chunk->samples[i]);
-            }
-            char detail[192]{};
-            std::snprintf(detail, sizeof(detail),
-                          "mime=%s encoded_bytes=%lu decoded_bytes=%lu samples=%lu "
-                          "pcm_min=%d pcm_max=%d queue_depth=%lu",
-                          mime->valuestring,
-                          static_cast<unsigned long>(encoded_size),
-                          static_cast<unsigned long>(decoded_size),
-                          static_cast<unsigned long>(chunk->sample_count),
-                          static_cast<int>(pcm_min), static_cast<int>(pcm_max),
-                          static_cast<unsigned long>(uxQueueMessagesWaiting(g_audio_queue)));
-            chatai::diagnostics::SetCrashContext("GEMINI_AUDIO_RX", detail);
-            chatai::diagnostics::Add("GEMINI_AUDIO_RX", "INFO", detail);
-        }
+        AtomicMax(g_rx_queue_high,static_cast<uint32_t>(uxQueueMessagesWaiting(g_audio_queue)));
         g_speaking.store(true);
     }
 }
@@ -752,6 +776,7 @@ void HandleServerMessage(const std::string& message) {
         turn_model_turn_seen = false;
         turn_model_part_count = 0;
         turn_audio_part_count = 0;
+        ResetAudioRxMetrics();
         g_waiting_setup.store(false);
         g_ready.store(true);
         g_error.store(false);
@@ -790,7 +815,10 @@ void HandleServerMessage(const std::string& message) {
             turn_model_part_count = 0;
             turn_audio_part_count = 0;
             g_audio_epoch.fetch_add(1);
-            ClearAudioQueue();
+            ClearAudioQueue("interrupted");
+            char d[96]{};std::snprintf(d,sizeof(d),"turn_id=%lu interrupted=true",(unsigned long)g_audio_turn_id.load());
+            chatai::diagnostics::Add("GEMINI_INTERRUPTED","INFO",d);
+            g_audio_turn_id.fetch_add(1);
             g_discard_current_response.store(false);
             g_speaking.store(false);
             g_stop_speaker_requested.store(true);
@@ -817,6 +845,12 @@ void HandleServerMessage(const std::string& message) {
             }
         }
 
+        const cJSON* generation_complete=cJSON_GetObjectItemCaseSensitive(server_content,"generationComplete");
+        if(generation_complete){
+            const char* value=cJSON_IsTrue(generation_complete)?"true":(cJSON_IsBool(generation_complete)?"false":"wrong_type");
+            char d[96]{};std::snprintf(d,sizeof(d),"turn_id=%lu generationComplete=%s",(unsigned long)g_audio_turn_id.load(),value);
+            chatai::diagnostics::Add("GEMINI_GENERATION","INFO",d);
+        }
         const cJSON* turn_complete =
             cJSON_GetObjectItemCaseSensitive(server_content, "turnComplete");
         if (cJSON_IsTrue(turn_complete)) {
@@ -825,16 +859,20 @@ void HandleServerMessage(const std::string& message) {
             const cJSON* complete_reason =
                 cJSON_GetObjectItemCaseSensitive(server_content, "turnCompleteReason");
             char detail[192]{};
-            std::snprintf(detail, sizeof(detail),
-                "interaction_status=%.32s reason=%.40s model_turn=%d model_parts=%lu audio_parts=%lu",
-                cJSON_IsString(interaction_status) ? interaction_status->valuestring : "unknown",
-                cJSON_IsString(complete_reason) ? complete_reason->valuestring : "unspecified",
-                turn_model_turn_seen ? 1 : 0,
-                static_cast<unsigned long>(turn_model_part_count),
-                static_cast<unsigned long>(turn_audio_part_count));
-            const char* turn_status = turn_audio_part_count > 0 ? "COMPLETE" :
-                (turn_model_part_count > 0 ? "MODEL_NO_AUDIO" : "EMPTY");
-            chatai::diagnostics::Add("GEMINI_TURN", turn_status, detail);
+            const uint32_t completed_id=g_audio_turn_id.load();
+            const cJSON* gc=cJSON_GetObjectItemCaseSensitive(server_content,"generationComplete");
+            const char* gv=!gc?"absent":(cJSON_IsTrue(gc)?"true":(cJSON_IsBool(gc)?"false":"wrong_type"));
+            std::snprintf(detail,sizeof(detail),
+                "turn_id=%lu interaction_status=%.32s reason=%.40s generationComplete=%s model_turn=%d model_parts=%lu audio_parts=%lu",
+                (unsigned long)completed_id,
+                cJSON_IsString(interaction_status)?interaction_status->valuestring:"unknown",
+                cJSON_IsString(complete_reason)?complete_reason->valuestring:"unspecified",gv,
+                turn_model_turn_seen?1:0,(unsigned long)turn_model_part_count,(unsigned long)turn_audio_part_count);
+            const char* turn_status=turn_audio_part_count>0?"COMPLETE":(turn_model_part_count>0?"MODEL_NO_AUDIO":"EMPTY");
+            chatai::diagnostics::Add("GEMINI_TURN",turn_status,detail);
+            ReportAudioRxMetrics("turn_complete",completed_id);
+            g_audio_turn_completed_id.store(completed_id);
+            g_audio_turn_id.store(completed_id+1);
             turn_model_turn_seen = false;
             turn_model_part_count = 0;
             turn_audio_part_count = 0;
@@ -1178,7 +1216,7 @@ void WebSocketEventHandler(void* handler_arg, esp_event_base_t, int32_t event_id
             g_error.store(true);
             g_client_failed.store(true);
             g_audio_epoch.fetch_add(1);
-            ClearAudioQueue();
+            ClearAudioQueue("ws_disconnected");
             ClearOutgoingAudioQueue();
             ReportWebSocketSessionSummary("transport_disconnect");
             ReportWebSocketDisconnectError(event);
@@ -1198,7 +1236,7 @@ void WebSocketEventHandler(void* handler_arg, esp_event_base_t, int32_t event_id
             g_error.store(true);
             g_client_failed.store(true);
             g_audio_epoch.fetch_add(1);
-            ClearAudioQueue();
+            ClearAudioQueue("ws_closed");
             ClearOutgoingAudioQueue();
             if (!g_connection_failure_reported.exchange(true)) {
                 const int close_code = event != nullptr ? event->close_status_code : 0;
@@ -1730,11 +1768,22 @@ void MicrophoneWorker(void*) {
 }
 
 void SpeakerWorker(void*) {
-    AudioChunk* chunk = nullptr;
-    bool speaker_enabled = false;
-    bool speaker_write_reported = false;
-    bool speaker_write_error_reported = false;
-
+    AudioChunk* chunk=nullptr;bool speaker_enabled=false,speaker_write_reported=false,speaker_write_error_reported=false;
+    uint32_t playback_turn=0,playback_chunks=0,playback_failures=0,playback_enable_failures=0,playback_peak=0;
+    uint64_t playback_samples=0,playback_written=0;int64_t playback_started_us=0;
+    const auto report_playback=[&](const char* status){
+        if(!playback_turn)return;
+        const uint64_t ms=playback_started_us>0?(uint64_t)std::max<int64_t>(0,esp_timer_get_time()-playback_started_us)/1000:0;
+        char d[256]{};std::snprintf(d,sizeof(d),
+          "turn_id=%lu chunks=%lu pcm_samples=%llu i2s_samples_written=%llu duration_ms=%llu peak_max=%lu write_failures=%lu enable_failures=%lu queue_depth=%lu",
+          (unsigned long)playback_turn,(unsigned long)playback_chunks,(unsigned long long)playback_samples,
+          (unsigned long long)playback_written,(unsigned long long)ms,(unsigned long)playback_peak,
+          (unsigned long)playback_failures,(unsigned long)playback_enable_failures,
+          (unsigned long)(g_audio_queue?uxQueueMessagesWaiting(g_audio_queue):0));
+        chatai::diagnostics::Add("GEMINI_PLAYBACK",status,d);
+        playback_turn=playback_chunks=playback_failures=playback_enable_failures=playback_peak=0;
+        playback_samples=playback_written=0;playback_started_us=0;
+    };
     while (true) {
         if (g_stop_speaker_requested.exchange(false)) {
             if (speaker_enabled) {
@@ -1743,13 +1792,12 @@ void SpeakerWorker(void*) {
             }
             g_speaking.store(false);
         }
-        if (g_audio_queue == nullptr ||
-            xQueueReceive(g_audio_queue, &chunk, pdMS_TO_TICKS(100)) != pdTRUE) {
-            if (speaker_enabled && g_audio_queue != nullptr &&
-                uxQueueMessagesWaiting(g_audio_queue) == 0) {
-                chatai::audio::EnableSpeaker(false);
-                speaker_enabled = false;
-                g_speaking.store(false);
+        if(g_audio_queue==nullptr||xQueueReceive(g_audio_queue,&chunk,pdMS_TO_TICKS(100))!=pdTRUE){
+            const bool empty=g_audio_queue&&uxQueueMessagesWaiting(g_audio_queue)==0;
+            if(speaker_enabled&&empty){chatai::audio::EnableSpeaker(false);speaker_enabled=false;g_speaking.store(false);}
+            if(empty&&playback_turn){
+                if(g_audio_turn_aborted_id.load()>=playback_turn)report_playback("ABORTED");
+                else if(g_audio_turn_completed_id.load()>=playback_turn)report_playback("DRAINED");
             }
             continue;
         }
@@ -1761,6 +1809,12 @@ void SpeakerWorker(void*) {
             continue;
         }
 
+        if(playback_turn&&playback_turn!=chunk->turn_id)report_playback("PARTIAL_TURN_SWITCH");
+        if(!playback_turn){playback_turn=chunk->turn_id;playback_started_us=esp_timer_get_time();}
+        ++playback_chunks;playback_samples+=chunk->sample_count;
+        int32_t pcm_peak=0;
+        for(size_t i=0;i<chunk->sample_count;++i){const int32_t v=chunk->samples[i];pcm_peak=std::max(pcm_peak,v<0?-v:v);}
+        playback_peak=std::max(playback_peak,(uint32_t)pcm_peak);
         if (!speaker_enabled) {
             chatai::diagnostics::SetCrashContext("SPEAKER_ENABLE_BEGIN", "enabling I2S TX");
             const esp_err_t enable_result = chatai::audio::EnableSpeaker(true);
@@ -1769,6 +1823,7 @@ void SpeakerWorker(void*) {
                 chatai::diagnostics::SetCrashContext("SPEAKER_ENABLE_FAIL", esp_err_to_name(enable_result));
                 chatai::diagnostics::Add("SPEAKER_START", "FAIL", esp_err_to_name(enable_result));
                 ESP_LOGE(kTag, "Could not enable speaker: %s", esp_err_to_name(enable_result));
+                ++playback_enable_failures;++playback_failures;
                 std::free(chunk);
                 chunk = nullptr;
                 continue;
@@ -1780,19 +1835,15 @@ void SpeakerWorker(void*) {
         }
 
         g_speaking.store(true);
-        int32_t pcm_peak = 0;
-        for (size_t i = 0; i < chunk->sample_count; ++i) {
-            const int32_t sample = chunk->samples[i];
-            pcm_peak = std::max(pcm_peak, sample < 0 ? -sample : sample);
-        }
-
         size_t samples_written = 0;
         const esp_err_t write_result = chatai::audio::WriteSpeakerPcm16(
             chunk->samples, chunk->sample_count, &samples_written, 100);
         const size_t requested_bytes = chunk->sample_count * sizeof(int32_t);
         const size_t written_bytes = samples_written * sizeof(int32_t);
         const int output_volume = chatai::audio::GetOutputVolume();
+        playback_written+=samples_written;
         if (write_result != ESP_OK || samples_written != chunk->sample_count) {
+            ++playback_failures;
             char detail[160]{};
             std::snprintf(detail, sizeof(detail),
                           "result=%s samples=%lu/%lu bytes=%lu/%lu volume=%d peak=%ld",
@@ -1860,7 +1911,7 @@ void GeminiWorker(void*) {
                 g_waiting_setup.store(false);
                 g_speaking.store(false);
                 g_audio_epoch.fetch_add(1);
-                ClearAudioQueue();
+                ClearAudioQueue("client_restart");
                 ClearOutgoingAudioQueue();
                 g_client_failed.store(false);
 
@@ -2073,7 +2124,7 @@ void AbortSpeaking() {
     if (!g_speaking.exchange(false)) return;
     g_discard_current_response.store(true);
     g_audio_epoch.fetch_add(1);
-    ClearAudioQueue();
+    ClearAudioQueue("abort_speaking");
     g_stop_speaker_requested.store(true);
     chatai::diagnostics::Add("PLAYBACK", "STOPPED",
         "local playback stopped by BOOT; server generation may continue until turnComplete or incoming speech interruption");
@@ -2114,7 +2165,7 @@ void RequestReconnect() {
     g_ready.store(false);
     g_error.store(false);
     g_audio_epoch.fetch_add(1);
-    ClearAudioQueue();
+    ClearAudioQueue("request_reconnect");
 }
 
 }  // namespace chatai::gemini
