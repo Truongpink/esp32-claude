@@ -678,8 +678,8 @@ updateFirmwareButton.addEventListener("click", async () => {
     otaFileInfo.textContent = firmwareName + " · " + formatBytes(firmware.size) +
       " · Firmware Build #" + targetBuild;
     if (!confirm("Cài đặt " + firmwareName + " (" + formatBytes(firmware.size) +
-      ")\\nBản dựng hiện tại: #" + currentBuildNumber + "\\nBản dựng mục tiêu: #" + targetBuild +
-      "\\nKhông tắt nguồn trong quá trình cập nhật. Tiếp tục?")) {
+      ")\nBản dựng hiện tại: #" + currentBuildNumber + "\nBản dựng mục tiêu: #" + targetBuild +
+      "\nKhông tắt nguồn trong quá trình cập nhật. Tiếp tục?")) {
       updateFirmwareButton.disabled = false;
       return;
     }
@@ -1393,7 +1393,7 @@ esp_err_t OtaUploadHandler(httpd_req_t* request) {
         return SendError(request, "500 Internal Server Error",
                          "Không thể chọn firmware mới để khởi động");
     }
-    if (firmware_filename[0] != '\\0') {
+    if (firmware_filename[0] != '\0') {
         const esp_err_t metadata_result =
             chatai::settings::SavePendingFirmwareName(firmware_filename, target->address);
         if (metadata_result != ESP_OK) {
