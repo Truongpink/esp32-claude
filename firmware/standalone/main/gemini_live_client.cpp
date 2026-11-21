@@ -1306,16 +1306,20 @@ void MicrophoneWorker(void*) {
         }
         // Microphone capture follows the user's listen request, not Internet
         // reachability. A failed DNS/TCP probe must pause TX, never disable I2S RX.
-        const bool transport_ready = g_ready.load() &&
+        const bool internet_available =
             chatai::network::NetworkManager::IsInternetAvailable();
+        const bool transport_ready = g_ready.load() && internet_available;
 
         if (should_listen) {
             if (!transport_state_initialized || transport_ready != last_transport_ready) {
                 if (!transport_ready) {
-                    chatai::diagnostics::Add("MIC_NETWORK_OFFLINE", "WARN",
-                        "I2S capture remains active; Gemini audio TX paused");
+                    if (!internet_available) {
+                        chatai::diagnostics::Add("MIC_NETWORK_OFFLINE", "WARN",
+                            "I2S capture remains active; Gemini audio TX paused");
+                    }
                     chatai::diagnostics::Add("MIC_TX_PAUSED", "INFO",
-                        "reason=Gemini transport not ready");
+                        internet_available ? "reason=Gemini session not ready" :
+                                             "reason=Internet unavailable");
                     g_mic_tx_generation.fetch_add(1);
                     ClearOutgoingAudioQueue();
                     audio_stream_active = false;
