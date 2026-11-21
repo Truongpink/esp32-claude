@@ -1242,6 +1242,8 @@ void MicrophoneWorker(void*) {
     bool microphone_enabled = false;
     bool microphone_error_reported = false;
     bool audio_stream_active = false;
+    bool transport_state_initialized = false;
+    bool last_transport_ready = false;
     TickType_t mic_stats_started = 0;
     int32_t mic_min = INT16_MAX;
     int32_t mic_max = INT16_MIN;
@@ -1296,12 +1298,30 @@ void MicrophoneWorker(void*) {
             last_should_listen = should_listen;
             listen_state_initialized = true;
         }
-        // g_ready is cleared by the WebSocket lifecycle before teardown.
-        // Do not take g_send_mutex here: the TX worker may hold it while a
-        // WebSocket send waits, which must never stall microphone capture.
+        // Microphone capture follows the user's listen request, not Internet
+        // reachability. A failed DNS/TCP probe must pause TX, never disable I2S RX.
         const bool transport_ready = g_ready.load() &&
             chatai::network::NetworkManager::IsInternetAvailable();
-        if (!transport_ready || !should_listen) {
+
+        if (should_listen) {
+            if (!transport_state_initialized || transport_ready != last_transport_ready) {
+                if (!transport_ready) {
+                    chatai::diagnostics::Add("MIC_NETWORK_OFFLINE", "WARN",
+                        "I2S capture remains active; Gemini audio TX paused");
+                    chatai::diagnostics::Add("MIC_TX_PAUSED", "INFO",
+                        "reason=Gemini transport not ready");
+                    ClearOutgoingAudioQueue();
+                    audio_stream_active = false;
+                } else if (transport_state_initialized) {
+                    chatai::diagnostics::Add("MIC_TX_RESUMED", "OK",
+                        "Gemini transport ready; sending new microphone audio");
+                }
+                last_transport_ready = transport_ready;
+                transport_state_initialized = true;
+            }
+        } else {
+            transport_state_initialized = false;
+            last_transport_ready = false;
             if (audio_stream_active && transport_ready) {
                 static constexpr char kAudioStreamEnd[] =
                     "{\"realtimeInput\":{\"audioStreamEnd\":true}}";
@@ -1310,6 +1330,11 @@ void MicrophoneWorker(void*) {
             audio_stream_active = false;
             if (microphone_enabled) {
                 const esp_err_t stop_result = chatai::audio::EnableMicrophone(false);
+                char stop_detail[96]{};
+                std::snprintf(stop_detail, sizeof(stop_detail),
+                              "reason=listen_disabled result=%s",
+                              esp_err_to_name(stop_result));
+                chatai::diagnostics::Add("MIC_STOP_REASON", "INFO", stop_detail);
                 chatai::diagnostics::Add("MIC_STOP",
                     stop_result == ESP_OK ? "OK" : "FAIL",
                     stop_result == ESP_OK ? "I2S RX disabled" : esp_err_to_name(stop_result));
@@ -1359,6 +1384,8 @@ void MicrophoneWorker(void*) {
                           static_cast<unsigned long>(heap_caps_get_free_size(MALLOC_CAP_8BIT)),
                           static_cast<unsigned>(uxTaskGetStackHighWaterMark(nullptr)));
             chatai::diagnostics::Add("MIC_START", "OK", detail);
+            chatai::diagnostics::Add("MIC_RUNNING", "OK",
+                "I2S RX capture active while listening is requested");
         }
 
         size_t samples_read = 0;
@@ -1459,6 +1486,14 @@ void MicrophoneWorker(void*) {
             mic_sum = 0;
             mic_sample_count = 0;
             mic_clipped_count = 0;
+        }
+
+        // Recheck transport after the blocking I2S read. While offline, keep
+        // consuming fresh microphone samples but do not encode or queue stale audio.
+        if (!g_ready.load() ||
+            !chatai::network::NetworkManager::IsInternetAvailable()) {
+            audio_stream_active = false;
+            continue;
         }
 
         size_t encoded_size = 0;
