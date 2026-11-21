@@ -601,7 +601,7 @@ firmwareInput.addEventListener("change", () => {
   otaResult.textContent = "";
 });
 
-async function waitForOtaConfirmation(expectedFilename) {
+async function waitForOtaConfirmation(expectedFilename, previousPartition) {
   otaResult.textContent = "Đã gửi firmware. Đang chờ ESP32 khởi động và xác nhận cài đặt...";
   for (let attempt = 0; attempt < 30; attempt++) {
     try {
@@ -611,7 +611,8 @@ async function waitForOtaConfirmation(expectedFilename) {
         currentBuildNumber = Number(data.build_number || 0);
         firmwareStatus.textContent = "Bản dựng firmware: #" + currentBuildNumber +
           (data.installed_firmware ? " · Đã cài: " + data.installed_firmware : "");
-        if (data.installed_firmware === expectedFilename) {
+        if (data.installed_firmware === expectedFilename &&
+            data.running_partition !== previousPartition) {
           otaResult.textContent = "Cài đặt thành công. ESP32 đã khởi động và xác nhận " + expectedFilename + ".";
           return true;
         }
@@ -651,11 +652,15 @@ updateFirmwareButton.addEventListener("click", async () => {
       updateFirmwareButton.disabled = false;
       return;
     }
+    const beforeResponse = await fetch("/api/firmware/status", {cache:"no-store"});
+    if (!beforeResponse.ok) throw new Error("Không đọc được phân vùng firmware đang chạy.");
+    const beforeStatus = await beforeResponse.json();
+    const previousPartition = beforeStatus.running_partition;
+    if (!previousPartition) throw new Error("Không xác định được phân vùng firmware hiện tại.");
     otaResult.textContent = "Đang tải firmware lên thiết bị...";
     await uploadOtaFirmware(firmware, firmwareName);
     otaProgress.style.width = "100%";
-    await waitForOtaConfirmation(firmwareName);
-    updateFirmwareButton.disabled = false;
+    await waitForOtaConfirmation(firmwareName, previousPartition);
     updateFirmwareButton.disabled = false;
   } catch (error) {
     otaResult.textContent = error.message;

@@ -74,6 +74,11 @@ jobs:
           set -euo pipefail
           source_bin="firmware/standalone/build/ChatAI_TPIOS.bin"
           test -s "$source_bin"
+          magic="$(od -An -tx1 -N1 "$source_bin" | tr -d ' \\n')"
+          if [[ "$magic" != "e9" ]]; then
+            echo "The output is not an ESP application image (expected image magic E9)."
+            exit 1
+          fi
           size="$(stat -c '%s' "$source_bin")"
           max_size=$((0x3F0000))
           if (( size > max_size )); then
