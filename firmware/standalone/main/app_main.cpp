@@ -162,6 +162,29 @@ extern "C" void app_main(void) {
         return;
     }
 
+#if CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE
+    const esp_partition_t* running = esp_ota_get_running_partition();
+    esp_ota_img_states_t image_state;
+    if (running != nullptr &&
+        esp_ota_get_state_partition(running, &image_state) == ESP_OK &&
+        image_state == ESP_OTA_IMG_PENDING_VERIFY) {
+        const esp_err_t validation_result = esp_ota_mark_app_valid_cancel_rollback();
+        if (validation_result != ESP_OK) {
+            ESP_LOGE(kTag, "Could not confirm OTA image: %s",
+                     esp_err_to_name(validation_result));
+            esp_restart();
+            return;
+        }
+        ESP_LOGI(kTag, "OTA firmware boot confirmed; rollback cancelled");
+    }
+    if (running != nullptr) {
+        const esp_err_t name_result = chatai::settings::ConfirmPendingFirmwareName(running->address);
+        if (name_result != ESP_OK)
+            ESP_LOGW(kTag, "Could not save confirmed firmware filename: %s",
+                     esp_err_to_name(name_result));
+    }
+#endif
+
     const esp_err_t led_result = chatai::status_led::Initialize();
     if (led_result != ESP_OK) {
         ESP_LOGW(kTag, "Status LED unavailable: %s", esp_err_to_name(led_result));
@@ -180,22 +203,7 @@ extern "C" void app_main(void) {
         return;
     }
 
-#if CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE
-    const esp_partition_t* running = esp_ota_get_running_partition();
-    esp_ota_img_states_t image_state;
-    if (running != nullptr &&
-        esp_ota_get_state_partition(running, &image_state) == ESP_OK &&
-        image_state == ESP_OTA_IMG_PENDING_VERIFY) {
-        const esp_err_t validation_result = esp_ota_mark_app_valid_cancel_rollback();
-        if (validation_result != ESP_OK) {
-            ESP_LOGE(kTag, "Could not confirm OTA image: %s",
-                     esp_err_to_name(validation_result));
-            esp_restart();
-            return;
-        }
-        ESP_LOGI(kTag, "OTA firmware startup validated; rollback cancelled");
-    }
-#endif
+
 
     ESP_LOGI(kTag, "ESP-IDF platform, native Wi-Fi and OLED startup completed");
     ESP_LOGI(kTag, "Gemini Live standalone mode initialized");

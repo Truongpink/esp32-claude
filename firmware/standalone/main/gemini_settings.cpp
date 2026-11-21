@@ -15,6 +15,9 @@ constexpr char kNvsNamespace[] = "chatai_ai";
 constexpr char kApiKey[] = "gemini_key";
 constexpr char kVoice[] = "voice";
 constexpr char kSystemPrompt[] = "system_prompt";
+constexpr char kInstalledFirmware[] = "fw_installed";
+constexpr char kPendingFirmware[] = "fw_pending";
+constexpr char kPendingFirmwareAddress[] = "fw_pending_addr";
 constexpr size_t kLegacySystemPromptBytes = 3000;
 constexpr size_t kMaxSystemPromptBytes = 128 * 1024;
 constexpr char kPromptStoragePath0[] = "/assets/system_prompt_0.bin";
@@ -303,6 +306,67 @@ size_t GetMaxGeminiSystemPromptBytes() {
     if (esp_spiffs_info("assets", &total, &used) != ESP_OK ||
         total <= used + 4096) return 0;
     return std::min(kMaxSystemPromptBytes, total - used - 4096);
+}
+
+esp_err_t SavePendingFirmwareName(const std::string& filename, uint32_t target_address) {
+    if (filename.empty() || filename.size() > 64 ||
+        filename.find('/') != std::string::npos ||
+        filename.find('\\') != std::string::npos) return ESP_ERR_INVALID_ARG;
+    nvs_handle_t handle;
+    esp_err_t result = nvs_open(kNvsNamespace, NVS_READWRITE, &handle);
+    if (result != ESP_OK) return result;
+    result = nvs_set_str(handle, kPendingFirmware, filename.c_str());
+    if (result == ESP_OK) result = nvs_set_u32(handle, kPendingFirmwareAddress, target_address);
+    if (result == ESP_OK) result = nvs_commit(handle);
+    nvs_close(handle);
+    return result;
+}
+
+esp_err_t ConfirmPendingFirmwareName(uint32_t running_address) {
+    nvs_handle_t handle;
+    esp_err_t result = nvs_open(kNvsNamespace, NVS_READWRITE, &handle);
+    if (result != ESP_OK) return result == ESP_ERR_NVS_NOT_FOUND ? ESP_OK : result;
+    uint32_t pending_address = 0;
+    size_t size = 0;
+    const esp_err_t address_result = nvs_get_u32(handle, kPendingFirmwareAddress, &pending_address);
+    const esp_err_t size_result = nvs_get_str(handle, kPendingFirmware, nullptr, &size);
+    std::string pending_name;
+    if (address_result == ESP_OK && size_result == ESP_OK && size > 1 && size <= 65) {
+        pending_name.resize(size);
+        if (nvs_get_str(handle, kPendingFirmware, pending_name.data(), &size) == ESP_OK)
+            pending_name.resize(size - 1);
+        else
+            pending_name.clear();
+    }
+    if (address_result == ESP_OK && pending_address == running_address && !pending_name.empty())
+        result = nvs_set_str(handle, kInstalledFirmware, pending_name.c_str());
+    else
+        result = ESP_OK;
+    if (result == ESP_OK) {
+        const esp_err_t e1 = nvs_erase_key(handle, kPendingFirmware);
+        const esp_err_t e2 = nvs_erase_key(handle, kPendingFirmwareAddress);
+        if (e1 != ESP_OK && e1 != ESP_ERR_NVS_NOT_FOUND) result = e1;
+        if (result == ESP_OK && e2 != ESP_OK && e2 != ESP_ERR_NVS_NOT_FOUND) result = e2;
+    }
+    if (result == ESP_OK) result = nvs_commit(handle);
+    nvs_close(handle);
+    return result;
+}
+
+std::string GetInstalledFirmwareName() {
+    nvs_handle_t handle;
+    if (nvs_open(kNvsNamespace, NVS_READONLY, &handle) != ESP_OK) return {};
+    size_t size = 0;
+    if (nvs_get_str(handle, kInstalledFirmware, nullptr, &size) != ESP_OK || size <= 1 || size > 65) {
+        nvs_close(handle);
+        return {};
+    }
+    std::string value(size, '\0');
+    const esp_err_t result = nvs_get_str(handle, kInstalledFirmware, value.data(), &size);
+    nvs_close(handle);
+    if (result != ESP_OK) return {};
+    value.resize(size - 1);
+    return value;
 }
 
 bool HasGeminiApiKey() {
