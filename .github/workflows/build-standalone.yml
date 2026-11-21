@@ -105,9 +105,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: ChatAI-TPIOS-${{ steps.version.outputs.build_number }}
-          path: |
-            firmware/dist/ChatAI-TPIOS-${{ steps.version.outputs.build_number }}.bin
-            firmware/dist/ChatAI-TPIOS-${{ steps.version.outputs.build_number }}.zip
+          path: firmware/dist/ChatAI-TPIOS-${{ steps.version.outputs.build_number }}.bin
           if-no-files-found: error
           retention-days: 30
 
