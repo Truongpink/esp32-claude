@@ -64,6 +64,23 @@ struct AudioChunk {
     int16_t samples[kMaxOutputSamples];
 };
 
+struct MicLoopScope {
+    int64_t started_us;
+    int64_t* last_end_us;
+    uint64_t* duration_total_us;
+    uint64_t* duration_max_us;
+    uint32_t* duration_count;
+    ~MicLoopScope() {
+        const int64_t ended_us = esp_timer_get_time();
+        const uint64_t elapsed_us = static_cast<uint64_t>(
+            std::max<int64_t>(0, ended_us - started_us));
+        *duration_total_us += elapsed_us;
+        *duration_max_us = std::max(*duration_max_us, elapsed_us);
+        ++(*duration_count);
+        *last_end_us = ended_us;
+    }
+};
+
 std::atomic<bool> g_ready{false};
 std::atomic<bool> g_speaking{false};
 std::atomic<bool> g_error{false};
@@ -1357,28 +1374,81 @@ void MicrophoneWorker(void*) {
     uint32_t pipeline_read_calls = 0;
     uint32_t pipeline_encode_calls = 0;
     uint32_t pipeline_iterations = 0;
+    int64_t previous_loop_start_us = 0;
+    int64_t previous_loop_end_us = 0;
+    uint64_t loop_interval_total_us = 0, loop_interval_max_us = 0;
+    uint64_t loop_gap_max_us = 0, loop_duration_total_us = 0, loop_duration_max_us = 0;
+    uint32_t loop_interval_count = 0, loop_duration_count = 0;
+    uint32_t loop_gap_gt_20ms = 0, loop_gap_gt_50ms = 0, loop_gap_gt_100ms = 0;
+    uint64_t json_total_us = 0, json_max_us = 0;
+    uint32_t json_calls = 0;
 
     while (true) {
         const int64_t pipeline_now_us = esp_timer_get_time();
+        MicLoopScope loop_scope{pipeline_now_us, &previous_loop_end_us,
+                                &loop_duration_total_us, &loop_duration_max_us,
+                                &loop_duration_count};
+        if (previous_loop_start_us > 0) {
+            const uint64_t interval_us = static_cast<uint64_t>(
+                std::max<int64_t>(0, pipeline_now_us - previous_loop_start_us));
+            const uint64_t gap_us = previous_loop_end_us > 0
+                ? static_cast<uint64_t>(std::max<int64_t>(0, pipeline_now_us - previous_loop_end_us)) : 0;
+            loop_interval_total_us += interval_us;
+            loop_interval_max_us = std::max(loop_interval_max_us, interval_us);
+            loop_gap_max_us = std::max(loop_gap_max_us, gap_us);
+            if (gap_us > 20000) ++loop_gap_gt_20ms;
+            if (gap_us > 50000) ++loop_gap_gt_50ms;
+            if (gap_us > 100000) ++loop_gap_gt_100ms;
+            ++loop_interval_count;
+        }
+        previous_loop_start_us = pipeline_now_us;
         if (pipeline_now_us - pipeline_window_started_us >= 5000000) {
-            char detail[288]{};
+            char detail[384]{};
             std::snprintf(detail, sizeof(detail),
-                "window_us=%llu loops=%lu read_calls=%lu read_avg_us=%llu read_max_us=%llu "
-                "encode_calls=%lu encode_avg_us=%llu encode_max_us=%llu",
+                "window_us=%llu loops=%lu interval_avg_us=%llu interval_max_us=%llu "
+                "gap_max_us=%llu gap_gt20=%lu gap_gt50=%lu gap_gt100=%lu "
+                "duration_avg_us=%llu duration_max_us=%llu read_avg_us=%llu read_max_us=%llu "
+                "encode_avg_us=%llu encode_max_us=%llu json_avg_us=%llu json_max_us=%llu",
                 static_cast<unsigned long long>(pipeline_now_us - pipeline_window_started_us),
                 static_cast<unsigned long>(pipeline_iterations),
-                static_cast<unsigned long>(pipeline_read_calls),
+                static_cast<unsigned long long>(loop_interval_count ? loop_interval_total_us / loop_interval_count : 0),
+                static_cast<unsigned long long>(loop_interval_max_us),
+                static_cast<unsigned long long>(loop_gap_max_us),
+                static_cast<unsigned long>(loop_gap_gt_20ms),
+                static_cast<unsigned long>(loop_gap_gt_50ms),
+                static_cast<unsigned long>(loop_gap_gt_100ms),
+                static_cast<unsigned long long>(loop_duration_count ? loop_duration_total_us / loop_duration_count : 0),
+                static_cast<unsigned long long>(loop_duration_max_us),
                 static_cast<unsigned long long>(pipeline_read_calls ? pipeline_read_total_us / pipeline_read_calls : 0),
                 static_cast<unsigned long long>(pipeline_read_max_us),
-                static_cast<unsigned long>(pipeline_encode_calls),
                 static_cast<unsigned long long>(pipeline_encode_calls ? pipeline_encode_total_us / pipeline_encode_calls : 0),
-                static_cast<unsigned long long>(pipeline_encode_max_us));
-            chatai::diagnostics::Add("MIC_PIPELINE", "INFO", detail);
+                static_cast<unsigned long long>(pipeline_encode_max_us),
+                static_cast<unsigned long long>(json_calls ? json_total_us / json_calls : 0),
+                static_cast<unsigned long long>(json_max_us));
+            chatai::diagnostics::Add("MIC_LOOP", "INFO", detail);
+            const size_t internal_free = heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+            const size_t internal_min = heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+            const size_t internal_largest = heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+            const size_t psram_free = heap_caps_get_free_size(MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+            const size_t psram_largest = heap_caps_get_largest_free_block(MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+            char heap_detail[224]{};
+            std::snprintf(heap_detail, sizeof(heap_detail),
+                "internal_free=%lu internal_min=%lu internal_largest=%lu psram_free=%lu psram_largest=%lu",
+                static_cast<unsigned long>(internal_free), static_cast<unsigned long>(internal_min),
+                static_cast<unsigned long>(internal_largest), static_cast<unsigned long>(psram_free),
+                static_cast<unsigned long>(psram_largest));
+            chatai::diagnostics::Add("HEAP", "INFO", heap_detail);
             pipeline_window_started_us = pipeline_now_us;
             pipeline_read_total_us = pipeline_read_max_us = 0;
             pipeline_encode_total_us = pipeline_encode_max_us = 0;
             pipeline_read_calls = pipeline_encode_calls = 0;
             pipeline_iterations = 0;
+            loop_interval_total_us = loop_interval_max_us = loop_gap_max_us = 0;
+            loop_duration_total_us = loop_duration_max_us = 0;
+            loop_interval_count = loop_duration_count = 0;
+            loop_gap_gt_20ms = loop_gap_gt_50ms = loop_gap_gt_100ms = 0;
+            json_total_us = json_max_us = 0;
+            json_calls = 0;
         }
         ++pipeline_iterations;
         const bool should_listen = ShouldListen();
@@ -1613,11 +1683,17 @@ void MicrophoneWorker(void*) {
         }
         encoded[encoded_size] = '\0';
 
+        const int64_t json_started_us = esp_timer_get_time();
         const int message_size = std::snprintf(
             message, sizeof(message),
             "{\"realtimeInput\":{\"audio\":{"
             "\"mimeType\":\"audio/pcm;rate=16000\",\"data\":\"%s\"}}}",
             reinterpret_cast<const char*>(encoded));
+        const uint64_t json_elapsed_us = static_cast<uint64_t>(
+            std::max<int64_t>(0, esp_timer_get_time() - json_started_us));
+        json_total_us += json_elapsed_us;
+        json_max_us = std::max(json_max_us, json_elapsed_us);
+        ++json_calls;
         if (message_size <= 0 || message_size >= static_cast<int>(sizeof(message))) {
             ESP_LOGE(kTag, "Microphone audio message exceeded its buffer");
             continue;
