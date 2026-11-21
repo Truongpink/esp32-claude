@@ -153,6 +153,7 @@ std::atomic<uint64_t> g_outgoing_audio_mutex_hold_total_us{0}, g_outgoing_audio_
 std::atomic<uint64_t> g_outgoing_audio_age_total_us{0}, g_outgoing_audio_age_max_us{0};
 std::atomic<uint64_t> g_outgoing_audio_malloc_total_us{0}, g_outgoing_audio_copy_total_us{0};
 std::atomic<uint64_t> g_outgoing_audio_enqueue_total_us{0};
+std::atomic<uint32_t> g_outgoing_audio_queue_calls{0};
 std::atomic<uint32_t> g_outgoing_audio_queue_max_depth{0};
 enum class IncomingMessageType : uint8_t { kNone, kText, kBinary };
 std::string g_incoming_message;
@@ -590,6 +591,7 @@ bool QueueOutgoingAudio(const char* data, size_t length, bool stream_end = false
         return false;
     }
 
+    g_outgoing_audio_queue_calls.fetch_add(1);
     const int64_t malloc_started_us = esp_timer_get_time();
     auto* item = static_cast<OutgoingAudioMessage*>(
         std::malloc(sizeof(OutgoingAudioMessage)));
@@ -1313,12 +1315,13 @@ void OutgoingAudioWorker(void*) {
             const uint64_t copy_total = g_outgoing_audio_copy_total_us.exchange(0);
             const uint64_t enqueue_total = g_outgoing_audio_enqueue_total_us.exchange(0);
             const uint32_t queue_max = g_outgoing_audio_queue_max_depth.exchange(0);
+            const uint32_t queue_attempts = g_outgoing_audio_queue_calls.exchange(0);
             char detail[480]{};
             std::snprintf(detail, sizeof(detail),
                 "window_ms=5000 calls=%lu send_avg_us=%llu send_max_us=%llu "
                 "mutex_wait_avg_us=%llu mutex_wait_max_us=%llu ws_send_avg_us=%llu ws_send_max_us=%llu "
                 "mutex_hold_avg_us=%llu mutex_hold_max_us=%llu age_avg_ms=%llu age_max_ms=%llu "
-                "malloc_avg_us=%llu copy_avg_us=%llu enqueue_avg_us=%llu "
+                "malloc_avg_us=%llu copy_avg_us=%llu enqueue_avg_us=%llu queue_attempts=%lu "
                 "send_fail=%lu queue_depth=%lu queue_max=%lu queue_dropped=%lu",
                 static_cast<unsigned long>(calls),
                 static_cast<unsigned long long>(calls ? total_us / calls : 0),
@@ -1331,9 +1334,10 @@ void OutgoingAudioWorker(void*) {
                 static_cast<unsigned long long>(hold_max),
                 static_cast<unsigned long long>(calls ? age_total / calls / 1000 : 0),
                 static_cast<unsigned long long>(age_max / 1000),
-                static_cast<unsigned long long>(calls ? malloc_total / calls : 0),
-                static_cast<unsigned long long>(calls ? copy_total / calls : 0),
-                static_cast<unsigned long long>(calls ? enqueue_total / calls : 0),
+                static_cast<unsigned long long>(queue_attempts ? malloc_total / queue_attempts : 0),
+                static_cast<unsigned long long>(queue_attempts ? copy_total / queue_attempts : 0),
+                static_cast<unsigned long long>(queue_attempts ? enqueue_total / queue_attempts : 0),
+                static_cast<unsigned long>(queue_attempts),
                 static_cast<unsigned long>(g_outgoing_audio_send_failures.exchange(0)),
                 static_cast<unsigned long>(uxQueueMessagesWaiting(g_outgoing_audio_queue)),
                 static_cast<unsigned long>(queue_max),
@@ -1381,7 +1385,8 @@ void MicrophoneWorker(void*) {
     uint32_t loop_interval_count = 0, loop_duration_count = 0;
     uint32_t loop_gap_gt_20ms = 0, loop_gap_gt_50ms = 0, loop_gap_gt_100ms = 0;
     uint64_t json_total_us = 0, json_max_us = 0;
-    uint32_t json_calls = 0;
+    uint64_t pcm_process_total_us = 0, pcm_process_max_us = 0;
+    uint32_t json_calls = 0, pcm_process_calls = 0;
 
     while (true) {
         const int64_t pipeline_now_us = esp_timer_get_time();
@@ -1408,7 +1413,8 @@ void MicrophoneWorker(void*) {
                 "window_us=%llu loops=%lu interval_avg_us=%llu interval_max_us=%llu "
                 "gap_max_us=%llu gap_gt20=%lu gap_gt50=%lu gap_gt100=%lu "
                 "duration_avg_us=%llu duration_max_us=%llu read_avg_us=%llu read_max_us=%llu "
-                "encode_avg_us=%llu encode_max_us=%llu json_avg_us=%llu json_max_us=%llu",
+                "encode_avg_us=%llu encode_max_us=%llu pcm_avg_us=%llu pcm_max_us=%llu "
+                "json_avg_us=%llu json_max_us=%llu",
                 static_cast<unsigned long long>(pipeline_now_us - pipeline_window_started_us),
                 static_cast<unsigned long>(pipeline_iterations),
                 static_cast<unsigned long long>(loop_interval_count ? loop_interval_total_us / loop_interval_count : 0),
@@ -1423,6 +1429,8 @@ void MicrophoneWorker(void*) {
                 static_cast<unsigned long long>(pipeline_read_max_us),
                 static_cast<unsigned long long>(pipeline_encode_calls ? pipeline_encode_total_us / pipeline_encode_calls : 0),
                 static_cast<unsigned long long>(pipeline_encode_max_us),
+                static_cast<unsigned long long>(pcm_process_calls ? pcm_process_total_us / pcm_process_calls : 0),
+                static_cast<unsigned long long>(pcm_process_max_us),
                 static_cast<unsigned long long>(json_calls ? json_total_us / json_calls : 0),
                 static_cast<unsigned long long>(json_max_us));
             chatai::diagnostics::Add("MIC_LOOP", "INFO", detail);
@@ -1449,6 +1457,8 @@ void MicrophoneWorker(void*) {
             loop_gap_gt_20ms = loop_gap_gt_50ms = loop_gap_gt_100ms = 0;
             json_total_us = json_max_us = 0;
             json_calls = 0;
+            pcm_process_total_us = pcm_process_max_us = 0;
+            pcm_process_calls = 0;
         }
         ++pipeline_iterations;
         const bool should_listen = ShouldListen();
@@ -1611,6 +1621,7 @@ void MicrophoneWorker(void*) {
             microphone_read_reported = true;
         }
 
+        const int64_t pcm_process_started_us = esp_timer_get_time();
         for (size_t i = 0; i < samples_read; ++i) {
             const int32_t sample = pcm[i];
             const int32_t magnitude = sample < 0 ? -sample : sample;
@@ -1622,6 +1633,12 @@ void MicrophoneWorker(void*) {
             if (magnitude >= 32760) ++mic_clipped_count;
             ++mic_sample_count;
         }
+
+        const uint64_t pcm_process_elapsed_us = static_cast<uint64_t>(
+            std::max<int64_t>(0, esp_timer_get_time() - pcm_process_started_us));
+        pcm_process_total_us += pcm_process_elapsed_us;
+        pcm_process_max_us = std::max(pcm_process_max_us, pcm_process_elapsed_us);
+        ++pcm_process_calls;
 
         const TickType_t stats_now = xTaskGetTickCount();
         if (mic_sample_count > 0 &&
