@@ -27,7 +27,7 @@ Các quy tắc trong tệp này là bắt buộc đối với mọi lần làm v
 
 - Chỉ làm việc trên branch `main`.
 - Không tạo branch mới, không chuyển sang branch khác.
-- Chỉ commit trực tiếp lên `main` khi người dùng đã cho phép thao tác commit.
+- Chỉ sửa đúng phần đang lỗi, không được những phần đang chạy ok.
 - Không tự chạy GitHub Actions, workflow, Codemagic, build, flash hoặc OTA nếu chưa được người dùng cho phép riêng.
 - Không tự ý reset, force-push, xóa tệp hoặc ghi đè thay đổi của người dùng.
 
