@@ -444,6 +444,29 @@ function zipCrc32(bytes) {
   return (crc ^ 0xFFFFFFFF) >>> 0;
 }
 
+async function readFirmwareBuild(blob) {
+  const bytes = new Uint8Array(await blob.arrayBuffer());
+  if (bytes.length < 64 || bytes[0] !== 0xE9 ||
+      bytes[32] !== 0x32 || bytes[33] !== 0x54 ||
+      bytes[34] !== 0xCD || bytes[35] !== 0xAB) {
+    throw new Error("Tệp không có cấu trúc ứng dụng ESP-IDF hợp lệ.");
+  }
+  const marker = new TextEncoder().encode("CHATAI_BUILD_NUMBER=");
+  for (let i = 0; i <= bytes.length - marker.length; i++) {
+    let match = true;
+    for (let j = 0; j < marker.length; j++) {
+      if (bytes[i + j] !== marker[j]) { match = false; break; }
+    }
+    if (!match) continue;
+    let end = i + marker.length;
+    while (end < bytes.length && bytes[end] >= 48 && bytes[end] <= 57) end++;
+    if (end === i + marker.length) continue;
+    const value = Number(new TextDecoder().decode(bytes.slice(i + marker.length, end)));
+    if (Number.isSafeInteger(value) && value >= 0) return value;
+  }
+  throw new Error("Không tìm thấy số bản dựng trong firmware. Hãy chọn BIN chính thức của ChatAI TPIOS.");
+}
+
 async function extractOtaBinFromZip(file) {
   if (typeof DecompressionStream === "undefined") {
     throw new Error("Trình duyệt không hỗ trợ giải nén ZIP. Hãy cập nhật Safari hoặc chọn trực tiếp tệp BIN.");
@@ -601,26 +624,33 @@ firmwareInput.addEventListener("change", () => {
   otaResult.textContent = "";
 });
 
-async function waitForOtaConfirmation(expectedFilename, previousPartition) {
-  otaResult.textContent = "Đã gửi firmware. Đang chờ ESP32 khởi động và xác nhận cài đặt...";
+async function waitForRunningBuild(expectedBuild, previousPartition) {
+  otaResult.textContent = "Firmware đã được ghi. Đang chờ ESP32 khởi động và xác nhận bản dựng mới...";
+  let lastBuild = null;
   for (let attempt = 0; attempt < 30; attempt++) {
     try {
       const response = await fetch("/api/firmware/status", {cache:"no-store"});
       if (response.ok) {
         const data = await response.json();
-        currentBuildNumber = Number(data.build_number || 0);
-        firmwareStatus.textContent = "Bản dựng firmware: #" + currentBuildNumber +
-          (data.installed_firmware ? " · Đã cài: " + data.installed_firmware : "");
-        if (data.installed_firmware === expectedFilename &&
+        lastBuild = Number(data.build_number || 0);
+        currentBuildNumber = lastBuild;
+        firmwareStatus.textContent = "Bản dựng firmware: #" + lastBuild +
+          " · Phân vùng đang chạy: " + (data.running_partition || "không rõ") +
+          (data.installed_firmware ? " · Tệp: " + data.installed_firmware : "");
+        if (lastBuild === expectedBuild && data.running_partition &&
             data.running_partition !== previousPartition) {
-          otaResult.textContent = "Cài đặt thành công. ESP32 đã khởi động và xác nhận " + expectedFilename + ".";
+          otaResult.textContent = "Cập nhật thành công. ESP32 đang chạy Firmware Build #" + expectedBuild + ".";
           return true;
         }
       }
     } catch (_) {}
     await new Promise(resolve => setTimeout(resolve, 1000));
   }
-  otaResult.textContent = "Chưa nhận được xác nhận cài đặt từ ESP32. Tên firmware đã cài trước đó được giữ nguyên; hãy kiểm tra lại trạng thái thiết bị.";
+  otaResult.textContent = lastBuild === expectedBuild
+    ? "ESP32 đã chạy đúng Build #" + expectedBuild + " nhưng chưa xác nhận được thay đổi phân vùng."
+    : "ESP32 chưa chuyển sang Build #" + expectedBuild + ". Hiện thiết bị báo Build #" +
+      (lastBuild === null ? "không xác định" : lastBuild) +
+      ". Cần kiểm tra log để phân biệt lỗi ghi/chọn phân vùng với rollback khi khởi động.";
   return false;
 }
 
@@ -643,12 +673,13 @@ updateFirmwareButton.addEventListener("click", async () => {
     if (firmware.size < 4096) throw new Error("Firmware quá nhỏ hoặc không hợp lệ.");
     if (!otaMaxBytes) throw new Error("Không đọc được dung lượng phân vùng OTA. Hãy tải lại trang.");
     if (firmware.size > otaMaxBytes) throw new Error("Firmware vượt giới hạn phân vùng OTA (" + formatBytes(otaMaxBytes) + ").");
-    const imageHeader = new Uint8Array(await firmware.slice(0, 1).arrayBuffer());
-    if (imageHeader.length !== 1 || imageHeader[0] !== 0xE9)
-      throw new Error("Tệp không có định dạng firmware ứng dụng ESP32.");
-    otaFileInfo.textContent = firmwareName + " · " + formatBytes(firmware.size);
+    otaResult.textContent = "Đang kiểm tra cấu trúc và số bản dựng firmware...";
+    const targetBuild = await readFirmwareBuild(firmware);
+    otaFileInfo.textContent = firmwareName + " · " + formatBytes(firmware.size) +
+      " · Firmware Build #" + targetBuild;
     if (!confirm("Cài đặt " + firmwareName + " (" + formatBytes(firmware.size) +
-      ")? Không tắt nguồn trong quá trình cập nhật.")) {
+      ")\\nBản dựng hiện tại: #" + currentBuildNumber + "\\nBản dựng mục tiêu: #" + targetBuild +
+      "\\nKhông tắt nguồn trong quá trình cập nhật. Tiếp tục?")) {
       updateFirmwareButton.disabled = false;
       return;
     }
@@ -660,7 +691,7 @@ updateFirmwareButton.addEventListener("click", async () => {
     otaResult.textContent = "Đang tải firmware lên thiết bị...";
     await uploadOtaFirmware(firmware, firmwareName);
     otaProgress.style.width = "100%";
-    await waitForOtaConfirmation(firmwareName, previousPartition);
+    await waitForRunningBuild(targetBuild, previousPartition);
     updateFirmwareButton.disabled = false;
   } catch (error) {
     otaResult.textContent = error.message;
@@ -1264,21 +1295,26 @@ esp_err_t OtaUploadHandler(httpd_req_t* request) {
     if (request->content_len < 4096) {
         return SendError(request, "400 Bad Request", "Firmware BIN rỗng hoặc quá nhỏ");
     }
+    // Firmware filename is optional metadata; OTA must also accept older Web Admin clients.
     char firmware_filename[65]{};
     const size_t filename_length = httpd_req_get_hdr_value_len(request, "X-Firmware-Filename");
-    if (filename_length == 0 || filename_length >= sizeof(firmware_filename) ||
-        httpd_req_get_hdr_value_str(request, "X-Firmware-Filename",
-                                    firmware_filename, sizeof(firmware_filename)) != ESP_OK)
-        return SendError(request, "400 Bad Request", "Thiếu tên firmware BIN hợp lệ");
-    for (size_t i = 0; i < filename_length; ++i) {
-        const char c = firmware_filename[i];
-        const bool valid = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
-                           (c >= '0' && c <= '9') || c == '.' || c == '_' || c == '-';
-        if (!valid) return SendError(request, "400 Bad Request", "Tên firmware chứa ký tự không hợp lệ");
+    if (filename_length > 0) {
+        if (filename_length >= sizeof(firmware_filename) ||
+            httpd_req_get_hdr_value_str(request, "X-Firmware-Filename",
+                                        firmware_filename, sizeof(firmware_filename)) != ESP_OK) {
+            return SendError(request, "400 Bad Request", "Tên firmware BIN không hợp lệ");
+        }
+        for (size_t i = 0; i < filename_length; ++i) {
+            const char c = firmware_filename[i];
+            const bool valid = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+                               (c >= '0' && c <= '9') || c == '.' || c == '_' || c == '-';
+            if (!valid) return SendError(request, "400 Bad Request", "Tên firmware chứa ký tự không hợp lệ");
+        }
+        if (filename_length < 5 ||
+            std::strcmp(firmware_filename + filename_length - 4, ".bin") != 0) {
+            return SendError(request, "400 Bad Request", "Tên firmware phải kết thúc bằng .bin");
+        }
     }
-    if (filename_length < 5 ||
-        std::strcmp(firmware_filename + filename_length - 4, ".bin") != 0)
-        return SendError(request, "400 Bad Request", "Tên firmware phải kết thúc bằng .bin");
 
     std::unique_lock<std::mutex> lock(g_ota_mutex, std::try_to_lock);
     if (!lock.owns_lock()) {
@@ -1348,18 +1384,22 @@ esp_err_t OtaUploadHandler(httpd_req_t* request) {
                          "Firmware BIN không hợp lệ hoặc không tương thích");
     }
 
-    result = chatai::settings::SavePendingFirmwareName(firmware_filename, target->address);
-    if (result != ESP_OK) {
-        ESP_LOGE(kTag, "Could not save pending firmware filename: %s", esp_err_to_name(result));
-        return SendError(request, "500 Internal Server Error",
-                         "Không thể lưu tên firmware đang cập nhật");
-    }
+    // Selecting the verified OTA image is the critical operation. NVS filename
+    // tracking is optional and must never block a valid image from booting.
     result = esp_ota_set_boot_partition(target);
     if (result != ESP_OK) {
         ESP_LOGE(kTag, "Could not select OTA boot partition: %s",
                  esp_err_to_name(result));
         return SendError(request, "500 Internal Server Error",
                          "Không thể chọn firmware mới để khởi động");
+    }
+    if (firmware_filename[0] != '\\0') {
+        const esp_err_t metadata_result =
+            chatai::settings::SavePendingFirmwareName(firmware_filename, target->address);
+        if (metadata_result != ESP_OK) {
+            ESP_LOGW(kTag, "OTA selected %s but could not save optional filename metadata: %s",
+                     target->label, esp_err_to_name(metadata_result));
+        }
     }
 
     ESP_LOGI(kTag, "OTA image accepted: %u bytes -> %s",
