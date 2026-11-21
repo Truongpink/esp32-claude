@@ -54,6 +54,7 @@ struct OutgoingAudioMessage {
     bool stream_end;
     uint32_t generation;
     size_t length;
+    int64_t enqueued_at_us;
     char data[kMicMessageBufferSize];
 };
 
@@ -129,6 +130,13 @@ QueueHandle_t g_outgoing_audio_queue = nullptr;
 std::atomic<uint32_t> g_outgoing_audio_dropped{0}, g_outgoing_audio_send_failures{0}, g_outgoing_audio_send_calls{0};
 std::atomic<uint32_t> g_mic_tx_generation{0};
 std::atomic<uint64_t> g_outgoing_audio_send_total_us{0}, g_outgoing_audio_send_max_us{0};
+std::atomic<uint64_t> g_outgoing_audio_mutex_wait_total_us{0}, g_outgoing_audio_mutex_wait_max_us{0};
+std::atomic<uint64_t> g_outgoing_audio_ws_send_total_us{0}, g_outgoing_audio_ws_send_max_us{0};
+std::atomic<uint64_t> g_outgoing_audio_mutex_hold_total_us{0}, g_outgoing_audio_mutex_hold_max_us{0};
+std::atomic<uint64_t> g_outgoing_audio_age_total_us{0}, g_outgoing_audio_age_max_us{0};
+std::atomic<uint64_t> g_outgoing_audio_malloc_total_us{0}, g_outgoing_audio_copy_total_us{0};
+std::atomic<uint64_t> g_outgoing_audio_enqueue_total_us{0};
+std::atomic<uint32_t> g_outgoing_audio_queue_max_depth{0};
 enum class IncomingMessageType : uint8_t { kNone, kText, kBinary };
 std::string g_incoming_message;
 size_t g_incoming_frame_bytes = 0;
@@ -565,8 +573,11 @@ bool QueueOutgoingAudio(const char* data, size_t length, bool stream_end = false
         return false;
     }
 
+    const int64_t malloc_started_us = esp_timer_get_time();
     auto* item = static_cast<OutgoingAudioMessage*>(
         std::malloc(sizeof(OutgoingAudioMessage)));
+    g_outgoing_audio_malloc_total_us.fetch_add(static_cast<uint64_t>(
+        std::max<int64_t>(0, esp_timer_get_time() - malloc_started_us)));
     if (item == nullptr) {
         g_outgoing_audio_dropped.fetch_add(1);
         return false;
@@ -575,9 +586,24 @@ bool QueueOutgoingAudio(const char* data, size_t length, bool stream_end = false
     item->stream_end = stream_end;
     item->generation = g_mic_tx_generation.load();
     item->length = length;
+    const int64_t copy_started_us = esp_timer_get_time();
     if (length > 0) std::memcpy(item->data, data, length);
+    g_outgoing_audio_copy_total_us.fetch_add(static_cast<uint64_t>(
+        std::max<int64_t>(0, esp_timer_get_time() - copy_started_us)));
+    item->enqueued_at_us = esp_timer_get_time();
 
-    if (xQueueSend(g_outgoing_audio_queue, &item, 0) == pdTRUE) return true;
+    const int64_t enqueue_started_us = esp_timer_get_time();
+    if (xQueueSend(g_outgoing_audio_queue, &item, 0) == pdTRUE) {
+        g_outgoing_audio_enqueue_total_us.fetch_add(static_cast<uint64_t>(
+            std::max<int64_t>(0, esp_timer_get_time() - enqueue_started_us)));
+        const uint32_t depth = static_cast<uint32_t>(uxQueueMessagesWaiting(g_outgoing_audio_queue));
+        uint32_t maximum = g_outgoing_audio_queue_max_depth.load();
+        while (depth > maximum &&
+               !g_outgoing_audio_queue_max_depth.compare_exchange_weak(maximum, depth)) {}
+        return true;
+    }
+    g_outgoing_audio_enqueue_total_us.fetch_add(static_cast<uint64_t>(
+        std::max<int64_t>(0, esp_timer_get_time() - enqueue_started_us)));
 
     // The sender is behind. Drop the oldest chunk and retain the newest audio.
     OutgoingAudioMessage* oldest = nullptr;
@@ -585,7 +611,18 @@ bool QueueOutgoingAudio(const char* data, size_t length, bool stream_end = false
         std::free(oldest);
         g_outgoing_audio_dropped.fetch_add(1);
     }
-    if (xQueueSend(g_outgoing_audio_queue, &item, 0) == pdTRUE) return true;
+    const int64_t retry_started_us = esp_timer_get_time();
+    if (xQueueSend(g_outgoing_audio_queue, &item, 0) == pdTRUE) {
+        g_outgoing_audio_enqueue_total_us.fetch_add(static_cast<uint64_t>(
+            std::max<int64_t>(0, esp_timer_get_time() - retry_started_us)));
+        const uint32_t depth = static_cast<uint32_t>(uxQueueMessagesWaiting(g_outgoing_audio_queue));
+        uint32_t maximum = g_outgoing_audio_queue_max_depth.load();
+        while (depth > maximum &&
+               !g_outgoing_audio_queue_max_depth.compare_exchange_weak(maximum, depth)) {}
+        return true;
+    }
+    g_outgoing_audio_enqueue_total_us.fetch_add(static_cast<uint64_t>(
+        std::max<int64_t>(0, esp_timer_get_time() - retry_started_us)));
 
     std::free(item);
     g_outgoing_audio_dropped.fetch_add(1);
@@ -1169,21 +1206,47 @@ void OutgoingAudioWorker(void*) {
         if (item == nullptr) continue;
 
         const int64_t send_started_us = esp_timer_get_time();
+        const uint64_t audio_age_us = item->enqueued_at_us > 0
+            ? static_cast<uint64_t>(std::max<int64_t>(0, send_started_us - item->enqueued_at_us)) : 0;
+        const int64_t mutex_wait_started_us = esp_timer_get_time();
+        int64_t mutex_wait_us = 0;
+        int64_t ws_send_us = 0;
+        int64_t mutex_hold_us = 0;
         int sent = -1;
         {
-            std::lock_guard<std::mutex> lock(g_send_mutex);
+            std::unique_lock<std::mutex> lock(g_send_mutex);
+            const int64_t mutex_acquired_us = esp_timer_get_time();
+            mutex_wait_us = mutex_acquired_us - mutex_wait_started_us;
             if (item->generation == g_mic_tx_generation.load() &&
                 g_ready.load() &&
                 chatai::network::NetworkManager::IsInternetAvailable() &&
                 g_client != nullptr &&
                 esp_websocket_client_is_connected(g_client)) {
+                const int64_t ws_started_us = esp_timer_get_time();
                 sent = esp_websocket_client_send_text(
                     g_client, item->data, item->length, pdMS_TO_TICKS(1000));
+                ws_send_us = esp_timer_get_time() - ws_started_us;
             }
+            mutex_hold_us = esp_timer_get_time() - mutex_acquired_us;
         }
 
         const uint64_t elapsed_us = static_cast<uint64_t>(
             std::max<int64_t>(0, esp_timer_get_time() - send_started_us));
+        const auto add_max = [](std::atomic<uint64_t>& target, uint64_t value) {
+            uint64_t previous = target.load();
+            while (value > previous && !target.compare_exchange_weak(previous, value)) {}
+        };
+        const uint64_t wait_value = static_cast<uint64_t>(std::max<int64_t>(0, mutex_wait_us));
+        const uint64_t ws_value = static_cast<uint64_t>(std::max<int64_t>(0, ws_send_us));
+        const uint64_t hold_value = static_cast<uint64_t>(std::max<int64_t>(0, mutex_hold_us));
+        g_outgoing_audio_mutex_wait_total_us.fetch_add(wait_value);
+        add_max(g_outgoing_audio_mutex_wait_max_us, wait_value);
+        g_outgoing_audio_ws_send_total_us.fetch_add(ws_value);
+        add_max(g_outgoing_audio_ws_send_max_us, ws_value);
+        g_outgoing_audio_mutex_hold_total_us.fetch_add(hold_value);
+        add_max(g_outgoing_audio_mutex_hold_max_us, hold_value);
+        g_outgoing_audio_age_total_us.fetch_add(audio_age_us);
+        add_max(g_outgoing_audio_age_max_us, audio_age_us);
         g_outgoing_audio_send_calls.fetch_add(1);
         g_outgoing_audio_send_total_us.fetch_add(elapsed_us);
         uint64_t previous_max = g_outgoing_audio_send_max_us.load();
@@ -1221,15 +1284,42 @@ void OutgoingAudioWorker(void*) {
             const uint32_t calls = g_outgoing_audio_send_calls.exchange(0);
             const uint64_t total_us = g_outgoing_audio_send_total_us.exchange(0);
             const uint64_t max_us = g_outgoing_audio_send_max_us.exchange(0);
-            char detail[224]{};
+            const uint64_t wait_total = g_outgoing_audio_mutex_wait_total_us.exchange(0);
+            const uint64_t wait_max = g_outgoing_audio_mutex_wait_max_us.exchange(0);
+            const uint64_t ws_total = g_outgoing_audio_ws_send_total_us.exchange(0);
+            const uint64_t ws_max = g_outgoing_audio_ws_send_max_us.exchange(0);
+            const uint64_t hold_total = g_outgoing_audio_mutex_hold_total_us.exchange(0);
+            const uint64_t hold_max = g_outgoing_audio_mutex_hold_max_us.exchange(0);
+            const uint64_t age_total = g_outgoing_audio_age_total_us.exchange(0);
+            const uint64_t age_max = g_outgoing_audio_age_max_us.exchange(0);
+            const uint64_t malloc_total = g_outgoing_audio_malloc_total_us.exchange(0);
+            const uint64_t copy_total = g_outgoing_audio_copy_total_us.exchange(0);
+            const uint64_t enqueue_total = g_outgoing_audio_enqueue_total_us.exchange(0);
+            const uint32_t queue_max = g_outgoing_audio_queue_max_depth.exchange(0);
+            char detail[480]{};
             std::snprintf(detail, sizeof(detail),
-                "window_ms=5000 send_calls=%lu send_avg_us=%llu send_max_us=%llu "
-                "send_fail=%lu queue_depth=%lu queue_dropped=%lu",
+                "window_ms=5000 calls=%lu send_avg_us=%llu send_max_us=%llu "
+                "mutex_wait_avg_us=%llu mutex_wait_max_us=%llu ws_send_avg_us=%llu ws_send_max_us=%llu "
+                "mutex_hold_avg_us=%llu mutex_hold_max_us=%llu age_avg_ms=%llu age_max_ms=%llu "
+                "malloc_avg_us=%llu copy_avg_us=%llu enqueue_avg_us=%llu "
+                "send_fail=%lu queue_depth=%lu queue_max=%lu queue_dropped=%lu",
                 static_cast<unsigned long>(calls),
                 static_cast<unsigned long long>(calls ? total_us / calls : 0),
                 static_cast<unsigned long long>(max_us),
+                static_cast<unsigned long long>(calls ? wait_total / calls : 0),
+                static_cast<unsigned long long>(wait_max),
+                static_cast<unsigned long long>(calls ? ws_total / calls : 0),
+                static_cast<unsigned long long>(ws_max),
+                static_cast<unsigned long long>(calls ? hold_total / calls : 0),
+                static_cast<unsigned long long>(hold_max),
+                static_cast<unsigned long long>(calls ? age_total / calls / 1000 : 0),
+                static_cast<unsigned long long>(age_max / 1000),
+                static_cast<unsigned long long>(calls ? malloc_total / calls : 0),
+                static_cast<unsigned long long>(calls ? copy_total / calls : 0),
+                static_cast<unsigned long long>(calls ? enqueue_total / calls : 0),
                 static_cast<unsigned long>(g_outgoing_audio_send_failures.exchange(0)),
                 static_cast<unsigned long>(uxQueueMessagesWaiting(g_outgoing_audio_queue)),
+                static_cast<unsigned long>(queue_max),
                 static_cast<unsigned long>(g_outgoing_audio_dropped.exchange(0)));
             chatai::diagnostics::Add("AUDIO_TX_PIPELINE", "INFO", detail);
             report_tick = now;
