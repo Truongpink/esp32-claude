@@ -42,7 +42,11 @@ constexpr char kEndpoint[] =
     "wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta."
     "GenerativeService.BidiGenerateContent?key=";
 constexpr size_t kMaxIncomingMessage = 8192;
-constexpr size_t kMaxOutputSamples = 2048;
+constexpr size_t kMaxAudioBase64Bytes = 6000;
+constexpr size_t kMaxOutputSamples = 2304;
+static_assert(kMaxOutputSamples * sizeof(int16_t) >=
+              (kMaxAudioBase64Bytes / 4) * 3,
+              "PCM output buffer must hold the largest accepted Base64 audio chunk");
 constexpr size_t kMicChunkSamples = 1600;  // 100 ms at 16 kHz.
 constexpr size_t kMicEncodedBufferSize = 4300;
 constexpr size_t kMicMessageBufferSize = 5000;
@@ -672,7 +676,7 @@ void QueueServerAudio(const cJSON* inline_data) {
     }
 
     const size_t encoded_size = std::strlen(data->valuestring);
-    if (encoded_size == 0 || encoded_size > 6000) {
+    if (encoded_size == 0 || encoded_size > kMaxAudioBase64Bytes) {
         ESP_LOGW(kTag, "Discarded oversized Gemini audio chunk");
         return;
     }
