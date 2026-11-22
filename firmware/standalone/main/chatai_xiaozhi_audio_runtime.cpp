@@ -143,6 +143,10 @@ esp_err_t XiaozhiAudioRuntime::Stop() {
 }
 
 void XiaozhiAudioRuntime::SetCaptureEnabled(bool enabled) {
+    if (!running_.load()) {
+        capture_enabled_.store(false);
+        return;
+    }
     if (!enabled) {
         capture_enabled_.store(false);
         {
