@@ -27,16 +27,19 @@ The upstream audio pipeline is not a standalone drop-in file. Its AudioService u
 
 The upstream application also assumes its own Board, NetworkInterface, Settings, Assets, and application lifecycle abstractions. Those must be adapted deliberately rather than importing the upstream board/application startup wholesale.
 
-## Audio codec contract milestone
+## Audio codec and runtime milestones
 
 - Added a board-neutral `AudioCodec` declaration whose class definition tokens match the pinned upstream v2.6.0 declaration; only the upstream `board.h` include and surrounding board-specific macros are excluded.
 - Implemented ChatAI-owned base methods in `main/audio_codec.cpp`; persistent settings remain owned by ChatAI.
 - Added `ChatAIXiaozhiAudioCodec`, which adapts the contract to `ChatAIAudioCodecBridge` and therefore to ChatAI's existing `AudioManager` I2S channels.
 - Input/output remain mono PCM16 at 16 kHz / 24 kHz respectively, matching the current ChatAI audio manager.
-- Added Espressif `esp_audio_codec ~2.5.0` and a ChatAI-owned `ChatAIOpusCodec` adapter. The encoder accepts one mono 16 kHz / 60 ms PCM frame (960 samples); the decoder follows the server's negotiated sample rate and frame duration.
-- The standard Xiaozhi server hello advertises 24 kHz mono / 60 ms downlink, which matches the current 24 kHz speaker path. If a server negotiates another supported rate, the runtime must resample before writing to the speaker.
-- The codec adapter is not yet instantiated by `app_main`; no audio capture/playback tasks or network transport are active yet. Do not claim end-to-end Xiaozhi voice operation.
-- Audio Runtime task lifecycle and server-selected MQTT/UDP or WebSocket transport integration remain subsequent steps.
+- Added Espressif `esp_audio_codec ~2.5.0` and a ChatAI-owned `ChatAIOpusCodec` adapter. The encoder accepts one mono 16 kHz / 60 ms PCM frame (960 samples); the decoder follows the negotiated sample rate and frame duration.
+- Added `XiaozhiAudioRuntime` with separate FreeRTOS microphone-capture and speaker-playback tasks. It reuses the existing AudioManager I2S channels; it does not create another I2S driver.
+- The runtime exposes a bounded uplink Opus queue for the future network task and accepts complete downlink Opus packets from that task. Both queues are limited to four packets; the oldest packet is dropped when full to bound real-time latency.
+- The current runtime accepts 24 kHz mono / 60 ms downlink only, matching the standard Xiaozhi server hello and ChatAI speaker rate. Other negotiated formats are rejected until a resampler is integrated; they are not played at the wrong speed.
+- The runtime is not yet instantiated by `app_main` and is not connected to a network protocol. No Xiaozhi session can start yet; end-to-end voice operation is not implemented.
+- Runtime lifecycle waits for both worker tasks to exit before stopping the codec or disabling I2S. Keep the runtime object alive for the full duration of any active session.
+- Server-selected MQTT+UDP or WebSocket transport integration remains a subsequent step.
 
 The board-neutral header must remain definition-compatible with the pinned upstream declaration. Do not compile upstream `audio_codec.cc`, which reads Xiaozhi `Settings` and is not part of ChatAI's settings ownership.
 

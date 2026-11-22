@@ -11,6 +11,7 @@ idf_component_register(
     SRCS "app_main.cpp" "network_manager.cpp" "display_manager.cpp"
          "audio_manager.cpp" "audio_codec.cpp" "chatai_audio_codec_bridge.cpp"
          "chatai_xiaozhi_audio_codec.cpp" "chatai_opus_codec.cpp"
+         "chatai_xiaozhi_audio_runtime.cpp"
          "button_manager.cpp" "gemini_settings.cpp"
          "gemini_live_client.cpp" "web_admin.cpp" "diagnostic_manager.cpp"
          "status_led_manager.cpp"
