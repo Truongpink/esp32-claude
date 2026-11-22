@@ -107,8 +107,9 @@ esp_err_t EnsureSystemTime() {
     const std::time_t now = std::time(nullptr);
     if (now >= 1735689600 && now < 4102444800) return ESP_OK;
 
-    const esp_sntp_config_t config =
-        ESP_NETIF_SNTP_DEFAULT_CONFIG("pool.ntp.org");
+    const esp_sntp_config_t config = ESP_NETIF_SNTP_DEFAULT_CONFIG_MULTIPLE(
+        3, ESP_SNTP_SERVER_LIST("time.google.com", "pool.ntp.org",
+                               "time.cloudflare.com"));
     const esp_err_t init_result = esp_netif_sntp_init(&config);
     if (init_result != ESP_OK && init_result != ESP_ERR_INVALID_STATE) {
         ESP_LOGW(kTag, "Could not initialize SNTP: %s", esp_err_to_name(init_result));

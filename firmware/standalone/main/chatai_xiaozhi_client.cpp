@@ -284,9 +284,9 @@ private:
                         events_, kServerEnded, pdFALSE, pdFALSE,
                         pdMS_TO_TICKS(500));
                     if (bits & kServerEnded) break;
-                    if (IsListening() != last_listening_.load()) {
-                        UpdateListeningState();
-                    }
+                    // Re-apply capture ownership periodically. This retries I2S
+                    // microphone enable if a transient driver error occurred.
+                    UpdateListeningState();
                 }
             } else {
                 char detail[96]{};
