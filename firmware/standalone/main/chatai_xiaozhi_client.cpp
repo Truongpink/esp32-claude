@@ -387,6 +387,17 @@ private:
                     if (IsListening()) audio_.SetCaptureEnabled(true);
                 }
             }
+        } else if (type == "error") {
+            std::string message;
+            if (!ReadString(root, "message", &message)) {
+                message = "Xiaozhi server rejected the session";
+            }
+            ESP_LOGW(kTag, "Xiaozhi server error: %s", message.c_str());
+            chatai::diagnostics::Add("XIAOZHI_SERVER", "ERROR", message.c_str());
+            chatai::display::Notify("XIAOZHI", message.c_str(), 5000);
+            if (!session_ready_.load()) {
+                xEventGroupSetBits(events_, kHelloFailed);
+            }
         } else if (type == "alert") {
             std::string message;
             if (ReadString(root, "message", &message)) {
