@@ -6,6 +6,7 @@
 #include <atomic>
 #include <climits>
 #include <cstdio>
+#include <chrono>
 #include <mutex>
 
 #include <driver/gpio.h>
@@ -40,7 +41,7 @@ std::atomic<bool> s_speaker_enabled{false};
 std::atomic<int> s_output_volume{100};
 std::atomic<bool> s_mic_raw_reported{false};
 std::mutex s_state_mutex;
-std::mutex s_mic_io_mutex;
+std::timed_mutex s_mic_io_mutex;
 std::mutex s_speaker_io_mutex;
 std::mutex s_reference_mutex;
 SpeakerReferenceCallback s_reference_callback = nullptr;
@@ -177,7 +178,7 @@ esp_err_t Initialize() {
 
 esp_err_t EnableMicrophone(bool enable) {
     std::lock_guard<std::mutex> state_lock(s_state_mutex);
-    std::lock_guard<std::mutex> io_lock(s_mic_io_mutex);
+    std::lock_guard<std::timed_mutex> io_lock(s_mic_io_mutex);
     if (s_mic_rx == nullptr) {
         return ESP_ERR_INVALID_STATE;
     }
@@ -223,7 +224,7 @@ esp_err_t ReadMicrophonePcm16(int16_t* destination, size_t requested_samples,
     uint32_t samples_total = 0;
     uint32_t partial_reads = 0;
     uint32_t timeout_count = 0;
-    std::unique_lock<std::mutex> io_lock(s_mic_io_mutex, std::defer_lock);
+    std::unique_lock<std::timed_mutex> io_lock(s_mic_io_mutex, std::defer_lock);
 
     const auto finish = [&](esp_err_t result) {
         if (io_lock.owns_lock()) io_lock.unlock();
@@ -283,7 +284,12 @@ esp_err_t ReadMicrophonePcm16(int16_t* destination, size_t requested_samples,
     }
     *samples_read = 0;
     const int64_t mutex_started_us = esp_timer_get_time();
-    io_lock.lock();
+    if (!io_lock.try_lock_for(std::chrono::milliseconds(timeout_ms))) {
+        mutex_wait_us = static_cast<uint64_t>(
+            std::max<int64_t>(0, esp_timer_get_time() - mutex_started_us));
+        ++timeout_count;
+        return finish(ESP_ERR_TIMEOUT);
+    }
     mutex_wait_us = static_cast<uint64_t>(
         std::max<int64_t>(0, esp_timer_get_time() - mutex_started_us));
 
