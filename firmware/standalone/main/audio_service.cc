@@ -587,6 +587,9 @@ void AudioService::SetDecodeSampleRate(int sample_rate, int frame_duration) {
         if (output_resampler_ == nullptr) {
             ESP_LOGE(TAG, "Failed to create output resampler, error code: %d", resampler_ret);
         }
+    } else if (output_resampler_ != nullptr) {
+        esp_ae_rate_cvt_close(output_resampler_);
+        output_resampler_ = nullptr;
     }
 }
 
