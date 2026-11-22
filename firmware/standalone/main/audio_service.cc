@@ -184,6 +184,11 @@ esp_err_t AudioService::Start() {
 
 void AudioService::Stop() {
     if(event_group_==nullptr||service_stopped_.exchange(true))return;
+    if (audio_engine_initialized_) {
+        audio_engine_->EnableVoiceProcessing(false);
+        voice_detected_ = false;
+    }
+    xEventGroupClearBits(event_group_, AS_EVENT_AUDIO_PROCESSOR_RUNNING);
     if(audio_power_timer_!=nullptr)esp_timer_stop(audio_power_timer_);
     xEventGroupSetBits(event_group_,AS_EVENT_AUDIO_TESTING_RUNNING|AS_EVENT_WAKE_WORD_RUNNING|
         AS_EVENT_AUDIO_PROCESSOR_RUNNING|AS_EVENT_AUDIO_INPUT_STOP_REQUEST);
@@ -545,12 +550,15 @@ void AudioService::SetDecodeSampleRate(int sample_rate, int frame_duration) {
     if (decoder_sample_rate_ == sample_rate && decoder_duration_ms_ == frame_duration) {
         return;
     }
+
+    // Serialize close/open/reset/decode on the same decoder handle. ResetDecoder()
+    // may run from the session-control task while the codec task changes formats.
     std::unique_lock<std::mutex> decoder_lock(decoder_mutex_);
     if (opus_decoder_ != nullptr) {
         esp_opus_dec_close(opus_decoder_);
         opus_decoder_ = nullptr;
     }
-    decoder_lock.unlock();
+
     esp_opus_dec_cfg_t opus_dec_cfg = OPUS_DEC_CFG(sample_rate, frame_duration);
     auto ret = esp_opus_dec_open(&opus_dec_cfg, sizeof(esp_opus_dec_cfg_t), &opus_decoder_);
     if (opus_decoder_ == nullptr) {
@@ -560,8 +568,12 @@ void AudioService::SetDecodeSampleRate(int sample_rate, int frame_duration) {
     decoder_sample_rate_ = sample_rate;
     decoder_duration_ms_ = frame_duration;
     decoder_frame_size_ = decoder_sample_rate_ / 1000 * frame_duration;
+    decoder_lock.unlock();
 
     auto* codec = codec_;
+    if (codec == nullptr) {
+        return;
+    }
     if (decoder_sample_rate_ != codec->output_sample_rate()) {
         ESP_LOGI(TAG, "Resampling audio from %d to %d", decoder_sample_rate_,
                  codec->output_sample_rate());
