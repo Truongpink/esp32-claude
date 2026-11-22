@@ -22,6 +22,7 @@ struct ServerConfig {
     std::string mqtt_username;
     std::string mqtt_password;
     std::string mqtt_publish_topic;
+    std::string mqtt_subscribe_topic;
     int mqtt_keepalive = 240;
 
     // WebSocket channel.

@@ -218,13 +218,25 @@ bool ParseServerConfig(const cJSON* root, ServerConfig* config) {
 
     const cJSON* mqtt = cJSON_GetObjectItemCaseSensitive(root, "mqtt");
     if (cJSON_IsObject(mqtt)) {
+        std::string subscribe_topic_prefix;
         if (!ReadString(mqtt, "endpoint", &config->mqtt_endpoint) ||
             !ReadString(mqtt, "client_id", &config->mqtt_client_id) ||
             !ReadString(mqtt, "username", &config->mqtt_username) ||
             !ReadString(mqtt, "password", &config->mqtt_password) ||
-            !ReadString(mqtt, "publish_topic", &config->mqtt_publish_topic)) {
+            !ReadString(mqtt, "publish_topic", &config->mqtt_publish_topic) ||
+            !ReadString(mqtt, "subscribe_topic", &subscribe_topic_prefix)) {
             return false;
         }
+        // Xiaozhi routes device replies through:
+        // <subscribe-topic-root>/p2p/<MQTT client_id>.
+        const size_t separator = subscribe_topic_prefix.find('/');
+        if (separator != std::string::npos) {
+            subscribe_topic_prefix.resize(separator);
+        }
+        if (subscribe_topic_prefix.empty()) return false;
+        config->mqtt_subscribe_topic =
+            subscribe_topic_prefix + "/p2p/" + config->mqtt_client_id;
+
         const cJSON* keepalive =
             cJSON_GetObjectItemCaseSensitive(mqtt, "keepalive");
         if (cJSON_IsNumber(keepalive) && keepalive->valueint > 0 &&

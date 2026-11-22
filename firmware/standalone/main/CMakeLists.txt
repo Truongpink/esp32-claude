@@ -12,13 +12,14 @@ idf_component_register(
          "audio_manager.cpp" "audio_codec.cpp" "chatai_audio_codec_bridge.cpp"
          "chatai_xiaozhi_audio_codec.cpp" "chatai_opus_codec.cpp"
          "chatai_xiaozhi_audio_runtime.cpp" "chatai_xiaozhi_ota.cpp"
+         "chatai_xiaozhi_mqtt.cpp"
          "button_manager.cpp" "gemini_settings.cpp"
          "gemini_live_client.cpp" "web_admin.cpp" "diagnostic_manager.cpp"
          "status_led_manager.cpp"
     INCLUDE_DIRS "."
     REQUIRES app_update spi_flash nvs_flash esp_event esp_netif esp_wifi lwip esp_http_server
              esp_http_client mdns esp_driver_i2c esp_driver_i2s esp_driver_gpio esp_driver_rmt
-             esp_websocket_client esp_audio_codec freertos mbedtls esp_timer esp-tls
+             esp_websocket_client esp_audio_codec mqtt freertos mbedtls esp_timer esp-tls
              led_strip spiffs esp_psram
 )
 
