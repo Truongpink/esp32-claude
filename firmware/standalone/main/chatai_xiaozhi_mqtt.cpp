@@ -261,6 +261,7 @@ void MqttTransport::HandleEvent(esp_mqtt_event_handle_t event) {
             connected_.store(false);
             xEventGroupClearBits(events_, kSubscribed);
             pending_subscribe_id_.store(-1);
+            xEventGroupSetBits(events_, kStartFailed);
             ESP_LOGW(kTag, "MQTT disconnected");
             break;
 

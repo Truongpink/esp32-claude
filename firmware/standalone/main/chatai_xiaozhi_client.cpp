@@ -374,14 +374,17 @@ private:
         } else if (type == "tts") {
             std::string state;
             if (ReadString(root, "state", &state)) {
+                std::lock_guard<std::mutex> state_lock(listening_mutex_);
+                if (!session_ready_.load()) {
+                    cJSON_Delete(root);
+                    return;
+                }
                 if (state == "start") {
                     tts_active_.store(true);
-                    if (session_ready_.load()) audio_.SetCaptureEnabled(false);
+                    audio_.SetCaptureEnabled(false);
                 } else if (state == "stop") {
                     tts_active_.store(false);
-                    if (IsListening() && session_ready_.load()) {
-                        audio_.SetCaptureEnabled(true);
-                    }
+                    if (IsListening()) audio_.SetCaptureEnabled(true);
                 }
             }
         } else if (type == "alert") {
@@ -898,6 +901,7 @@ private:
             std::lock_guard<std::mutex> state_lock(listening_mutex_);
             session_ready_.store(false);
             last_listening_.store(false);
+            tts_active_.store(false);
         }
         udp_running_.store(false);
         // recv() uses a short timeout; let the UDP task observe udp_running_ before close.
