@@ -15,6 +15,8 @@ enum class Transport : uint8_t {
 
 struct ServerConfig {
     Transport transport = Transport::kNone;
+    std::string device_mac_address;
+    std::string device_client_id;
 
     // MQTT control channel. UDP audio parameters/keys arrive in server hello.
     std::string mqtt_endpoint;

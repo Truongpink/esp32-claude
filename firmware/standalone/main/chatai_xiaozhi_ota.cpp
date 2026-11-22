@@ -202,6 +202,14 @@ bool ReadString(const cJSON* object, const char* key, std::string* value) {
     return true;
 }
 
+void ReadOptionalString(const cJSON* object, const char* key,
+                        std::string* value) {
+    const cJSON* item = cJSON_GetObjectItemCaseSensitive(object, key);
+    if (cJSON_IsString(item) && item->valuestring != nullptr) {
+        *value = item->valuestring;
+    }
+}
+
 bool ParseServerConfig(const cJSON* root, ServerConfig* config) {
     const cJSON* activation = cJSON_GetObjectItemCaseSensitive(root, "activation");
     if (cJSON_IsObject(activation)) {
@@ -221,10 +229,10 @@ bool ParseServerConfig(const cJSON* root, ServerConfig* config) {
         if (!ReadString(mqtt, "endpoint", &config->mqtt_endpoint) ||
             !ReadString(mqtt, "client_id", &config->mqtt_client_id) ||
             !ReadString(mqtt, "username", &config->mqtt_username) ||
-            !ReadString(mqtt, "password", &config->mqtt_password) ||
             !ReadString(mqtt, "publish_topic", &config->mqtt_publish_topic)) {
             return false;
         }
+        ReadOptionalString(mqtt, "password", &config->mqtt_password);
         // Newer OTA servers provide the complete P2P topic
         // (for example devices/p2p/<mac>). Preserve it exactly. Older
         // responses may provide only the root (for example "devices");
@@ -257,10 +265,10 @@ bool ParseServerConfig(const cJSON* root, ServerConfig* config) {
 
     const cJSON* websocket = cJSON_GetObjectItemCaseSensitive(root, "websocket");
     if (cJSON_IsObject(websocket)) {
-        if (!ReadString(websocket, "url", &config->websocket_url) ||
-            !ReadString(websocket, "token", &config->websocket_token)) {
+        if (!ReadString(websocket, "url", &config->websocket_url)) {
             return false;
         }
+        ReadOptionalString(websocket, "token", &config->websocket_token);
         const cJSON* version =
             cJSON_GetObjectItemCaseSensitive(websocket, "version");
         if (cJSON_IsNumber(version) && version->valueint >= 1 &&
@@ -290,6 +298,8 @@ esp_err_t FetchServerConfig(ServerConfig* config) {
         ESP_LOGE(kTag, "Could not establish persistent device identity");
         return ESP_FAIL;
     }
+    config->device_mac_address = mac;
+    config->device_client_id = client_id;
 
     cJSON* request = cJSON_CreateObject();
     if (request == nullptr) return ESP_ERR_NO_MEM;

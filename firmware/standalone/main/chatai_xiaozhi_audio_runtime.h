@@ -72,6 +72,7 @@ private:
     std::atomic<bool> initialized_{false};
     std::atomic<bool> running_{false};
     std::atomic<bool> capture_enabled_{false};
+    int64_t session_start_us_ = 0;
 
     std::mutex lifecycle_mutex_;
     std::mutex queue_mutex_;

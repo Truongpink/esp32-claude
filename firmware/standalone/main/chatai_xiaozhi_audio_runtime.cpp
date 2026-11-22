@@ -77,6 +77,7 @@ esp_err_t XiaozhiAudioRuntime::Start() {
     }
 
     capture_enabled_.store(false);
+    session_start_us_ = esp_timer_get_time();
     running_.store(true);
 
     if (xTaskCreate(CaptureTaskEntry, "xiaozhi_mic", 6144, this, 6, nullptr) != pdPASS) {
@@ -123,6 +124,7 @@ esp_err_t XiaozhiAudioRuntime::Stop() {
         downlink_queue_.clear();
     }
 
+    session_start_us_ = 0;
     const esp_err_t codec_result = opus_.Reset();
     if (mic_result != ESP_OK && mic_result != ESP_ERR_INVALID_STATE) {
         return mic_result;
@@ -239,7 +241,8 @@ void XiaozhiAudioRuntime::CaptureTask() {
         }
 
         XiaozhiUplinkFrame frame;
-        frame.timestamp_ms = static_cast<uint32_t>(esp_timer_get_time() / 1000);
+        frame.timestamp_ms = static_cast<uint32_t>(
+            (esp_timer_get_time() - session_start_us_) / 1000);
         const esp_err_t result =
             opus_.EncodeFrame(pcm.data(), pcm.size(), frame.payload);
         if (result != ESP_OK) {

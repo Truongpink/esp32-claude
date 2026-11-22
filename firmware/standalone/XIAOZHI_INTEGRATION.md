@@ -47,7 +47,7 @@ The upstream application also assumes its own Board, NetworkInterface, Settings,
 - Added the MQTT hello exchange and UDP audio session manager. It validates the negotiated server format (24 kHz mono / 60 ms), opens a connected UDP socket, imports the AES-128 key into PSA Crypto, encrypts/decrypts the 16-byte Xiaozhi audio header and Opus payload with AES-CTR, and enforces monotonically increasing receive sequence numbers.
 - The session manager starts the existing Xiaozhi audio runtime only after a valid hello response. Microphone capture remains disabled until a listen-start command is sent; BOOT toggles continuous listening and the existing PTT touch input controls manual listening while a Xiaozhi session is ready.
 - When Xiaozhi takes the audio session, Gemini continuous listening and PTT are disabled and any active Gemini playback is aborted. Gemini source/settings and the Web Admin baseline remain intact.
-- The manager honors OTA transport precedence: MQTT+UDP is used when supplied; a WebSocket-only response is currently reported as unsupported and retried rather than silently forcing another transport. The WebSocket session adapter is not yet implemented.
+- The manager honors OTA transport precedence: MQTT+UDP is used when supplied; otherwise the WebSocket adapter uses the OTA URL/token and Device-Id/Client-Id/Protocol-Version handshake headers. It supports raw Opus WebSocket frames (version 1) and the version 2/3 binary headers. Both transports share the same bounded audio runtime and listen-state controls.
 
 The board-neutral header must remain definition-compatible with the pinned upstream declaration. Do not compile upstream `audio_codec.cc`, which reads Xiaozhi `Settings` and is not part of ChatAI's settings ownership.
 

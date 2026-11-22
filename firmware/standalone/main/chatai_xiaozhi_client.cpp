@@ -2,6 +2,7 @@
 
 #include "chatai_xiaozhi_audio_runtime.h"
 #include "chatai_xiaozhi_mqtt.h"
+#include "chatai_xiaozhi_websocket.h"
 #include "chatai_xiaozhi_ota.h"
 #include "diagnostic_manager.h"
 #include "display_manager.h"
@@ -171,41 +172,60 @@ private:
                 vTaskDelay(pdMS_TO_TICKS(kRetryDelayMs));
                 continue;
             }
-            if (config.transport != Transport::kMqttUdp) {
-                chatai::diagnostics::Add("XIAOZHI", "UNSUPPORTED",
-                    "Server selected WebSocket; MQTT+UDP session is not started");
-                vTaskDelay(pdMS_TO_TICKS(kRetryDelayMs));
-                continue;
-            }
-            if (config.mqtt_subscribe_topic.empty()) {
-                chatai::diagnostics::Add("XIAOZHI_MQTT", "FAILED",
-                    "OTA response omitted subscribe_topic; server hello cannot be received");
-                vTaskDelay(pdMS_TO_TICKS(kRetryDelayMs));
-                continue;
-            }
-
             xEventGroupClearBits(events_, kHelloReceived | kHelloFailed |
                                          kServerEnded | kUdpRxExited | kUdpTxExited);
-            esp_err_t result = mqtt_.Start(config,
-                [this](const std::string& topic, const std::string& payload) {
-                    OnMqttMessage(topic, payload);
-                });
+            active_transport_ = config.transport;
+            websocket_version_ = config.websocket_version;
+
+            esp_err_t result = ESP_ERR_NOT_SUPPORTED;
+            if (active_transport_ == Transport::kMqttUdp) {
+                if (config.mqtt_subscribe_topic.empty()) {
+                    chatai::diagnostics::Add("XIAOZHI_MQTT", "FAILED",
+                        "OTA response omitted subscribe_topic; server hello cannot be received");
+                    result = ESP_ERR_INVALID_RESPONSE;
+                } else {
+                    result = mqtt_.Start(config,
+                        [this](const std::string&, const std::string& payload) {
+                            OnControlMessage(payload);
+                        });
+                }
+            } else if (active_transport_ == Transport::kWebSocket) {
+                result = websocket_.Start(config,
+                    [this](const std::string& payload) {
+                        OnControlMessage(payload);
+                    },
+                    [this](const std::vector<uint8_t>& payload) {
+                        OnWebSocketAudio(payload);
+                    });
+            }
+
             if (result == ESP_OK) {
                 result = SendHello();
             }
             if (result == ESP_OK) {
-                const EventBits_t bits = xEventGroupWaitBits(
-                    events_, kHelloReceived | kHelloFailed, pdFALSE, pdFALSE,
-                    pdMS_TO_TICKS(kHelloTimeoutMs));
+                const TickType_t hello_deadline =
+                    xTaskGetTickCount() + pdMS_TO_TICKS(kHelloTimeoutMs);
+                EventBits_t bits = 0;
+                while ((bits & (kHelloReceived | kHelloFailed)) == 0 &&
+                       IsTransportConnected() &&
+                       static_cast<int32_t>(hello_deadline - xTaskGetTickCount()) > 0) {
+                    bits = xEventGroupWaitBits(
+                        events_, kHelloReceived | kHelloFailed, pdFALSE, pdFALSE,
+                        pdMS_TO_TICKS(250));
+                }
                 if ((bits & kHelloReceived) == 0) {
-                    result = (bits & kHelloFailed) ? ESP_FAIL : ESP_ERR_TIMEOUT;
+                    result = (bits & kHelloFailed) ? ESP_FAIL :
+                        (IsTransportConnected() ? ESP_ERR_TIMEOUT : ESP_FAIL);
                 }
             }
 
             if (result == ESP_OK) {
+                UpdateListeningState();
                 chatai::diagnostics::Add("XIAOZHI", "READY",
-                                         "MQTT control and encrypted UDP audio channel ready");
-                while (session_ready_.load() && mqtt_.IsConnected() &&
+                    active_transport_ == Transport::kMqttUdp
+                        ? "MQTT control and encrypted UDP audio channel ready"
+                        : "WebSocket control and Opus audio channel ready");
+                while (session_ready_.load() && IsTransportConnected() &&
                        chatai::network::NetworkManager::IsConnected()) {
                     const EventBits_t bits = xEventGroupWaitBits(
                         events_, kServerEnded, pdTRUE, pdFALSE,
@@ -221,6 +241,8 @@ private:
 
             StopAudioChannel();
             mqtt_.Stop();
+            websocket_.Stop();
+            active_transport_ = Transport::kNone;
             chat_enabled_.store(false);
             push_to_talk_.store(false);
             last_listening_.store(false);
@@ -232,8 +254,11 @@ private:
         cJSON* root = cJSON_CreateObject();
         if (root == nullptr) return ESP_ERR_NO_MEM;
         cJSON_AddStringToObject(root, "type", "hello");
-        cJSON_AddNumberToObject(root, "version", 3);
-        cJSON_AddStringToObject(root, "transport", "udp");
+        const bool use_websocket = active_transport_ == Transport::kWebSocket;
+        cJSON_AddNumberToObject(root, "version",
+            use_websocket ? websocket_version_ : 3);
+        cJSON_AddStringToObject(root, "transport",
+            use_websocket ? "websocket" : "udp");
 
         cJSON* features = cJSON_AddObjectToObject(root, "features");
         if (features == nullptr) {
@@ -258,12 +283,12 @@ private:
         char* json = cJSON_PrintUnformatted(root);
         cJSON_Delete(root);
         if (json == nullptr) return ESP_ERR_NO_MEM;
-        const esp_err_t result = mqtt_.Publish(json);
+        const esp_err_t result = PublishControl(json);
         cJSON_free(json);
         return result;
     }
 
-    void OnMqttMessage(const std::string&, const std::string& payload) {
+    void OnControlMessage(const std::string& payload) {
         cJSON* root = cJSON_ParseWithLength(payload.data(), payload.size());
         if (root == nullptr) return;
         std::string type;
@@ -273,7 +298,8 @@ private:
         }
 
         if (type == "hello") {
-            const esp_err_t result = ConfigureAudioChannel(root);
+            const esp_err_t result = active_transport_ == Transport::kWebSocket
+                ? ConfigureWebSocketAudioChannel(root) : ConfigureAudioChannel(root);
             xEventGroupSetBits(events_, result == ESP_OK
                 ? kHelloReceived : kHelloFailed);
         } else if (type == "goodbye") {
@@ -297,6 +323,7 @@ private:
     }
 
     esp_err_t ConfigureAudioChannel(const cJSON* root) {
+        if (session_ready_.load()) return ESP_ERR_INVALID_STATE;
         std::string transport;
         std::string session_id;
         if (!ReadString(root, "transport", &transport) || transport != "udp" ||
@@ -329,6 +356,12 @@ private:
         std::string server;
         if (!cJSON_IsObject(udp) ||
             !ReadString(udp, "server", &server)) return ESP_ERR_INVALID_RESPONSE;
+        const cJSON* encryption =
+            cJSON_GetObjectItemCaseSensitive(udp, "encryption");
+        if (cJSON_IsString(encryption) &&
+            std::strcmp(encryption->valuestring, "aes-128-ctr") != 0) {
+            return ESP_ERR_NOT_SUPPORTED;
+        }
         const cJSON* port_item = cJSON_GetObjectItemCaseSensitive(udp, "port");
         if (!cJSON_IsNumber(port_item) || port_item->valueint <= 0 ||
             port_item->valueint > 65535) return ESP_ERR_INVALID_RESPONSE;
@@ -405,6 +438,59 @@ private:
             udp_rx_task_ = nullptr;
             audio_.Stop();
             ReleaseUdpResources();
+            return ESP_ERR_NO_MEM;
+        }
+        session_ready_.store(true);
+        return ESP_OK;
+    }
+
+    esp_err_t ConfigureWebSocketAudioChannel(const cJSON* root) {
+        if (session_ready_.load()) return ESP_ERR_INVALID_STATE;
+        std::string transport;
+        std::string session_id;
+        if (!ReadString(root, "transport", &transport) || transport != "websocket" ||
+            !ReadString(root, "session_id", &session_id)) {
+            return ESP_ERR_INVALID_RESPONSE;
+        }
+
+        const cJSON* audio_params =
+            cJSON_GetObjectItemCaseSensitive(root, "audio_params");
+        if (!cJSON_IsObject(audio_params)) return ESP_ERR_INVALID_RESPONSE;
+        const cJSON* sample_rate_item =
+            cJSON_GetObjectItemCaseSensitive(audio_params, "sample_rate");
+        const cJSON* frame_duration_item =
+            cJSON_GetObjectItemCaseSensitive(audio_params, "frame_duration");
+        if (!cJSON_IsNumber(sample_rate_item) ||
+            !cJSON_IsNumber(frame_duration_item)) return ESP_ERR_INVALID_RESPONSE;
+        const uint32_t sample_rate =
+            static_cast<uint32_t>(sample_rate_item->valueint);
+        const uint32_t frame_duration =
+            static_cast<uint32_t>(frame_duration_item->valueint);
+        if (sample_rate != 24000 || frame_duration != 60) {
+            ESP_LOGE(kTag, "Unsupported WebSocket audio format: %lu Hz / %lu ms",
+                     static_cast<unsigned long>(sample_rate),
+                     static_cast<unsigned long>(frame_duration));
+            return ESP_ERR_NOT_SUPPORTED;
+        }
+
+        {
+            std::lock_guard<std::mutex> lock(channel_mutex_);
+            session_id_ = std::move(session_id);
+            sample_rate_ = sample_rate;
+            frame_duration_ms_ = frame_duration;
+        }
+
+        chatai::gemini::SetChatEnabled(false);
+        chatai::gemini::SetPushToTalk(false);
+        if (chatai::gemini::IsSpeaking()) chatai::gemini::AbortSpeaking();
+
+        const esp_err_t result = audio_.Start();
+        if (result != ESP_OK) return result;
+        udp_running_.store(true);
+        if (xTaskCreate(UdpTransmitTaskEntry, "xiaozhi_ws_tx", 4096,
+                        this, 5, &udp_tx_task_) != pdPASS) {
+            udp_running_.store(false);
+            audio_.Stop();
             return ESP_ERR_NO_MEM;
         }
         session_ready_.store(true);
@@ -524,6 +610,45 @@ private:
             if (!audio_.WaitPopUplinkFrame(frame, 100)) continue;
             if (!udp_running_.load() || !IsListening()) continue;
 
+            if (active_transport_ == Transport::kWebSocket) {
+                std::vector<uint8_t> packet;
+                if (websocket_version_ == 2) {
+                    if (frame.payload.size() > UINT32_MAX) continue;
+                    packet.resize(16 + frame.payload.size());
+                    const uint16_t version = htons(2);
+                    const uint16_t type = 0;
+                    const uint32_t reserved = 0;
+                    const uint32_t timestamp = htonl(frame.timestamp_ms);
+                    const uint32_t payload_size =
+                        htonl(static_cast<uint32_t>(frame.payload.size()));
+                    std::memcpy(packet.data(), &version, sizeof(version));
+                    std::memcpy(packet.data() + 2, &type, sizeof(type));
+                    std::memcpy(packet.data() + 4, &reserved, sizeof(reserved));
+                    std::memcpy(packet.data() + 8, &timestamp, sizeof(timestamp));
+                    std::memcpy(packet.data() + 12, &payload_size, sizeof(payload_size));
+                    std::copy(frame.payload.begin(), frame.payload.end(),
+                              packet.begin() + 16);
+                } else if (websocket_version_ == 3) {
+                    if (frame.payload.size() > UINT16_MAX) continue;
+                    packet.resize(4 + frame.payload.size());
+                    packet[0] = 0;
+                    packet[1] = 0;
+                    const uint16_t payload_size =
+                        htons(static_cast<uint16_t>(frame.payload.size()));
+                    std::memcpy(packet.data() + 2, &payload_size, sizeof(payload_size));
+                    std::copy(frame.payload.begin(), frame.payload.end(),
+                              packet.begin() + 4);
+                } else {
+                    packet = frame.payload;
+                }
+                const esp_err_t sent = websocket_.SendBinary(packet.data(), packet.size());
+                if (sent != ESP_OK) {
+                    ESP_LOGW(kTag, "WebSocket audio send failed: %s",
+                             esp_err_to_name(sent));
+                }
+                continue;
+            }
+
             int fd;
             std::array<uint8_t, kUdpHeaderSize> header{};
             uint32_t sequence;
@@ -556,7 +681,59 @@ private:
         }
     }
 
+    void OnWebSocketAudio(const std::vector<uint8_t>& packet) {
+        if (!session_ready_.load() || packet.empty()) return;
+        const uint8_t* payload = packet.data();
+        size_t payload_size = packet.size();
+        uint32_t timestamp = 0;
+
+        if (websocket_version_ == 2) {
+            if (payload_size < 16) return;
+            uint16_t version = 0;
+            uint16_t type = 0;
+            uint32_t timestamp_network = 0;
+            uint32_t length_network = 0;
+            std::memcpy(&version, payload, sizeof(version));
+            std::memcpy(&type, payload + 2, sizeof(type));
+            std::memcpy(&timestamp_network, payload + 8, sizeof(timestamp_network));
+            std::memcpy(&length_network, payload + 12, sizeof(length_network));
+            const uint32_t declared_size = ntohl(length_network);
+            if (ntohs(version) != 2 || ntohs(type) != 0 ||
+                declared_size != payload_size - 16) return;
+            timestamp = ntohl(timestamp_network);
+            payload += 16;
+            payload_size -= 16;
+        } else if (websocket_version_ == 3) {
+            if (payload_size < 4 || payload[0] != 0) return;
+            uint16_t length_network = 0;
+            std::memcpy(&length_network, payload + 2, sizeof(length_network));
+            if (ntohs(length_network) != payload_size - 4) return;
+            payload += 4;
+            payload_size -= 4;
+        }
+
+        const esp_err_t result = audio_.SubmitDownlinkFrame(
+            payload, payload_size, sample_rate_, frame_duration_ms_);
+        if (result != ESP_OK && result != ESP_ERR_INVALID_STATE) {
+            ESP_LOGW(kTag, "Dropped WebSocket downlink Opus frame: %s",
+                     esp_err_to_name(result));
+        }
+        if (payload_size == 0) return;
+        (void)timestamp;
+    }
+
+    bool IsTransportConnected() const {
+        return active_transport_ == Transport::kWebSocket
+            ? websocket_.IsConnected() : mqtt_.IsConnected();
+    }
+
+    esp_err_t PublishControl(const std::string& payload) {
+        return active_transport_ == Transport::kWebSocket
+            ? websocket_.SendText(payload) : mqtt_.Publish(payload);
+    }
+
     void UpdateListeningState() {
+        std::lock_guard<std::mutex> state_lock(listening_mutex_);
         const bool listening = IsListening();
         if (!session_ready_.load()) return;
         const bool previous = last_listening_.load();
@@ -583,7 +760,7 @@ private:
         char* json = cJSON_PrintUnformatted(root);
         cJSON_Delete(root);
         if (json == nullptr) return;
-        const esp_err_t result = mqtt_.Publish(json);
+        const esp_err_t result = PublishControl(json);
         cJSON_free(json);
         if (result == ESP_OK) {
             last_listening_.store(listening);
@@ -594,9 +771,12 @@ private:
     }
 
     void StopAudioChannel() {
-        session_ready_.store(false);
-        last_listening_.store(false);
-        audio_.SetCaptureEnabled(false);
+        {
+            std::lock_guard<std::mutex> state_lock(listening_mutex_);
+            session_ready_.store(false);
+            last_listening_.store(false);
+            audio_.SetCaptureEnabled(false);
+        }
         udp_running_.store(false);
         // recv() uses a short timeout; let the UDP task observe udp_running_ before close.
         audio_.Stop();
@@ -636,6 +816,9 @@ private:
 
     chatai::audio::XiaozhiAudioRuntime audio_;
     MqttTransport mqtt_;
+    WebSocketTransport websocket_;
+    Transport active_transport_ = Transport::kNone;
+    int websocket_version_ = 1;
     EventGroupHandle_t events_ = nullptr;
     TaskHandle_t worker_task_ = nullptr;
     TaskHandle_t udp_rx_task_ = nullptr;
@@ -647,6 +830,7 @@ private:
     std::atomic<bool> push_to_talk_{false};
     std::atomic<bool> last_listening_{false};
     std::mutex channel_mutex_;
+    std::mutex listening_mutex_;
     std::mutex crypto_mutex_;
     int socket_fd_ = -1;
     psa_key_id_t aes_key_id_ = PSA_KEY_ID_NULL;

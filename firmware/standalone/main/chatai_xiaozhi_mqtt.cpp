@@ -67,7 +67,7 @@ esp_err_t MqttTransport::Start(const ServerConfig& config,
                                MessageHandler handler) {
     if (config.transport != Transport::kMqttUdp ||
         config.mqtt_endpoint.empty() || config.mqtt_client_id.empty() ||
-        config.mqtt_username.empty() || config.mqtt_password.empty() ||
+        config.mqtt_username.empty() ||
         config.mqtt_publish_topic.empty() || config.mqtt_subscribe_topic.empty() ||
         !handler) {
         return ESP_ERR_INVALID_ARG;
@@ -109,7 +109,8 @@ esp_err_t MqttTransport::Start(const ServerConfig& config,
     }
     mqtt_config.credentials.client_id = config.mqtt_client_id.c_str();
     mqtt_config.credentials.username = config.mqtt_username.c_str();
-    mqtt_config.credentials.authentication.password = config.mqtt_password.c_str();
+    mqtt_config.credentials.authentication.password = config.mqtt_password.empty()
+        ? nullptr : config.mqtt_password.c_str();
     mqtt_config.session.keepalive = config.mqtt_keepalive > 0
         ? config.mqtt_keepalive : 240;
     mqtt_config.network.timeout_ms = 10000;
