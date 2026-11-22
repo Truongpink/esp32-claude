@@ -8,6 +8,7 @@
 #include <mutex>
 #include <string>
 #include <esp_log.h>
+#include <esp_partition.h>
 #include <esp_spiffs.h>
 
 namespace {
@@ -38,26 +39,40 @@ struct PromptFileHeader {
 static_assert(sizeof(PromptFileHeader) == 20, "Unexpected prompt file header size");
 
 std::mutex g_prompt_mutex;
-std::once_flag g_prompt_mount_once;
 bool g_prompt_storage_ready = false;
 
 esp_err_t MountPromptStorage() {
-    std::call_once(g_prompt_mount_once, [] {
-        esp_vfs_spiffs_conf_t config{};
-        config.base_path = "/assets";
-        config.partition_label = "assets";
-        config.max_files = 2;
-        // Preserve any existing assets; never format this partition automatically.
-        config.format_if_mount_failed = false;
-        const esp_err_t result = esp_vfs_spiffs_register(&config);
-        g_prompt_storage_ready = result == ESP_OK;
-        if (result != ESP_OK) {
-            ESP_LOGE("ChatAI-Settings",
-                     "Prompt storage mount failed; assets were not formatted: %s",
-                     esp_err_to_name(result));
-        }
-    });
-    return g_prompt_storage_ready ? ESP_OK : ESP_ERR_INVALID_STATE;
+    if (g_prompt_storage_ready) return ESP_OK;
+
+    const esp_partition_t* partition = esp_partition_find_first(
+        ESP_PARTITION_TYPE_DATA, ESP_PARTITION_SUBTYPE_DATA_SPIFFS, "assets");
+    if (partition == nullptr) {
+        ESP_LOGE("ChatAI-Settings", "Assets partition not found (type=data, subtype=spiffs, label=assets)");
+        return ESP_ERR_NOT_FOUND;
+    }
+    ESP_LOGI("ChatAI-Settings", "Assets partition found: address=0x%08lx size=%lu bytes",
+             static_cast<unsigned long>(partition->address),
+             static_cast<unsigned long>(partition->size));
+
+    esp_vfs_spiffs_conf_t config{};
+    config.base_path = "/assets";
+    config.partition_label = "assets";
+    config.max_files = 2;
+    // Preserve existing assets; never format this partition automatically.
+    config.format_if_mount_failed = false;
+    const esp_err_t result = esp_vfs_spiffs_register(&config);
+    if (result != ESP_OK) {
+        ESP_LOGE("ChatAI-Settings",
+                 "SPIFFS mount failed for assets (address=0x%08lx size=%lu); not formatted: %s",
+                 static_cast<unsigned long>(partition->address),
+                 static_cast<unsigned long>(partition->size),
+                 esp_err_to_name(result));
+        return result;
+    }
+
+    g_prompt_storage_ready = true;
+    ESP_LOGI("ChatAI-Settings", "Prompt storage mounted at /assets");
+    return ESP_OK;
 }
 
 uint32_t UpdateCrc32(uint32_t crc, const uint8_t* data, size_t length) {
@@ -272,25 +287,32 @@ esp_err_t SaveGeminiSystemPrompt(const std::string& prompt) {
     const uint32_t sequence = active < 0 ? 1 : headers[active].sequence + 1;
 
     FILE* file = std::fopen(PromptPath(target), "wb");
-    if (file == nullptr) return ESP_FAIL;
+    if (file == nullptr) {
+        ESP_LOGE("ChatAI-Settings", "Could not open Prompt slot %d for writing", target);
+        return ESP_FAIL;
+    }
 
-    const bool payload_written =
-        std::fwrite(prompt.data(), 1, prompt.size(), file) == prompt.size() &&
-        std::fflush(file) == 0;
     const PromptFileHeader header{
         kPromptMagic, kPromptVersion, sequence,
         static_cast<uint32_t>(prompt.size()), PromptCrc32(prompt)
     };
-    const bool header_written = payload_written &&
-        std::fseek(file, 0, SEEK_SET) == 0 &&
-        std::fwrite(&header, sizeof(header), 1, file) == 1 &&
+    // File layout: [20-byte header][prompt payload]. The active slot remains untouched.
+    const bool header_written = std::fwrite(&header, sizeof(header), 1, file) == 1;
+    const bool payload_written = header_written &&
+        std::fwrite(prompt.data(), 1, prompt.size(), file) == prompt.size() &&
         std::fflush(file) == 0;
     const bool close_ok = std::fclose(file) == 0;
-    if (!payload_written || !header_written || !close_ok) return ESP_FAIL;
+    if (!header_written || !payload_written || !close_ok) {
+        ESP_LOGE("ChatAI-Settings", "Writing Prompt slot %d failed", target);
+        return ESP_FAIL;
+    }
 
     PromptFileHeader verified{};
+    std::string verified_prompt;
     if (!ReadPromptSlotHeader(target, &verified) ||
-        verified.sequence != sequence || verified.length != prompt.size()) {
+        verified.sequence != sequence || verified.length != prompt.size() ||
+        !LoadPromptSlot(target, verified, &verified_prompt) || verified_prompt != prompt) {
+        ESP_LOGE("ChatAI-Settings", "Prompt slot %d read-back/CRC verification failed", target);
         return ESP_FAIL;
     }
 
@@ -300,11 +322,29 @@ esp_err_t SaveGeminiSystemPrompt(const std::string& prompt) {
 
 size_t GetMaxGeminiSystemPromptBytes() {
     std::lock_guard<std::mutex> lock(g_prompt_mutex);
-    if (MountPromptStorage() != ESP_OK) return 0;
+    const esp_err_t mount_result = MountPromptStorage();
+    if (mount_result != ESP_OK) {
+        ESP_LOGE("ChatAI-Settings", "Prompt storage unavailable: mount error=%s",
+                 esp_err_to_name(mount_result));
+        return 0;
+    }
+
     size_t total = 0;
     size_t used = 0;
-    if (esp_spiffs_info("assets", &total, &used) != ESP_OK ||
-        total <= used + 4096) return 0;
+    const esp_err_t info_result = esp_spiffs_info("assets", &total, &used);
+    if (info_result != ESP_OK) {
+        ESP_LOGE("ChatAI-Settings", "Could not read SPIFFS usage for assets: %s",
+                 esp_err_to_name(info_result));
+        return 0;
+    }
+    if (total <= used + 4096) {
+        ESP_LOGE("ChatAI-Settings", "Insufficient Prompt storage: total=%lu used=%lu reserve=4096",
+                 static_cast<unsigned long>(total), static_cast<unsigned long>(used));
+        return 0;
+    }
+    ESP_LOGI("ChatAI-Settings", "Prompt storage ready: total=%lu used=%lu available=%lu",
+             static_cast<unsigned long>(total), static_cast<unsigned long>(used),
+             static_cast<unsigned long>(total - used - 4096));
     return std::min(kMaxSystemPromptBytes, total - used - 4096);
 }
 
