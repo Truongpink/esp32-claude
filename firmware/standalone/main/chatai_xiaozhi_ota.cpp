@@ -269,7 +269,8 @@ bool ParseServerConfig(const cJSON* root, ServerConfig* config) {
         // responses may provide only the root (for example "devices");
         // in that case derive the gateway topic from the MAC address.
         std::string subscribe_topic;
-        if (ReadString(mqtt, "subscribe_topic", &subscribe_topic)) {
+        if (ReadString(mqtt, "subscribe_topic", &subscribe_topic) &&
+            subscribe_topic != "null") {
             const size_t p2p = subscribe_topic.find("/p2p/");
             if (p2p != std::string::npos && p2p + 5 < subscribe_topic.size()) {
                 config->mqtt_subscribe_topic = subscribe_topic;
