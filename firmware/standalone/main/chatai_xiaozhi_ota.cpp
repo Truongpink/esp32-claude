@@ -266,7 +266,7 @@ bool ParseServerConfig(const cJSON* root, ServerConfig* config) {
         // Newer OTA servers provide the complete P2P topic
         // (for example devices/p2p/<mac>). Preserve it exactly. Older
         // responses may provide only the root (for example "devices");
-        // in that case derive the legacy topic from the MQTT client id.
+        // in that case derive the gateway topic from the MAC address.
         std::string subscribe_topic;
         if (ReadString(mqtt, "subscribe_topic", &subscribe_topic)) {
             const size_t p2p = subscribe_topic.find("/p2p/");

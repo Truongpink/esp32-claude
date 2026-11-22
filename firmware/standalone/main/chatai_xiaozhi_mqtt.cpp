@@ -2,6 +2,7 @@
 
 #include <utility>
 #include <cstdlib>
+#include <strings.h>
 
 #include <esp_crt_bundle.h>
 #include <esp_log.h>
@@ -23,32 +24,59 @@ bool ParseBrokerAddress(const std::string& endpoint, BrokerAddress* address) {
     if (address == nullptr || endpoint.empty()) return false;
     std::string value = endpoint;
     bool explicit_scheme = false;
-    if (value.rfind("mqtts://", 0) == 0) {
+    if (strncasecmp(value.c_str(), "mqtts://", 8) == 0 ||
+        strncasecmp(value.c_str(), "ssl://", 6) == 0) {
+        const size_t prefix = strncasecmp(value.c_str(), "mqtts://", 8) == 0 ? 8 : 6;
         address->tls = true;
+        address->port = 8883;
         explicit_scheme = true;
-        value.erase(0, 8);
-    } else if (value.rfind("mqtt://", 0) == 0) {
+        value.erase(0, prefix);
+    } else if (strncasecmp(value.c_str(), "mqtt://", 7) == 0 ||
+               strncasecmp(value.c_str(), "tcp://", 6) == 0) {
+        const size_t prefix = strncasecmp(value.c_str(), "mqtt://", 7) == 0 ? 7 : 6;
         address->tls = false;
+        address->port = 1883;
         explicit_scheme = true;
-        value.erase(0, 7);
+        value.erase(0, prefix);
     } else if (value.find("://") != std::string::npos) {
         return false;
     }
 
-    const size_t colon = value.rfind(':');
-    if (colon != std::string::npos) {
-        const std::string port_text = value.substr(colon + 1);
+    if (value.empty() || value.find_first_of("/?#") != std::string::npos) {
+        return false;
+    }
+
+    std::string port_text;
+    if (value.front() == '[') {
+        const size_t closing_bracket = value.find(']');
+        if (closing_bracket == std::string::npos || closing_bracket == 1) return false;
+        address->host = value.substr(1, closing_bracket - 1);
+        const std::string suffix = value.substr(closing_bracket + 1);
+        if (!suffix.empty()) {
+            if (suffix.front() != ':' || suffix.size() == 1) return false;
+            port_text = suffix.substr(1);
+        }
+    } else {
+        const size_t first_colon = value.find(':');
+        const size_t last_colon = value.rfind(':');
+        if (last_colon != std::string::npos) {
+            if (first_colon != last_colon) return false;
+            address->host = value.substr(0, last_colon);
+            port_text = value.substr(last_colon + 1);
+            if (port_text.empty()) return false;
+        } else {
+            address->host = value;
+        }
+    }
+
+    if (address->host.empty()) return false;
+    if (!port_text.empty()) {
         char* end = nullptr;
         const long parsed = std::strtol(port_text.c_str(), &end, 10);
-        if (end == port_text.c_str() || *end != '\0' ||
+        if (end == port_text.c_str() || *end != '\\0' ||
             parsed <= 0 || parsed > 65535) return false;
-        address->host = value.substr(0, colon);
         address->port = static_cast<int>(parsed);
-    } else {
-        address->host = value;
-        address->port = address->tls ? 8883 : 1883;
     }
-    if (address->host.empty()) return false;
     if (!explicit_scheme) address->tls = address->port == 8883;
     return true;
 }
