@@ -60,6 +60,14 @@ The board-neutral header must remain definition-compatible with the pinned upstr
 - Keep the existing NVS data, Wi-Fi credentials, Web Admin, partition layout, PSRAM settings, and OTA behavior.
 - Do not erase or repartition flash as part of this integration.
 
+## Current AFE feature availability on the ChatAI board
+
+- FD AFE voice processing and VAD are enabled. With no VAD model supplied, ESP-SR uses its WebRTC VAD fallback.
+- WakeNet is not active: the standalone partition table has no `model` partition and this repository does not ship an ESP-SR model image. `esp_srmodel_init("model")` therefore cannot load WakeNet models. Wake-word audio upload is also disabled.
+- Device AEC is not active: `ChatAIXiaozhiAudioCodec` exposes one microphone channel and declares no playback-reference channel. The current speaker output callback is not a calibrated, synchronized AFE reference path.
+- Noise suppression is disabled because no NSNet model is provisioned. AGC is also disabled.
+- Do not report WakeNet, AEC, or NS as operational until the required model assets and/or verified reference signal path are supplied. The existing assets partition and OTA layout must not be repurposed or changed without explicit approval.
+
 ## Validation status
 
 The MQTT/UDP and WebSocket session integration is source-only at this stage. It has not been built with ESP-IDF or tested on hardware. Do not run Codemagic or GitHub Actions; the user runs the GitHub Actions workflow manually.
