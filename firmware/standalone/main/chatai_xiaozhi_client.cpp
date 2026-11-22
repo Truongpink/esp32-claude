@@ -896,7 +896,6 @@ private:
             std::lock_guard<std::mutex> state_lock(listening_mutex_);
             session_ready_.store(false);
             last_listening_.store(false);
-            audio_.SetCaptureEnabled(false);
         }
         udp_running_.store(false);
         // recv() uses a short timeout; let the UDP task observe udp_running_ before close.

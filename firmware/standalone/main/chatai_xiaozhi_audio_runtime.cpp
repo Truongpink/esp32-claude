@@ -112,8 +112,14 @@ esp_err_t XiaozhiAudioRuntime::Stop() {
                             pdTRUE, pdTRUE, portMAX_DELAY);
     }
 
-    const esp_err_t mic_result = EnableMicrophone(false);
-    const esp_err_t speaker_result = EnableSpeaker(false);
+    esp_err_t mic_result = ESP_OK;
+    esp_err_t speaker_result = ESP_OK;
+    // Stop may be called after a failed transport/hello before this runtime
+    // ever owned I2S. Do not disable peripherals still owned by Gemini then.
+    if (was_running) {
+        mic_result = EnableMicrophone(false);
+        speaker_result = EnableSpeaker(false);
+    }
     {
         std::lock_guard<std::mutex> queue_lock(queue_mutex_);
         uplink_queue_.clear();
