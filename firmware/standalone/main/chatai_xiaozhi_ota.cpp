@@ -252,6 +252,15 @@ bool ParseServerConfig(const cJSON* root, ServerConfig* config) {
                 }
             }
         }
+        if (config->mqtt_subscribe_topic.empty() &&
+            !config->device_mac_address.empty()) {
+            std::string safe_mac = config->device_mac_address;
+            for (char& character : safe_mac) {
+                if (character == ':') character = '_';
+            }
+            // Current Xiaozhi gateway P2P routing convention.
+            config->mqtt_subscribe_topic = "devices/p2p/" + safe_mac;
+        }
 
         const cJSON* keepalive =
             cJSON_GetObjectItemCaseSensitive(mqtt, "keepalive");
@@ -283,6 +292,56 @@ bool ParseServerConfig(const cJSON* root, ServerConfig* config) {
 }
 
 }  // namespace
+
+esp_err_t CheckActivation() {
+    if (!chatai::network::NetworkManager::IsConnected()) {
+        return ESP_ERR_INVALID_STATE;
+    }
+
+    const std::string mac = GetMacAddress();
+    const std::string client_id = GetClientId();
+    if (mac.empty() || client_id.empty()) return ESP_FAIL;
+
+    HttpResponse response;
+    const std::string activation_url = std::string(kOtaUrl) + "activate";
+    esp_http_client_config_t http_config{};
+    http_config.url = activation_url.c_str();
+    http_config.method = HTTP_METHOD_POST;
+    http_config.timeout_ms = 12000;
+    http_config.buffer_size = 1024;
+    http_config.buffer_size_tx = 256;
+    http_config.crt_bundle_attach = esp_crt_bundle_attach;
+    http_config.event_handler = HttpEventHandler;
+    http_config.user_data = &response;
+
+    esp_http_client_handle_t client = esp_http_client_init(&http_config);
+    if (client == nullptr) return ESP_ERR_NO_MEM;
+
+    const std::string user_agent =
+        std::string("ChatAI-TPIOS/") + esp_app_get_description()->version;
+    esp_http_client_set_header(client, "Device-Id", mac.c_str());
+    esp_http_client_set_header(client, "Client-Id", client_id.c_str());
+    esp_http_client_set_header(client, "User-Agent", user_agent.c_str());
+    esp_http_client_set_header(client, "Accept-Language", kLanguage);
+    esp_http_client_set_header(client, "Activation-Version", "1");
+    esp_http_client_set_header(client, "Content-Type", "application/json");
+    esp_http_client_set_post_field(client, "{}", 2);
+
+    const esp_err_t request_result = esp_http_client_perform(client);
+    const int status = esp_http_client_get_status_code(client);
+    esp_http_client_cleanup(client);
+
+    if (response.overflow) return ESP_ERR_INVALID_SIZE;
+    if (request_result != ESP_OK) return request_result;
+    if (status == 200) {
+        ESP_LOGI(kTag, "Xiaozhi activation completed");
+        return ESP_OK;
+    }
+    if (status == 202) return ESP_ERR_NOT_FINISHED;
+
+    ESP_LOGW(kTag, "Xiaozhi activation HTTP status: %d", status);
+    return ESP_FAIL;
+}
 
 esp_err_t FetchServerConfig(ServerConfig* config) {
     if (config == nullptr) return ESP_ERR_INVALID_ARG;

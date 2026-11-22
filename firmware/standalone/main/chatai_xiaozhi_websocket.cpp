@@ -25,8 +25,14 @@ WebSocketTransport::~WebSocketTransport() {
 esp_err_t WebSocketTransport::Start(const ServerConfig& config,
                                     TextHandler text_handler,
                                     BinaryHandler binary_handler) {
-    if (client_ != nullptr || config.websocket_url.empty() ||
+    const bool secure_url = config.websocket_url.rfind("wss://", 0) == 0;
+    const bool plain_url = config.websocket_url.rfind("ws://", 0) == 0;
+    if (client_ != nullptr || (!secure_url && !plain_url) ||
+        config.websocket_url.size() > 2048 ||
         config.device_mac_address.empty() || config.device_client_id.empty() ||
+        config.websocket_token.find('\r') != std::string::npos ||
+        config.websocket_token.find('\n') != std::string::npos ||
+        config.websocket_token.size() > 2048 ||
         !text_handler || !binary_handler) {
         return ESP_ERR_INVALID_ARG;
     }

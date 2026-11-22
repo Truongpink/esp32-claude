@@ -12,6 +12,7 @@ using SpeakerReferenceCallback = void (*)(const int16_t* pcm24k, size_t samples,
 // Hardware pins are provisional until verified on the physical XH-S3E-AI V1.0 board.
 esp_err_t Initialize();
 esp_err_t EnableMicrophone(bool enable);
+bool IsMicrophoneEnabled();
 esp_err_t EnableSpeaker(bool enable);
 
 esp_err_t ReadMicrophonePcm16(int16_t* destination, size_t requested_samples,

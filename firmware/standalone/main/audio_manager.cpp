@@ -194,6 +194,10 @@ esp_err_t EnableMicrophone(bool enable) {
     return err;
 }
 
+bool IsMicrophoneEnabled() {
+    return s_mic_enabled.load();
+}
+
 esp_err_t EnableSpeaker(bool enable) {
     std::lock_guard<std::mutex> state_lock(s_state_mutex);
     std::lock_guard<std::mutex> io_lock(s_speaker_io_mutex);

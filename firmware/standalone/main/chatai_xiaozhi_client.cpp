@@ -3,6 +3,7 @@
 #include "chatai_xiaozhi_audio_runtime.h"
 #include "chatai_xiaozhi_mqtt.h"
 #include "chatai_xiaozhi_websocket.h"
+#include "audio_manager.h"
 #include "chatai_xiaozhi_ota.h"
 #include "diagnostic_manager.h"
 #include "display_manager.h"
@@ -76,6 +77,31 @@ bool ReadString(const cJSON* object, const char* name, std::string* value) {
     if (!cJSON_IsString(item) || item->valuestring == nullptr ||
         item->valuestring[0] == '\0') return false;
     *value = item->valuestring;
+    return true;
+}
+
+bool ReadNegotiatedAudioParams(const cJSON* root, uint32_t* sample_rate,
+                                uint32_t* frame_duration) {
+    if (sample_rate == nullptr || frame_duration == nullptr) return false;
+    const cJSON* audio_params =
+        cJSON_GetObjectItemCaseSensitive(root, "audio_params");
+    if (!cJSON_IsObject(audio_params)) return false;
+    const cJSON* format = cJSON_GetObjectItemCaseSensitive(audio_params, "format");
+    const cJSON* channels =
+        cJSON_GetObjectItemCaseSensitive(audio_params, "channels");
+    const cJSON* rate =
+        cJSON_GetObjectItemCaseSensitive(audio_params, "sample_rate");
+    const cJSON* duration =
+        cJSON_GetObjectItemCaseSensitive(audio_params, "frame_duration");
+    if ((format != nullptr &&
+         (!cJSON_IsString(format) || std::strcmp(format->valuestring, "opus") != 0)) ||
+        (channels != nullptr &&
+         (!cJSON_IsNumber(channels) || channels->valueint != 1)) ||
+        !cJSON_IsNumber(rate) || !cJSON_IsNumber(duration)) {
+        return false;
+    }
+    *sample_rate = static_cast<uint32_t>(rate->valueint);
+    *frame_duration = static_cast<uint32_t>(duration->valueint);
     return true;
 }
 
@@ -159,11 +185,32 @@ private:
                               config.activation_code.c_str(),
                               config.activation_challenge.c_str());
                 chatai::diagnostics::Add("XIAOZHI_ACTIVATION", "REQUIRED", detail);
-                chatai::display::Notify("XIAOZHI",
-                    config.activation_message.empty()
-                        ? "Cần kích hoạt thiết bị Xiaozhi"
-                        : config.activation_message.c_str(), 8000);
-                vTaskDelay(pdMS_TO_TICKS(60000));
+                std::string activation_notice = config.activation_message;
+                if (!config.activation_code.empty() &&
+                    activation_notice.find(config.activation_code) == std::string::npos) {
+                    if (!activation_notice.empty()) activation_notice += "\n";
+                    activation_notice += config.activation_code;
+                }
+                if (activation_notice.empty())
+                    activation_notice = "Cần kích hoạt thiết bị Xiaozhi";
+                chatai::display::Notify("XIAOZHI", activation_notice.c_str(), 8000);
+
+                for (int attempt = 0; attempt < 10; ++attempt) {
+                    const esp_err_t activation_result = CheckActivation();
+                    if (activation_result == ESP_OK) {
+                        chatai::diagnostics::Add("XIAOZHI_ACTIVATION", "OK",
+                                                 "Device binding completed; refreshing OTA config");
+                        break;
+                    }
+                    if (activation_result == ESP_ERR_NOT_FINISHED) {
+                        vTaskDelay(pdMS_TO_TICKS(3000));
+                    } else {
+                        chatai::diagnostics::Add("XIAOZHI_ACTIVATION", "RETRY",
+                                                 esp_err_to_name(activation_result));
+                        vTaskDelay(pdMS_TO_TICKS(10000));
+                        break;
+                    }
+                }
                 continue;
             }
             if (ota_result != ESP_OK) {
@@ -176,6 +223,10 @@ private:
                                          kServerEnded | kUdpRxExited | kUdpTxExited);
             active_transport_ = config.transport;
             websocket_version_ = config.websocket_version;
+            {
+                std::lock_guard<std::mutex> lock(hello_mutex_);
+                pending_hello_payload_.clear();
+            }
 
             esp_err_t result = ESP_ERR_NOT_SUPPORTED;
             if (active_transport_ == Transport::kMqttUdp) {
@@ -213,7 +264,9 @@ private:
                         events_, kHelloReceived | kHelloFailed, pdFALSE, pdFALSE,
                         pdMS_TO_TICKS(250));
                 }
-                if ((bits & kHelloReceived) == 0) {
+                if ((bits & kHelloReceived) != 0) {
+                    result = ConfigurePendingHello();
+                } else {
                     result = (bits & kHelloFailed) ? ESP_FAIL :
                         (IsTransportConnected() ? ESP_ERR_TIMEOUT : ESP_FAIL);
                 }
@@ -228,9 +281,12 @@ private:
                 while (session_ready_.load() && IsTransportConnected() &&
                        chatai::network::NetworkManager::IsConnected()) {
                     const EventBits_t bits = xEventGroupWaitBits(
-                        events_, kServerEnded, pdTRUE, pdFALSE,
+                        events_, kServerEnded, pdFALSE, pdFALSE,
                         pdMS_TO_TICKS(500));
                     if (bits & kServerEnded) break;
+                    if (IsListening() != last_listening_.load()) {
+                        UpdateListeningState();
+                    }
                 }
             } else {
                 char detail[96]{};
@@ -298,10 +354,11 @@ private:
         }
 
         if (type == "hello") {
-            const esp_err_t result = active_transport_ == Transport::kWebSocket
-                ? ConfigureWebSocketAudioChannel(root) : ConfigureAudioChannel(root);
-            xEventGroupSetBits(events_, result == ESP_OK
-                ? kHelloReceived : kHelloFailed);
+            {
+                std::lock_guard<std::mutex> lock(hello_mutex_);
+                pending_hello_payload_ = payload;
+            }
+            xEventGroupSetBits(events_, kHelloReceived);
         } else if (type == "goodbye") {
             std::string received_session;
             std::string current_session;
@@ -322,6 +379,29 @@ private:
         cJSON_Delete(root);
     }
 
+    bool WaitForGeminiMicrophoneRelease() {
+        for (int attempt = 0; attempt < 20; ++attempt) {
+            if (!chatai::audio::IsMicrophoneEnabled()) return true;
+            vTaskDelay(pdMS_TO_TICKS(25));
+        }
+        return !chatai::audio::IsMicrophoneEnabled();
+    }
+
+    esp_err_t ConfigurePendingHello() {
+        std::string payload;
+        {
+            std::lock_guard<std::mutex> lock(hello_mutex_);
+            payload.swap(pending_hello_payload_);
+        }
+        if (payload.empty()) return ESP_ERR_INVALID_RESPONSE;
+        cJSON* root = cJSON_ParseWithLength(payload.data(), payload.size());
+        if (root == nullptr) return ESP_ERR_INVALID_RESPONSE;
+        const esp_err_t result = active_transport_ == Transport::kWebSocket
+            ? ConfigureWebSocketAudioChannel(root) : ConfigureAudioChannel(root);
+        cJSON_Delete(root);
+        return result;
+    }
+
     esp_err_t ConfigureAudioChannel(const cJSON* root) {
         if (session_ready_.load()) return ESP_ERR_INVALID_STATE;
         std::string transport;
@@ -330,21 +410,19 @@ private:
             !ReadString(root, "session_id", &session_id)) {
             return ESP_ERR_INVALID_RESPONSE;
         }
-
-        const cJSON* audio_params = cJSON_GetObjectItemCaseSensitive(root, "audio_params");
-        if (!cJSON_IsObject(audio_params)) return ESP_ERR_INVALID_RESPONSE;
-        const cJSON* sample_rate_item =
-            cJSON_GetObjectItemCaseSensitive(audio_params, "sample_rate");
-        const cJSON* frame_duration_item =
-            cJSON_GetObjectItemCaseSensitive(audio_params, "frame_duration");
-        if (!cJSON_IsNumber(sample_rate_item) ||
-            !cJSON_IsNumber(frame_duration_item)) {
+        const cJSON* features = cJSON_GetObjectItemCaseSensitive(root, "features");
+        if (features != nullptr && !cJSON_IsObject(features))
             return ESP_ERR_INVALID_RESPONSE;
-        }
-        const uint32_t sample_rate =
-            static_cast<uint32_t>(sample_rate_item->valueint);
-        const uint32_t frame_duration =
-            static_cast<uint32_t>(frame_duration_item->valueint);
+        const cJSON* udp_probe =
+            cJSON_GetObjectItemCaseSensitive(features, "udp_probe");
+        if (udp_probe != nullptr && !cJSON_IsBool(udp_probe))
+            return ESP_ERR_INVALID_RESPONSE;
+        if (cJSON_IsTrue(udp_probe)) return ESP_ERR_NOT_SUPPORTED;
+
+        uint32_t sample_rate = 0;
+        uint32_t frame_duration = 0;
+        if (!ReadNegotiatedAudioParams(root, &sample_rate, &frame_duration))
+            return ESP_ERR_INVALID_RESPONSE;
         if (sample_rate != 24000 || frame_duration != 60) {
             ESP_LOGE(kTag, "Unsupported negotiated audio format: %lu Hz / %lu ms",
                      static_cast<unsigned long>(sample_rate),
@@ -453,19 +531,10 @@ private:
             return ESP_ERR_INVALID_RESPONSE;
         }
 
-        const cJSON* audio_params =
-            cJSON_GetObjectItemCaseSensitive(root, "audio_params");
-        if (!cJSON_IsObject(audio_params)) return ESP_ERR_INVALID_RESPONSE;
-        const cJSON* sample_rate_item =
-            cJSON_GetObjectItemCaseSensitive(audio_params, "sample_rate");
-        const cJSON* frame_duration_item =
-            cJSON_GetObjectItemCaseSensitive(audio_params, "frame_duration");
-        if (!cJSON_IsNumber(sample_rate_item) ||
-            !cJSON_IsNumber(frame_duration_item)) return ESP_ERR_INVALID_RESPONSE;
-        const uint32_t sample_rate =
-            static_cast<uint32_t>(sample_rate_item->valueint);
-        const uint32_t frame_duration =
-            static_cast<uint32_t>(frame_duration_item->valueint);
+        uint32_t sample_rate = 0;
+        uint32_t frame_duration = 0;
+        if (!ReadNegotiatedAudioParams(root, &sample_rate, &frame_duration))
+            return ESP_ERR_INVALID_RESPONSE;
         if (sample_rate != 24000 || frame_duration != 60) {
             ESP_LOGE(kTag, "Unsupported WebSocket audio format: %lu Hz / %lu ms",
                      static_cast<unsigned long>(sample_rate),
@@ -483,6 +552,7 @@ private:
         chatai::gemini::SetChatEnabled(false);
         chatai::gemini::SetPushToTalk(false);
         if (chatai::gemini::IsSpeaking()) chatai::gemini::AbortSpeaking();
+        if (!WaitForGeminiMicrophoneRelease()) return ESP_ERR_TIMEOUT;
 
         const esp_err_t result = audio_.Start();
         if (result != ESP_OK) return result;
@@ -770,7 +840,31 @@ private:
         }
     }
 
+    void SendGoodbye() {
+        if (!session_ready_.load() || !IsTransportConnected() ||
+            (xEventGroupGetBits(events_) & kServerEnded) != 0) return;
+        std::string session_id;
+        {
+            std::lock_guard<std::mutex> lock(channel_mutex_);
+            session_id = session_id_;
+        }
+        if (session_id.empty()) return;
+        cJSON* root = cJSON_CreateObject();
+        if (root == nullptr) return;
+        cJSON_AddStringToObject(root, "session_id", session_id.c_str());
+        cJSON_AddStringToObject(root, "type", "goodbye");
+        char* json = cJSON_PrintUnformatted(root);
+        cJSON_Delete(root);
+        if (json == nullptr) return;
+        const esp_err_t result = PublishControl(json);
+        cJSON_free(json);
+        if (result != ESP_OK) {
+            ESP_LOGW(kTag, "Could not send Xiaozhi goodbye");
+        }
+    }
+
     void StopAudioChannel() {
+        SendGoodbye();
         {
             std::lock_guard<std::mutex> state_lock(listening_mutex_);
             session_ready_.store(false);
@@ -831,6 +925,8 @@ private:
     std::atomic<bool> last_listening_{false};
     std::mutex channel_mutex_;
     std::mutex listening_mutex_;
+    std::mutex hello_mutex_;
+    std::string pending_hello_payload_;
     std::mutex crypto_mutex_;
     int socket_fd_ = -1;
     psa_key_id_t aes_key_id_ = PSA_KEY_ID_NULL;
