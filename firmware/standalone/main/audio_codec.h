@@ -1,9 +1,9 @@
 #pragma once
 
 // Board-neutral declaration of the Xiaozhi v2.6.0 AudioCodec contract.
-// Keep this class layout and virtual method order identical to the upstream
-// audio/audio_codec.h. The upstream board.h and Settings dependencies are
-// intentionally excluded; ChatAI remains the sole owner of I2S and settings.
+// Keep the class definition token-for-token compatible with the pinned
+// upstream main/audio/audio_codec.h. The upstream board.h include is omitted
+// because ChatAI owns the board and persistent audio settings.
 #include <freertos/FreeRTOS.h>
 #include <freertos/event_groups.h>
 #include <driver/i2s_std.h>
@@ -51,8 +51,8 @@ protected:
     int input_channels_ = 1;
     int output_channels_ = 1;
     int output_volume_ = 70;
-    float input_gain_ = 0.0f;
+    float input_gain_ = 0.0;
 
-    virtual int Read(int16_t* destination, int samples) = 0;
-    virtual int Write(const int16_t* samples, int count) = 0;
+    virtual int Read(int16_t* dest, int samples) = 0;
+    virtual int Write(const int16_t* data, int samples) = 0;
 };
