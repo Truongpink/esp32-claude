@@ -408,12 +408,14 @@ private:
         }
     }
 
-    bool WaitForGeminiMicrophoneRelease() {
+    bool WaitForGeminiAudioRelease() {
         for (int attempt = 0; attempt < 40; ++attempt) {
-            if (!chatai::audio::IsMicrophoneEnabled()) return true;
+            if (!chatai::audio::IsMicrophoneEnabled() &&
+                !chatai::audio::IsSpeakerEnabled()) return true;
             vTaskDelay(pdMS_TO_TICKS(25));
         }
-        return !chatai::audio::IsMicrophoneEnabled();
+        return !chatai::audio::IsMicrophoneEnabled() &&
+               !chatai::audio::IsSpeakerEnabled();
     }
 
     esp_err_t ConfigurePendingHello() {
@@ -521,7 +523,7 @@ private:
         }
 
         SuspendGeminiAudio();
-        if (!WaitForGeminiMicrophoneRelease()) return ESP_ERR_TIMEOUT;
+        if (!WaitForGeminiAudioRelease()) return ESP_ERR_TIMEOUT;
 
         esp_err_t result = audio_.Start();
         if (result != ESP_OK) {
@@ -578,7 +580,7 @@ private:
         }
 
         SuspendGeminiAudio();
-        if (!WaitForGeminiMicrophoneRelease()) return ESP_ERR_TIMEOUT;
+        if (!WaitForGeminiAudioRelease()) return ESP_ERR_TIMEOUT;
 
         const esp_err_t result = audio_.Start();
         if (result != ESP_OK) return result;

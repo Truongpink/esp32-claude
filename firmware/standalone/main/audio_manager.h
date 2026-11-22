@@ -14,6 +14,7 @@ esp_err_t Initialize();
 esp_err_t EnableMicrophone(bool enable);
 bool IsMicrophoneEnabled();
 esp_err_t EnableSpeaker(bool enable);
+bool IsSpeakerEnabled();
 
 esp_err_t ReadMicrophonePcm16(int16_t* destination, size_t requested_samples,
                               size_t* samples_read, uint32_t timeout_ms = 100);
