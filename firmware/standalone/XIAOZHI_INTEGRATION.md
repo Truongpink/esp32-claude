@@ -39,7 +39,11 @@ The upstream application also assumes its own Board, NetworkInterface, Settings,
 - The current runtime accepts 24 kHz mono / 60 ms downlink only, matching the standard Xiaozhi server hello and ChatAI speaker rate. Other negotiated formats are rejected until a resampler is integrated; they are not played at the wrong speed.
 - The runtime is not yet instantiated by `app_main` and is not connected to a network protocol. No Xiaozhi session can start yet; end-to-end voice operation is not implemented.
 - Runtime lifecycle waits for both worker tasks to exit before stopping the codec or disabling I2S. Keep the runtime object alive for the full duration of any active session.
-- Server-selected MQTT+UDP or WebSocket transport integration remains a subsequent step.
+- Added `ChatAI Xiaozhi OTA config discovery` against the pinned upstream default endpoint `https://api.tenclass.net/xiaozhi/ota/`. It sends a version-2 device report over HTTPS with certificate-bundle verification, a hardware MAC, and a stable UUID v4 persisted in the dedicated `chatai_xiaozhi` NVS namespace.
+- The OTA report includes the running app/chip/partition metadata and explicitly advertises MCP, AEC, UDP probe and glyph push as unavailable; it does not claim unsupported features.
+- The response parser follows upstream selection precedence: MQTT configuration takes priority when present; otherwise WebSocket is selected. Credentials are held in the returned in-memory config and are never written to logs.
+- If the service requires activation, the client returns `ESP_ERR_NOT_FINISHED` and retains the activation message/code in the result object. Automated activation is not implemented yet.
+- This OTA config client is a standalone component only: it is not yet called from `app_main`, and no MQTT/UDP or Xiaozhi WebSocket session is connected. The next step is the protocol/session layer, with the selected transport honored rather than forcing WebSocket.
 
 The board-neutral header must remain definition-compatible with the pinned upstream declaration. Do not compile upstream `audio_codec.cc`, which reads Xiaozhi `Settings` and is not part of ChatAI's settings ownership.
 
