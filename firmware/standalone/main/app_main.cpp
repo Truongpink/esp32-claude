@@ -162,6 +162,14 @@ extern "C" void app_main(void) {
         return;
     }
 
+    bool ota_image_confirmed = false;
+    bool ota_rollback_detected = false;
+    const esp_partition_t* boot_partition = esp_ota_get_running_partition();
+    if (boot_partition != nullptr) {
+        ota_rollback_detected =
+            chatai::settings::ConsumePendingFirmwareRollback(boot_partition->address);
+    }
+
 #if CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE
     const esp_partition_t* running = esp_ota_get_running_partition();
     esp_ota_img_states_t image_state;
@@ -175,6 +183,7 @@ extern "C" void app_main(void) {
             esp_restart();
             return;
         }
+        ota_image_confirmed = true;
         ESP_LOGI(kTag, "OTA firmware boot confirmed; rollback cancelled");
     }
     if (running != nullptr) {
@@ -204,6 +213,14 @@ extern "C" void app_main(void) {
     }
 
 
+
+    if (ota_rollback_detected) {
+        chatai::gemini::QueueNotificationSound(chatai::gemini::NotificationSound::kRollback);
+    } else if (ota_image_confirmed) {
+        chatai::gemini::QueueNotificationSound(chatai::gemini::NotificationSound::kFirmwareUpdated);
+    } else {
+        chatai::gemini::QueueNotificationSound(chatai::gemini::NotificationSound::kSuccess);
+    }
 
     ESP_LOGI(kTag, "ESP-IDF platform, native Wi-Fi and OLED startup completed");
     ESP_LOGI(kTag, "Gemini Live standalone mode initialized");

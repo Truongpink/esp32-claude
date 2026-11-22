@@ -88,6 +88,7 @@ struct MicLoopScope {
 
 std::atomic<bool> g_ready{false};
 std::atomic<bool> g_speaking{false};
+std::atomic<unsigned char> g_pending_notification_sound{0};
 std::atomic<bool> g_error{false};
 std::atomic<bool> g_waiting_setup{false};
 std::atomic<uint32_t> g_setup_started_tick{0};
@@ -1777,6 +1778,45 @@ void MicrophoneWorker(void*) {
     }
 }
 
+void PlayNotificationSound(chatai::gemini::NotificationSound sound) {
+    static int16_t tone[2400];  // 100 ms at the existing 24 kHz speaker rate.
+    struct Tone { float frequency; };
+    Tone pattern[3]{};
+    size_t tone_count = 1;
+    switch (sound) {
+        case chatai::gemini::NotificationSound::kFirmwareUpdated:
+            pattern[0] = {880.0f}; pattern[1] = {1046.5f}; tone_count = 2; break;
+        case chatai::gemini::NotificationSound::kWarning:
+            pattern[0] = {620.0f}; pattern[1] = {620.0f}; pattern[2] = {620.0f}; tone_count = 3; break;
+        case chatai::gemini::NotificationSound::kRollback:
+            pattern[0] = {620.0f}; pattern[1] = {880.0f}; pattern[2] = {620.0f}; tone_count = 3; break;
+        case chatai::gemini::NotificationSound::kSuccess:
+        default:
+            pattern[0] = {880.0f}; break;
+    }
+    constexpr float kPi = 3.14159265358979323846f;
+    bool played = false;
+    for (size_t tone_index = 0; tone_index < tone_count; ++tone_index) {
+        if (g_audio_queue != nullptr && uxQueueMessagesWaiting(g_audio_queue) != 0) break;
+        for (size_t i = 0; i < sizeof(tone) / sizeof(tone[0]); ++i) {
+            const float phase = 2.0f * kPi * pattern[tone_index].frequency *
+                                static_cast<float>(i) / 24000.0f;
+            tone[i] = static_cast<int16_t>(std::sin(phase) * 5000.0f);
+        }
+        if (chatai::audio::EnableSpeaker(true) != ESP_OK) break;
+        size_t written = 0;
+        const esp_err_t result = chatai::audio::WriteSpeakerPcm16(
+            tone, sizeof(tone) / sizeof(tone[0]), &written, 100);
+        chatai::audio::EnableSpeaker(false);
+        if (result != ESP_OK || written != sizeof(tone) / sizeof(tone[0])) break;
+        played = true;
+        if (tone_index + 1 < tone_count) vTaskDelay(pdMS_TO_TICKS(90));
+    }
+    chatai::diagnostics::Add("NOTIFY_SOUND", played ? "OK" : "SKIPPED",
+        played ? "system notification tone played while Gemini speaker was idle"
+               : "speaker unavailable or Gemini audio became active");
+}
+
 void SpeakerWorker(void*) {
     AudioChunk* chunk=nullptr;bool speaker_enabled=false,speaker_write_reported=false,speaker_write_error_reported=false;
     uint32_t playback_turn=0,playback_chunks=0,playback_failures=0,playback_enable_failures=0,playback_peak=0;
@@ -1810,6 +1850,12 @@ void SpeakerWorker(void*) {
             if(empty&&playback_turn){
                 if(g_audio_turn_aborted_id.load()==playback_turn)report_playback("ABORTED");
                 else if(g_audio_turn_completed_id.load()>=playback_turn)report_playback("DRAINED");
+            }
+            if (empty && playback_turn == 0 && !ShouldListen() && !g_speaking.load()) {
+                const unsigned char pending = g_pending_notification_sound.exchange(0);
+                if (pending >= 1 && pending <= 4) {
+                    PlayNotificationSound(static_cast<chatai::gemini::NotificationSound>(pending));
+                }
             }
             continue;
         }
@@ -2122,6 +2168,10 @@ esp_err_t Initialize() {
 
     ESP_LOGI(kTag, "Gemini Live audio workers initialized");
     return ESP_OK;
+}
+
+void QueueNotificationSound(NotificationSound sound) {
+    g_pending_notification_sound.store(static_cast<unsigned char>(sound));
 }
 
 bool IsReady() {

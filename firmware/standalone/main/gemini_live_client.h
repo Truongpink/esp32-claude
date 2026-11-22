@@ -4,6 +4,8 @@
 
 namespace chatai::gemini {
 
+enum class NotificationSound : unsigned char { kSuccess = 1, kFirmwareUpdated = 2, kWarning = 3, kRollback = 4 };
+void QueueNotificationSound(NotificationSound sound);
 esp_err_t Initialize();
 bool IsReady();
 bool IsSpeaking();

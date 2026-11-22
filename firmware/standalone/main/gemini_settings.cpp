@@ -393,6 +393,30 @@ esp_err_t ConfirmPendingFirmwareName(uint32_t running_address) {
     return result;
 }
 
+bool ConsumePendingFirmwareRollback(uint32_t running_address) {
+    nvs_handle_t handle;
+    if (nvs_open(kNvsNamespace, NVS_READWRITE, &handle) != ESP_OK) return false;
+    uint32_t pending_address = 0;
+    size_t name_size = 0;
+    const esp_err_t address_result = nvs_get_u32(handle, kPendingFirmwareAddress, &pending_address);
+    const esp_err_t name_result = nvs_get_str(handle, kPendingFirmware, nullptr, &name_size);
+    const bool has_pending = address_result == ESP_OK && name_result == ESP_OK &&
+                             name_size > 1 && name_size <= 65;
+    if (!has_pending || pending_address == running_address) {
+        nvs_close(handle);
+        return false;
+    }
+    esp_err_t result = nvs_erase_key(handle, kPendingFirmware);
+    if (result == ESP_ERR_NVS_NOT_FOUND) result = ESP_OK;
+    if (result == ESP_OK) {
+        result = nvs_erase_key(handle, kPendingFirmwareAddress);
+        if (result == ESP_ERR_NVS_NOT_FOUND) result = ESP_OK;
+    }
+    if (result == ESP_OK) result = nvs_commit(handle);
+    nvs_close(handle);
+    return result == ESP_OK;
+}
+
 std::string GetInstalledFirmwareName() {
     nvs_handle_t handle;
     if (nvs_open(kNvsNamespace, NVS_READONLY, &handle) != ESP_OK) return {};

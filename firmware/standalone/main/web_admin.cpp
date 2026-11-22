@@ -883,6 +883,7 @@ esp_err_t SendJson(httpd_req_t* request, const char* status, const char* json) {
 }
 
 esp_err_t SendError(httpd_req_t* request, const char* status, const char* message) {
+    chatai::gemini::QueueNotificationSound(chatai::gemini::NotificationSound::kWarning);
     const std::string body = std::string("{\"error\":\"") + message + "\"}";
     return SendJson(request, status, body.c_str());
 }
@@ -1088,6 +1089,7 @@ esp_err_t GeminiVoicePostHandler(httpd_req_t* request) {
     const esp_err_t result = chatai::settings::SaveGeminiVoice(voice);
     if (result != ESP_OK) return SendError(request, "500 Internal Server Error", "Không thể lưu giọng nói vào NVS");
     chatai::display::Notify("GEMINI", "Da luu giong noi");
+    chatai::gemini::QueueNotificationSound(chatai::gemini::NotificationSound::kSuccess);
     if (chatai::settings::HasGeminiApiKey()) chatai::gemini::RequestReconnect();
     return SendJson(request, "200 OK", "{\"message\":\"Đã lưu giọng nói. Phiên Gemini Live mới sẽ sử dụng lựa chọn này.\"}");
 }
@@ -1151,6 +1153,7 @@ esp_err_t GeminiPromptPostHandler(httpd_req_t* request) {
                          "Không thể ghi đầy đủ System Prompt vào phân vùng assets.");
     }
     chatai::display::Notify("GEMINI", "Da luu System Prompt");
+    chatai::gemini::QueueNotificationSound(chatai::gemini::NotificationSound::kSuccess);
     if (chatai::settings::HasGeminiApiKey()) chatai::gemini::RequestReconnect();
     return SendJson(request, "200 OK",
         R"({"message":"Đã lưu System Prompt. Phiên Gemini Live mới sẽ áp dụng."})");
@@ -1193,6 +1196,7 @@ esp_err_t GeminiKeyPostHandler(httpd_req_t* request) {
     }
     chatai::gemini::RequestReconnect();
     chatai::display::Notify("WEB ADMIN", "Đã lưu API Key");
+    chatai::gemini::QueueNotificationSound(chatai::gemini::NotificationSound::kSuccess);
     return SendJson(request, "200 OK", "{\"message\":\"Đã lưu Gemini API Key.\"}");
 }
 
@@ -1215,6 +1219,7 @@ esp_err_t AudioVolumePostHandler(httpd_req_t* request) {
     const esp_err_t result = chatai::audio::SaveOutputVolume(value);
     if (result != ESP_OK) return SendError(request, "500 Internal Server Error", "Không thể lưu âm lượng vào NVS");
     chatai::display::Notify("ÂM THANH", "Đã lưu âm lượng");
+    chatai::gemini::QueueNotificationSound(chatai::gemini::NotificationSound::kSuccess);
     return SendJson(request, "200 OK", "{\"message\":\"Đã lưu âm lượng loa.\"}");
 }
 
@@ -1423,6 +1428,7 @@ esp_err_t GeminiKeyDeleteHandler(httpd_req_t* request) {
     }
     chatai::gemini::RequestReconnect();
     chatai::display::Notify("WEB ADMIN", "Đã xóa API Key");
+    chatai::gemini::QueueNotificationSound(chatai::gemini::NotificationSound::kWarning);
     return SendJson(request, "200 OK", "{\"message\":\"Đã xóa Gemini API Key.\"}");
 }
 }  // namespace
