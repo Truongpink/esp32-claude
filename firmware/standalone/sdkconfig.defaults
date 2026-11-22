@@ -26,10 +26,9 @@ CONFIG_SPIRAM=y
 CONFIG_SPIRAM_MODE_OCT=y
 CONFIG_SPIRAM_SPEED_80M=y
 CONFIG_SPIRAM_USE_MALLOC=y
-# Keep only tiny allocations internal-first; larger Prompt/audio/network buffers prefer PSRAM.
-CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL=1024
-# Preserve a larger internal pool for I2S DMA and internal-only task/runtime allocations.
-CONFIG_SPIRAM_MALLOC_RESERVE_INTERNAL=102400
+# A/B test: restore the pre-ed01963 internal-first allocation thresholds.
+CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL=16384
+CONFIG_SPIRAM_MALLOC_RESERVE_INTERNAL=32768
 
 # Let MbedTLS follow ESP-IDF malloc policy (large TLS buffers can use PSRAM).
 # Do not force all TLS allocations into external RAM.
