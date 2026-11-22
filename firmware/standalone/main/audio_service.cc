@@ -18,7 +18,7 @@
     }
 
 #if CONFIG_IDF_TARGET_ESP32S3 || CONFIG_IDF_TARGET_ESP32P4 || CONFIG_IDF_TARGET_ESP32S31
-#include "engines/afe_audio_engine.h"
+#include "afe_audio_engine.h"
 #else
 #include "engines/lite_audio_engine.h"
 #endif
