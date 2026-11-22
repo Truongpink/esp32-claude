@@ -180,11 +180,9 @@ private:
             ServerConfig config;
             const esp_err_t ota_result = FetchServerConfig(&config);
             if (ota_result == ESP_ERR_NOT_FINISHED && config.activation_required) {
-                char detail[192]{};
-                std::snprintf(detail, sizeof(detail), "activation_code=%s challenge=%s",
-                              config.activation_code.c_str(),
-                              config.activation_challenge.c_str());
-                chatai::diagnostics::Add("XIAOZHI_ACTIVATION", "REQUIRED", detail);
+                chatai::diagnostics::Add(
+                    "XIAOZHI_ACTIVATION", "REQUIRED",
+                    "Device binding required; activation code shown on display");
                 std::string activation_notice = config.activation_message;
                 if (!config.activation_code.empty() &&
                     activation_notice.find(config.activation_code) == std::string::npos) {
