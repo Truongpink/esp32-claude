@@ -27,13 +27,16 @@ The upstream audio pipeline is not a standalone drop-in file. Its AudioService u
 
 The upstream application also assumes its own Board, NetworkInterface, Settings, Assets, and application lifecycle abstractions. Those must be adapted deliberately rather than importing the upstream board/application startup wholesale.
 
-## Audio adapter milestone
+## Audio codec contract milestone
 
-- Added a board-neutral `AudioCodec` interface matching the Xiaozhi v2.6.0 codec contract, without importing Xiaozhi `Board` or `Settings`.
-- Added `ChatAIXiaozhiAudioCodec`, which adapts that contract to the existing `ChatAIAudioCodecBridge` and therefore to ChatAI's existing `AudioManager` I2S channels.
+- Added a board-neutral `AudioCodec` declaration with the same class layout, member order, and virtual method order as Xiaozhi v2.6.0. It omits only the upstream `board.h` and `Settings` coupling.
+- Implemented ChatAI-owned base methods in `main/audio_codec.cpp`; persistent settings remain owned by ChatAI.
+- Added `ChatAIXiaozhiAudioCodec`, which adapts the contract to `ChatAIAudioCodecBridge` and therefore to ChatAI's existing `AudioManager` I2S channels.
 - Input/output remain mono PCM16 at 16 kHz / 24 kHz respectively, matching the current ChatAI audio manager.
 - The adapter is compiled as part of the standalone firmware, but is not yet instantiated by `app_main` and does not yet activate `AudioService`.
 - Opus/audio-engine dependencies, AudioService task lifecycle, and network transport integration remain subsequent steps. Do not claim end-to-end Xiaozhi voice operation yet.
+
+The board-neutral header must remain ABI-compatible with the pinned upstream declaration. Do not compile upstream `audio_codec.cc`, which reads Xiaozhi `Settings` and is not part of ChatAI's settings ownership.
 
 ## Hardware integration constraints
 
@@ -45,4 +48,4 @@ The upstream application also assumes its own Board, NetworkInterface, Settings,
 
 ## Validation status
 
-This milestone has source changes only. It has not yet been built with ESP-IDF or tested on hardware. No Codemagic build, GitHub Actions, flash, or OTA has been run.
+This milestone contains source changes only. It has not yet been built with ESP-IDF or tested on hardware. Do not run Codemagic or GitHub Actions; the user runs the GitHub Actions workflow manually.
