@@ -7,13 +7,12 @@
 
 namespace chatai::audio {
 
-// Xiaozhi AudioCodec contract implemented on top of ChatAI's existing I2S
-// owner. No second I2S channel is created and volume persistence stays in ChatAI.
 class ChatAIXiaozhiAudioCodec final : public ::AudioCodec {
 public:
     ChatAIXiaozhiAudioCodec();
 
     void Start() override;
+    esp_err_t Stop();
     void SetOutputVolume(int volume) override;
     void SetInputGain(float gain) override;
     void EnableInput(bool enable) override;

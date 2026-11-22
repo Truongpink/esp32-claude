@@ -20,6 +20,16 @@ void ChatAIXiaozhiAudioCodec::Start() {
     last_error_.store(bridge_.Start());
 }
 
+esp_err_t ChatAIXiaozhiAudioCodec::Stop() {
+    const esp_err_t result = bridge_.Stop();
+    last_error_.store(result);
+    if (result == ESP_OK) {
+        input_enabled_ = false;
+        output_enabled_ = false;
+    }
+    return result;
+}
+
 void ChatAIXiaozhiAudioCodec::SetOutputVolume(int volume) {
     output_volume_ = std::clamp(volume, 0, 100);
     bridge_.SetOutputVolume(output_volume_);
