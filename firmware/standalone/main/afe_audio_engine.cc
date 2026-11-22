@@ -392,12 +392,14 @@ void AfeAudioEngine::HandleVoiceResult(const afe_fetch_result_t* result) {
         output_buffer_.clear();
     }
     if (vad_state_change_callback_) {
-        if (result->vad_state == VAD_SPEECH && !is_speaking_) {
-            is_speaking_ = true;
-            vad_state_change_callback_(true);
-        } else if (result->vad_state == VAD_SILENCE && is_speaking_) {
-            is_speaking_ = false;
-            vad_state_change_callback_(false);
+        if (result->vad_state == VAD_SPEECH) {
+            if (!is_speaking_.exchange(true)) {
+                vad_state_change_callback_(true);
+            }
+        } else if (result->vad_state == VAD_SILENCE) {
+            if (is_speaking_.exchange(false)) {
+                vad_state_change_callback_(false);
+            }
         }
     }
     if (!output_callback_) {
