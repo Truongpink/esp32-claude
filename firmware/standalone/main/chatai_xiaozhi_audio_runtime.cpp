@@ -7,6 +7,7 @@
 #include <utility>
 
 #include <esp_log.h>
+#include <esp_timer.h>
 
 namespace chatai::audio {
 namespace {
@@ -75,6 +76,7 @@ esp_err_t XiaozhiAudioRuntime::Start() {
         return result;
     }
 
+    capture_enabled_.store(false);
     running_.store(true);
 
     if (xTaskCreate(CaptureTaskEntry, "xiaozhi_mic", 6144, this, 6, nullptr) != pdPASS) {
@@ -104,6 +106,7 @@ esp_err_t XiaozhiAudioRuntime::Stop() {
         return ESP_OK;
     }
 
+    capture_enabled_.store(false);
     const bool was_running = running_.exchange(false);
     if (was_running) {
         uplink_cv_.notify_all();
@@ -133,6 +136,15 @@ esp_err_t XiaozhiAudioRuntime::Stop() {
 
     ESP_LOGI(kTag, "Audio runtime stopped");
     return ESP_OK;
+}
+
+void XiaozhiAudioRuntime::SetCaptureEnabled(bool enabled) {
+    capture_enabled_.store(enabled);
+    if (!enabled) {
+        std::lock_guard<std::mutex> lock(queue_mutex_);
+        uplink_queue_.clear();
+    }
+    uplink_cv_.notify_all();
 }
 
 bool XiaozhiAudioRuntime::WaitPopUplinkFrame(
@@ -200,6 +212,10 @@ void XiaozhiAudioRuntime::PlaybackTaskEntry(void* context) {
 void XiaozhiAudioRuntime::CaptureTask() {
     std::array<int16_t, ChatAIOpusCodec::kInputFrameSamples> pcm{};
     while (running_.load()) {
+        if (!capture_enabled_.load()) {
+            vTaskDelay(pdMS_TO_TICKS(20));
+            continue;
+        }
         size_t collected = 0;
         while (collected < pcm.size() && running_.load()) {
             size_t received = 0;
@@ -218,11 +234,12 @@ void XiaozhiAudioRuntime::CaptureTask() {
         if (!running_.load()) {
             break;
         }
-        if (collected != pcm.size()) {
+        if (!capture_enabled_.load() || collected != pcm.size()) {
             continue;
         }
 
         XiaozhiUplinkFrame frame;
+        frame.timestamp_ms = static_cast<uint32_t>(esp_timer_get_time() / 1000);
         const esp_err_t result =
             opus_.EncodeFrame(pcm.data(), pcm.size(), frame.payload);
         if (result != ESP_OK) {

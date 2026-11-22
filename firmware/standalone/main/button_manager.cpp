@@ -16,6 +16,7 @@
 #include "gemini_live_client.h"
 #include "network_manager.h"
 #include "diagnostic_manager.h"
+#include "chatai_xiaozhi_client.h"
 
 namespace chatai::buttons {
 namespace {
@@ -124,6 +125,15 @@ void ButtonTask(void*) {
                     action = "PROVISIONING_NOTICE";
                     chatai::display::Notify("WI-FI", "Cấu hình qua Web Admin");
                     ESP_LOGI(kTag, "BOOT clicked while Wi-Fi provisioning is active");
+                } else if (chatai::xiaozhi::IsReady()) {
+                    const bool chat_enabled = chatai::xiaozhi::IsChatEnabled();
+                    action = chat_enabled ? "XIAOZHI_DISABLE_LISTENING"
+                                          : "XIAOZHI_ENABLE_LISTENING";
+                    chatai::xiaozhi::SetChatEnabled(!chat_enabled);
+                    chatai::display::Notify("XIAOZHI",
+                        !chat_enabled ? "Bật nghe liên tục" : "Đã tắt nghe");
+                    ESP_LOGI(kTag, "Xiaozhi continuous listening %s",
+                             !chat_enabled ? "enabled" : "disabled");
                 } else if (speaking_before) {
                     action = "ABORT_PLAYBACK";
                     chatai::gemini::AbortSpeaking();
@@ -151,10 +161,17 @@ void ButtonTask(void*) {
 
         if (UpdateButton(g_touch, now)) {
             ReportButtonTransition("PTT", g_touch);
-            chatai::gemini::SetPushToTalk(g_touch.stable_pressed);
-            chatai::display::Notify("CHAT AI",
-                g_touch.stable_pressed ? "Đang nghe" :
-                (chatai::gemini::IsChatEnabled() ? "Nghe liên tục" : "Đã ngừng nghe"));
+            if (chatai::xiaozhi::IsReady()) {
+                chatai::xiaozhi::SetPushToTalk(g_touch.stable_pressed);
+                chatai::display::Notify("XIAOZHI",
+                    g_touch.stable_pressed ? "Đang nghe" :
+                    (chatai::xiaozhi::IsChatEnabled() ? "Nghe liên tục" : "Đã ngừng nghe"));
+            } else {
+                chatai::gemini::SetPushToTalk(g_touch.stable_pressed);
+                chatai::display::Notify("CHAT AI",
+                    g_touch.stable_pressed ? "Đang nghe" :
+                    (chatai::gemini::IsChatEnabled() ? "Nghe liên tục" : "Đã ngừng nghe"));
+            }
         }
 
         if (UpdateButton(g_volume_up, now)) {

@@ -1,6 +1,7 @@
 #include "chatai_xiaozhi_mqtt.h"
 
 #include <utility>
+#include <cstdlib>
 
 #include <esp_crt_bundle.h>
 #include <esp_log.h>
@@ -12,21 +13,43 @@ constexpr char kTag[] = "XiaozhiMQTT";
 constexpr uint32_t kConnectTimeoutMs = 15000;
 constexpr int kDefaultPort = 8883;
 
-bool BuildBrokerUri(const std::string& endpoint, std::string* uri) {
-    if (uri == nullptr || endpoint.empty()) return false;
+struct BrokerAddress {
+    std::string host;
+    int port = kDefaultPort;
+    bool tls = true;
+};
 
-    if (endpoint.rfind("mqtts://", 0) == 0) {
-        *uri = endpoint;
-        return true;
-    }
-    if (endpoint.find("://") != std::string::npos) {
+bool ParseBrokerAddress(const std::string& endpoint, BrokerAddress* address) {
+    if (address == nullptr || endpoint.empty()) return false;
+    std::string value = endpoint;
+    bool explicit_scheme = false;
+    if (value.rfind("mqtts://", 0) == 0) {
+        address->tls = true;
+        explicit_scheme = true;
+        value.erase(0, 8);
+    } else if (value.rfind("mqtt://", 0) == 0) {
+        address->tls = false;
+        explicit_scheme = true;
+        value.erase(0, 7);
+    } else if (value.find("://") != std::string::npos) {
         return false;
     }
 
-    *uri = "mqtts://" + endpoint;
-    if (endpoint.find(':') == std::string::npos) {
-        *uri += ":" + std::to_string(kDefaultPort);
+    const size_t colon = value.rfind(':');
+    if (colon != std::string::npos) {
+        const std::string port_text = value.substr(colon + 1);
+        char* end = nullptr;
+        const long parsed = std::strtol(port_text.c_str(), &end, 10);
+        if (end == port_text.c_str() || *end != '\0' ||
+            parsed <= 0 || parsed > 65535) return false;
+        address->host = value.substr(0, colon);
+        address->port = static_cast<int>(parsed);
+    } else {
+        address->host = value;
+        address->port = address->tls ? 8883 : 1883;
     }
+    if (address->host.empty()) return false;
+    if (!explicit_scheme) address->tls = address->port == 8883;
     return true;
 }
 
@@ -58,11 +81,12 @@ esp_err_t MqttTransport::Start(const ServerConfig& config,
         events_ = xEventGroupCreate();
         if (events_ == nullptr) return ESP_ERR_NO_MEM;
     }
-    xEventGroupClearBits(events_, kConnected | kStartFailed);
+    xEventGroupClearBits(events_, kSubscribed | kStartFailed);
+    pending_subscribe_id_.store(-1);
 
-    std::string broker_uri;
-    if (!BuildBrokerUri(config.mqtt_endpoint, &broker_uri)) {
-        ESP_LOGE(kTag, "MQTT endpoint must use TLS");
+    BrokerAddress broker;
+    if (!ParseBrokerAddress(config.mqtt_endpoint, &broker)) {
+        ESP_LOGE(kTag, "Invalid MQTT broker endpoint");
         return ESP_ERR_INVALID_ARG;
     }
 
@@ -76,8 +100,13 @@ esp_err_t MqttTransport::Start(const ServerConfig& config,
     }
 
     esp_mqtt_client_config_t mqtt_config{};
-    mqtt_config.broker.address.uri = broker_uri.c_str();
-    mqtt_config.broker.verification.crt_bundle_attach = esp_crt_bundle_attach;
+    mqtt_config.broker.address.hostname = broker.host.c_str();
+    mqtt_config.broker.address.port = static_cast<uint32_t>(broker.port);
+    mqtt_config.broker.address.transport = broker.tls
+        ? MQTT_TRANSPORT_OVER_SSL : MQTT_TRANSPORT_OVER_TCP;
+    if (broker.tls) {
+        mqtt_config.broker.verification.crt_bundle_attach = esp_crt_bundle_attach;
+    }
     mqtt_config.credentials.client_id = config.mqtt_client_id.c_str();
     mqtt_config.credentials.username = config.mqtt_username.c_str();
     mqtt_config.credentials.authentication.password = config.mqtt_password.c_str();
@@ -110,9 +139,9 @@ esp_err_t MqttTransport::Start(const ServerConfig& config,
     }
 
     const EventBits_t bits = xEventGroupWaitBits(
-        events_, kConnected | kStartFailed, pdFALSE, pdFALSE,
+        events_, kSubscribed | kStartFailed, pdFALSE, pdFALSE,
         pdMS_TO_TICKS(kConnectTimeoutMs));
-    if ((bits & kConnected) == 0) {
+    if ((bits & kSubscribed) == 0) {
         Stop();
         return (bits & kStartFailed) != 0 ? ESP_FAIL : ESP_ERR_TIMEOUT;
     }
@@ -166,22 +195,29 @@ void MqttTransport::EventHandler(void* context, esp_event_base_t,
 void MqttTransport::HandleEvent(esp_mqtt_event_handle_t event) {
     switch (event->event_id) {
         case MQTT_EVENT_CONNECTED: {
+            connected_.store(false);
             const int message_id = esp_mqtt_client_subscribe(
                 client_, subscribe_topic_.c_str(), 0);
-            if (message_id < 0) {
-                connected_.store(false);
+            if (message_id <= 0) {
                 xEventGroupSetBits(events_, kStartFailed);
                 ESP_LOGE(kTag, "Could not subscribe to the Xiaozhi response topic");
                 return;
             }
-            connected_.store(true);
-            xEventGroupSetBits(events_, kConnected);
+            pending_subscribe_id_.store(message_id);
             break;
         }
 
+        case MQTT_EVENT_SUBSCRIBED:
+            if (event->msg_id == pending_subscribe_id_.load()) {
+                connected_.store(true);
+                xEventGroupSetBits(events_, kSubscribed);
+            }
+            break;
+
         case MQTT_EVENT_DISCONNECTED:
             connected_.store(false);
-            xEventGroupClearBits(events_, kConnected);
+            xEventGroupClearBits(events_, kSubscribed);
+            pending_subscribe_id_.store(-1);
             ESP_LOGW(kTag, "MQTT disconnected");
             break;
 
@@ -241,6 +277,8 @@ void MqttTransport::HandleEvent(esp_mqtt_event_handle_t event) {
         }
 
         case MQTT_EVENT_ERROR:
+            connected_.store(false);
+            xEventGroupSetBits(events_, kStartFailed);
             ESP_LOGE(kTag, "MQTT transport reported an error");
             break;
 

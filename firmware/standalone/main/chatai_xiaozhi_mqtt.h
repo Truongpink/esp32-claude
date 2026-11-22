@@ -8,6 +8,8 @@
 #include <string>
 
 #include <esp_err.h>
+#include <esp_event.h>
+#include <esp_event.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/event_groups.h>
 #include <mqtt_client.h>
@@ -37,7 +39,7 @@ private:
                              int32_t event_id, void* event_data);
     void HandleEvent(esp_mqtt_event_handle_t event);
 
-    static constexpr EventBits_t kConnected = 1 << 0;
+    static constexpr EventBits_t kSubscribed = 1 << 0;
     static constexpr EventBits_t kStartFailed = 1 << 1;
     static constexpr size_t kMaxMessageBytes = 16384;
 
@@ -46,6 +48,8 @@ private:
     std::atomic<bool> connected_{false};
     std::string publish_topic_;
     std::string subscribe_topic_;
+    std::atomic<int> pending_subscribe_id_{-1};
+    std::atomic<int> pending_subscribe_id_{-1};
     MessageHandler message_handler_;
 
     std::mutex message_mutex_;

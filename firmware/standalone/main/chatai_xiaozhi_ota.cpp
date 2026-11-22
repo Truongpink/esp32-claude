@@ -218,24 +218,32 @@ bool ParseServerConfig(const cJSON* root, ServerConfig* config) {
 
     const cJSON* mqtt = cJSON_GetObjectItemCaseSensitive(root, "mqtt");
     if (cJSON_IsObject(mqtt)) {
-        std::string subscribe_topic_prefix;
         if (!ReadString(mqtt, "endpoint", &config->mqtt_endpoint) ||
             !ReadString(mqtt, "client_id", &config->mqtt_client_id) ||
             !ReadString(mqtt, "username", &config->mqtt_username) ||
             !ReadString(mqtt, "password", &config->mqtt_password) ||
-            !ReadString(mqtt, "publish_topic", &config->mqtt_publish_topic) ||
-            !ReadString(mqtt, "subscribe_topic", &subscribe_topic_prefix)) {
+            !ReadString(mqtt, "publish_topic", &config->mqtt_publish_topic)) {
             return false;
         }
-        // Xiaozhi routes device replies through:
-        // <subscribe-topic-root>/p2p/<MQTT client_id>.
-        const size_t separator = subscribe_topic_prefix.find('/');
-        if (separator != std::string::npos) {
-            subscribe_topic_prefix.resize(separator);
+        // Newer OTA servers provide the complete P2P topic
+        // (for example devices/p2p/<mac>). Preserve it exactly. Older
+        // responses may provide only the root (for example "devices");
+        // in that case derive the legacy topic from the MQTT client id.
+        std::string subscribe_topic;
+        if (ReadString(mqtt, "subscribe_topic", &subscribe_topic)) {
+            const size_t p2p = subscribe_topic.find("/p2p/");
+            if (p2p != std::string::npos && p2p + 5 < subscribe_topic.size()) {
+                config->mqtt_subscribe_topic = subscribe_topic;
+            } else {
+                const size_t separator = subscribe_topic.find('/');
+                if (separator != std::string::npos)
+                    subscribe_topic.resize(separator);
+                if (!subscribe_topic.empty()) {
+                    config->mqtt_subscribe_topic =
+                        subscribe_topic + "/p2p/" + config->mqtt_client_id;
+                }
+            }
         }
-        if (subscribe_topic_prefix.empty()) return false;
-        config->mqtt_subscribe_topic =
-            subscribe_topic_prefix + "/p2p/" + config->mqtt_client_id;
 
         const cJSON* keepalive =
             cJSON_GetObjectItemCaseSensitive(mqtt, "keepalive");

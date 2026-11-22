@@ -19,6 +19,7 @@ namespace chatai::audio {
 struct XiaozhiUplinkFrame {
     uint32_t sample_rate = ChatAIOpusCodec::kInputSampleRate;
     uint32_t frame_duration_ms = ChatAIOpusCodec::kInputFrameDurationMs;
+    uint32_t timestamp_ms = 0;
     std::vector<uint8_t> payload;
 };
 
@@ -35,6 +36,7 @@ public:
     esp_err_t Initialize();
     esp_err_t Start();
     esp_err_t Stop();
+    void SetCaptureEnabled(bool enabled);
 
     // Network task retrieves encoded microphone frames without blocking capture.
     bool WaitPopUplinkFrame(XiaozhiUplinkFrame& frame, uint32_t timeout_ms);
@@ -69,6 +71,7 @@ private:
     EventGroupHandle_t task_events_ = nullptr;
     std::atomic<bool> initialized_{false};
     std::atomic<bool> running_{false};
+    std::atomic<bool> capture_enabled_{false};
 
     std::mutex lifecycle_mutex_;
     std::mutex queue_mutex_;

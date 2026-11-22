@@ -12,7 +12,7 @@ idf_component_register(
          "audio_manager.cpp" "audio_codec.cpp" "chatai_audio_codec_bridge.cpp"
          "chatai_xiaozhi_audio_codec.cpp" "chatai_opus_codec.cpp"
          "chatai_xiaozhi_audio_runtime.cpp" "chatai_xiaozhi_ota.cpp"
-         "chatai_xiaozhi_mqtt.cpp"
+         "chatai_xiaozhi_mqtt.cpp" "chatai_xiaozhi_client.cpp"
          "button_manager.cpp" "gemini_settings.cpp"
          "gemini_live_client.cpp" "web_admin.cpp" "diagnostic_manager.cpp"
          "status_led_manager.cpp"

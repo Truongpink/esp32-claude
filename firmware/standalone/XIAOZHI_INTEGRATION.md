@@ -37,13 +37,17 @@ The upstream application also assumes its own Board, NetworkInterface, Settings,
 - Added `XiaozhiAudioRuntime` with separate FreeRTOS microphone-capture and speaker-playback tasks. It reuses the existing AudioManager I2S channels; it does not create another I2S driver.
 - The runtime exposes a bounded uplink Opus queue for the future network task and accepts complete downlink Opus packets from that task. Both queues are limited to four packets; the oldest packet is dropped when full to bound real-time latency.
 - The current runtime accepts 24 kHz mono / 60 ms downlink only, matching the standard Xiaozhi server hello and ChatAI speaker rate. Other negotiated formats are rejected until a resampler is integrated; they are not played at the wrong speed.
-- The runtime is not yet instantiated by `app_main` and is not connected to a network protocol. No Xiaozhi session can start yet; end-to-end voice operation is not implemented.
+- `app_main` now initializes the Xiaozhi session manager after the existing Gemini client; the manager waits for Wi-Fi and performs OTA discovery in its own worker task.
 - Runtime lifecycle waits for both worker tasks to exit before stopping the codec or disabling I2S. Keep the runtime object alive for the full duration of any active session.
 - Added `ChatAI Xiaozhi OTA config discovery` against the pinned upstream default endpoint `https://api.tenclass.net/xiaozhi/ota/`. It sends a version-2 device report over HTTPS with certificate-bundle verification, a hardware MAC, and a stable UUID v4 persisted in the dedicated `chatai_xiaozhi` NVS namespace.
 - The OTA report includes the running app/chip/partition metadata and explicitly advertises MCP, AEC, UDP probe and glyph push as unavailable; it does not claim unsupported features.
 - The response parser follows upstream selection precedence: MQTT configuration takes priority when present; otherwise WebSocket is selected. Credentials are held in the returned in-memory config and are never written to logs.
 - If the service requires activation, the client returns `ESP_ERR_NOT_FINISHED` and retains the activation message, code and challenge. It also parses any accompanying MQTT/WebSocket connection settings without discarding them; the session must still wait for activation before opening audio. Automated activation is not implemented yet.
-- This OTA config client is a standalone component only: it is not yet called from `app_main`, and no MQTT/UDP or Xiaozhi WebSocket session is connected. The next step is the protocol/session layer, with the selected transport honored rather than forcing WebSocket.
+- Added a native ESP-MQTT control adapter with TLS certificate-bundle verification, OTA-provided broker credentials, publish topic, and P2P response-topic subscription. If the OTA response includes a full `subscribe_topic` such as `devices/p2p/<mac>`, the device preserves it; legacy responses that contain only the root (such as `devices`) are expanded to `<root>/p2p/<client_id>`. The parser does not invent a topic when the server omits it.
+- Added the MQTT hello exchange and UDP audio session manager. It validates the negotiated server format (24 kHz mono / 60 ms), opens a connected UDP socket, imports the AES-128 key into PSA Crypto, encrypts/decrypts the 16-byte Xiaozhi audio header and Opus payload with AES-CTR, and enforces monotonically increasing receive sequence numbers.
+- The session manager starts the existing Xiaozhi audio runtime only after a valid hello response. Microphone capture remains disabled until a listen-start command is sent; BOOT toggles continuous listening and the existing PTT touch input controls manual listening while a Xiaozhi session is ready.
+- When Xiaozhi takes the audio session, Gemini continuous listening and PTT are disabled and any active Gemini playback is aborted. Gemini source/settings and the Web Admin baseline remain intact.
+- The manager honors OTA transport precedence: MQTT+UDP is used when supplied; a WebSocket-only response is currently reported as unsupported and retried rather than silently forcing another transport. The WebSocket session adapter is not yet implemented.
 
 The board-neutral header must remain definition-compatible with the pinned upstream declaration. Do not compile upstream `audio_codec.cc`, which reads Xiaozhi `Settings` and is not part of ChatAI's settings ownership.
 
@@ -57,4 +61,4 @@ The board-neutral header must remain definition-compatible with the pinned upstr
 
 ## Validation status
 
-This milestone contains source changes only. It has not been built with ESP-IDF or tested on hardware. Do not run Codemagic or GitHub Actions; the user runs the GitHub Actions workflow manually.
+The MQTT/UDP session integration is source-only at this stage. It has not been built with ESP-IDF or tested on hardware. Do not run Codemagic or GitHub Actions; the user runs the GitHub Actions workflow manually.

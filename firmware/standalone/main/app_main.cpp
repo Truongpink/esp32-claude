@@ -19,6 +19,7 @@
 #include "button_manager.h"
 #include "diagnostic_manager.h"
 #include "status_led_manager.h"
+#include "chatai_xiaozhi_client.h"
 
 namespace {
 constexpr char kTag[] = "ChatAI";
@@ -210,6 +211,12 @@ extern "C" void app_main(void) {
                  esp_err_to_name(gemini_result));
         RestartIfOtaImageIsPending();
         return;
+    }
+
+    const esp_err_t xiaozhi_result = chatai::xiaozhi::Initialize();
+    if (xiaozhi_result != ESP_OK) {
+        ESP_LOGW(kTag, "Xiaozhi Chat Voice startup deferred: %s",
+                 esp_err_to_name(xiaozhi_result));
     }
 
 
