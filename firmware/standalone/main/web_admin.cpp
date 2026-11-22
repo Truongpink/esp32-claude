@@ -727,7 +727,7 @@ document.getElementById("saveVoice").addEventListener("click",()=>saveGeminiSett
 document.getElementById("savePrompt").addEventListener("click",async()=>{
  const bytes=new TextEncoder().encode(promptInput.value).length;
  if(bytes===0){promptResult.textContent="System Prompt không được để trống.";return;}
- if(!maxPromptBytes){promptResult.textContent="Vùng lưu Prompt chưa sẵn sàng. Hãy kiểm tra phân vùng assets của thiết bị.";return;}
+ if(!maxPromptBytes){promptResult.textContent="Không thể xác nhận dung lượng SPIFFS assets. Hãy kiểm tra log ChatAI-Settings để biết lỗi partition, mount hoặc dung lượng.";return;}
  if(bytes>maxPromptBytes){promptResult.textContent="Prompt hiện có "+bytes+" byte, vượt dung lượng lưu tối đa "+maxPromptBytes+" byte của thiết bị.";return;}
  const button=document.getElementById("savePrompt");
  button.disabled=true;promptResult.textContent="Đang lưu System Prompt...";
