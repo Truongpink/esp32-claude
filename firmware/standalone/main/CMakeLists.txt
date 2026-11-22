@@ -1,4 +1,4 @@
-
+ 
 if(DEFINED ENV{CHATAI_FIRMWARE_BUILD})
     set(CHATAI_FIRMWARE_BUILD "$ENV{CHATAI_FIRMWARE_BUILD}")
 else()
@@ -10,7 +10,8 @@ endif()
 
 idf_component_register(
     SRCS "app_main.cpp" "network_manager.cpp" "display_manager.cpp"
-         "audio_manager.cpp" "button_manager.cpp" "gemini_settings.cpp"
+         "audio_manager.cpp" "chatai_audio_codec_bridge.cpp"
+         "button_manager.cpp" "gemini_settings.cpp"
          "gemini_live_client.cpp" "web_admin.cpp" "diagnostic_manager.cpp"
          "status_led_manager.cpp"
     INCLUDE_DIRS "."
