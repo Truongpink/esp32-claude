@@ -1428,7 +1428,7 @@ esp_err_t GeminiKeyDeleteHandler(httpd_req_t* request) {
     }
     chatai::gemini::RequestReconnect();
     chatai::display::Notify("WEB ADMIN", "Đã xóa API Key");
-    chatai::gemini::QueueNotificationSound(chatai::gemini::NotificationSound::kWarning);
+    chatai::gemini::QueueNotificationSound(chatai::gemini::NotificationSound::kSuccess);
     return SendJson(request, "200 OK", "{\"message\":\"Đã xóa Gemini API Key.\"}");
 }
 }  // namespace
