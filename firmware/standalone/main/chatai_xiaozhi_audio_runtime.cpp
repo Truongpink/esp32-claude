@@ -65,7 +65,7 @@ esp_err_t XiaozhiAudioRuntime::Start() {
     }
     xEventGroupClearBits(task_events_, kCaptureExited | kPlaybackExited);
 
-    esp_err_t result = EnableSpeaker(true);
+    const esp_err_t result = EnableSpeaker(true);
     if (result != ESP_OK) {
         return result;
     }
@@ -143,6 +143,9 @@ esp_err_t XiaozhiAudioRuntime::Stop() {
 }
 
 void XiaozhiAudioRuntime::SetCaptureEnabled(bool enabled) {
+    // Serialize listen/TTS transitions with Start/Stop. Without this lock a
+    // late listen-start callback could re-enable I2S after Stop had returned.
+    std::lock_guard<std::mutex> lifecycle_lock(lifecycle_mutex_);
     if (!running_.load()) {
         capture_enabled_.store(false);
         return;
@@ -190,7 +193,8 @@ esp_err_t XiaozhiAudioRuntime::SubmitDownlinkFrame(
     if (!running_.load()) {
         return ESP_ERR_INVALID_STATE;
     }
-    if (payload == nullptr || payload_size == 0) {
+    if (payload == nullptr || payload_size == 0 ||
+        payload_size > kMaxOpusPacketBytes) {
         return ESP_ERR_INVALID_ARG;
     }
     if (sample_rate != kSpeakerSampleRate ||
@@ -305,6 +309,11 @@ void XiaozhiAudioRuntime::PlaybackTask() {
             frame.frame_duration_ms, pcm);
         if (decode_result != ESP_OK) {
             ESP_LOGW(kTag, "Opus decode failed: %s", esp_err_to_name(decode_result));
+            continue;
+        }
+        if (pcm.size() != kSpeakerFrameSamples) {
+            ESP_LOGW(kTag, "Dropped Opus frame with unexpected PCM size: %u",
+                     static_cast<unsigned>(pcm.size()));
             continue;
         }
 
