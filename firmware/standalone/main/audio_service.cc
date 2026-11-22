@@ -444,18 +444,21 @@ void AudioService::OpusCodecTask() {
                 decoder_lock.unlock();
                 if (ret == ESP_AUDIO_ERR_OK) {
                     task.pcm.resize(out_frame.decoded_size / sizeof(int16_t));
-                    if (decoder_sample_rate_ != codec_->output_sample_rate() &&
-                        output_resampler_ != nullptr) {
-                        uint32_t target_size = 0;
-                        esp_ae_rate_cvt_get_max_out_sample_num(output_resampler_, task.pcm.size(),
-                                                               &target_size);
-                        std::vector<int16_t> resampled(target_size);
-                        uint32_t actual_output = target_size;
-                        esp_ae_rate_cvt_process(output_resampler_, (esp_ae_sample_t)task.pcm.data(),
-                                                task.pcm.size(), (esp_ae_sample_t)resampled.data(),
-                                                &actual_output);
-                        resampled.resize(actual_output);
-                        task.pcm = std::move(resampled);
+                    {
+                        std::lock_guard<std::mutex> resampler_lock(output_resampler_mutex_);
+                        if (decoder_sample_rate_ != codec_->output_sample_rate() &&
+                            output_resampler_ != nullptr) {
+                            uint32_t target_size = 0;
+                            esp_ae_rate_cvt_get_max_out_sample_num(output_resampler_, task.pcm.size(),
+                                                                   &target_size);
+                            std::vector<int16_t> resampled(target_size);
+                            uint32_t actual_output = target_size;
+                            esp_ae_rate_cvt_process(output_resampler_, (esp_ae_sample_t)task.pcm.data(),
+                                                    task.pcm.size(), (esp_ae_sample_t)resampled.data(),
+                                                    &actual_output);
+                            resampled.resize(actual_output);
+                            task.pcm = std::move(resampled);
+                        }
                     }
                     decoded = true;
                 } else {
@@ -553,6 +556,7 @@ void AudioService::SetDecodeSampleRate(int sample_rate, int frame_duration) {
 
     // Serialize close/open/reset/decode on the same decoder handle. ResetDecoder()
     // may run from the session-control task while the codec task changes formats.
+    std::unique_lock<std::mutex> resampler_lock(output_resampler_mutex_);
     std::unique_lock<std::mutex> decoder_lock(decoder_mutex_);
     if (opus_decoder_ != nullptr) {
         esp_opus_dec_close(opus_decoder_);
