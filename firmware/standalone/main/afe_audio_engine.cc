@@ -38,6 +38,10 @@ AfeAudioEngine::~AfeAudioEngine() {
 
 bool AfeAudioEngine::Initialize(AudioCodec* codec, int frame_duration_ms,
                                 srmodel_list_t* models_list) {
+    if (event_group_ == nullptr) {
+        ESP_LOGE(TAG, "Failed to create AFE event group");
+        return false;
+    }
     if (afe_data_ != nullptr || (codec_ != nullptr && !kUseAfeForVoiceProcessing &&
                                  wake_detector_ == WakeDetector::kNone)) {
         return true;
