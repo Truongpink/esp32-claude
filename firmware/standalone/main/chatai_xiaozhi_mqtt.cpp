@@ -73,7 +73,7 @@ bool ParseBrokerAddress(const std::string& endpoint, BrokerAddress* address) {
     if (!port_text.empty()) {
         char* end = nullptr;
         const long parsed = std::strtol(port_text.c_str(), &end, 10);
-        if (end == port_text.c_str() || *end != '\\0' ||
+        if (end == port_text.c_str() || *end != '\0' ||
             parsed <= 0 || parsed > 65535) return false;
         address->port = static_cast<int>(parsed);
     }
