@@ -210,7 +210,10 @@ bool ParseServerConfig(const cJSON* root, ServerConfig* config) {
         const cJSON* code = cJSON_GetObjectItemCaseSensitive(activation, "code");
         if (cJSON_IsString(message)) config->activation_message = message->valuestring;
         if (cJSON_IsString(code)) config->activation_code = code->valuestring;
-        return true;
+        const cJSON* challenge =
+            cJSON_GetObjectItemCaseSensitive(activation, "challenge");
+        if (cJSON_IsString(challenge))
+            config->activation_challenge = challenge->valuestring;
     }
 
     const cJSON* mqtt = cJSON_GetObjectItemCaseSensitive(root, "mqtt");
@@ -248,7 +251,7 @@ bool ParseServerConfig(const cJSON* root, ServerConfig* config) {
         return true;
     }
 
-    return false;
+    return config->activation_required;
 }
 
 }  // namespace

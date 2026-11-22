@@ -32,6 +32,7 @@ struct ServerConfig {
     bool activation_required = false;
     std::string activation_message;
     std::string activation_code;
+    std::string activation_challenge;
 };
 
 // Queries the public Xiaozhi OTA configuration endpoint. The request uses a
