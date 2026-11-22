@@ -7,6 +7,7 @@
 
 #include <esp_heap_caps.h>
 #include <esp_log.h>
+#include <esp_partition.h>
 #include <esp_timer.h>
 #include <esp_vadn_models.h>
 
@@ -53,11 +54,14 @@ bool AfeAudioEngine::Initialize(AudioCodec* codec, int frame_duration_ms,
     frame_samples_ = frame_duration_ms * 16000 / 1000;
     output_buffer_.reserve(frame_samples_);
 
-    if (models_list == nullptr) {
+    if (models_list != nullptr) {
+        models_ = models_list;
+    } else if (esp_partition_find_first(
+                   ESP_PARTITION_TYPE_DATA, ESP_PARTITION_SUBTYPE_ANY, "model") != nullptr) {
         models_ = esp_srmodel_init("model");
         owns_models_ = models_ != nullptr;
     } else {
-        models_ = models_list;
+        ESP_LOGW(TAG, "No ESP-SR model partition; using WebRTC VAD without WakeNet");
     }
 
     char* wakenet_model_name = nullptr;
