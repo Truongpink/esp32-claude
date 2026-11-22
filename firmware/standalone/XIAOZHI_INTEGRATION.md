@@ -27,6 +27,14 @@ The upstream audio pipeline is not a standalone drop-in file. Its AudioService u
 
 The upstream application also assumes its own Board, NetworkInterface, Settings, Assets, and application lifecycle abstractions. Those must be adapted deliberately rather than importing the upstream board/application startup wholesale.
 
+## Audio adapter milestone
+
+- Added a board-neutral `AudioCodec` interface matching the Xiaozhi v2.6.0 codec contract, without importing Xiaozhi `Board` or `Settings`.
+- Added `ChatAIXiaozhiAudioCodec`, which adapts that contract to the existing `ChatAIAudioCodecBridge` and therefore to ChatAI's existing `AudioManager` I2S channels.
+- Input/output remain mono PCM16 at 16 kHz / 24 kHz respectively, matching the current ChatAI audio manager.
+- The adapter is compiled as part of the standalone firmware, but is not yet instantiated by `app_main` and does not yet activate `AudioService`.
+- Opus/audio-engine dependencies, AudioService task lifecycle, and network transport integration remain subsequent steps. Do not claim end-to-end Xiaozhi voice operation yet.
+
 ## Hardware integration constraints
 
 - Keep ChatAI's current board pin configuration as the source of truth until verified against the physical XH-S3E-AI V1.0 schematic/board profile.
@@ -35,6 +43,6 @@ The upstream application also assumes its own Board, NetworkInterface, Settings,
 - Keep the existing NVS data, Wi-Fi credentials, Web Admin, partition layout, PSRAM settings, and OTA behavior.
 - Do not erase or repartition flash as part of this integration.
 
-## Status
+## Validation status
 
-This commit imports and pins the upstream source reference only. It does **not** yet compile or activate Xiaozhi AudioService, AFE, Opus, MQTT/UDP, or WebSocket in ChatAI. Those components require the adapter/dependency/assets work described above. No build, GitHub Actions, Codemagic, flash, or OTA was run for this commit.
+This milestone has source changes only. It has not yet been built with ESP-IDF or tested on hardware. No Codemagic build, GitHub Actions, flash, or OTA has been run.
