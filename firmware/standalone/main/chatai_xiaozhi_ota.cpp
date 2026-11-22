@@ -265,6 +265,10 @@ bool ParseServerConfig(const cJSON* root, ServerConfig* config) {
             return false;
         }
         ReadOptionalString(mqtt, "password", &config->mqtt_password);
+        // Newer OTA servers provide the complete P2P topic
+        // (for example devices/p2p/<mac>). Preserve it exactly. Older
+        // responses may provide only the root (for example "devices");
+        // in that case derive the gateway topic from the MAC address.
         std::string subscribe_topic;
         if (ReadString(mqtt, "subscribe_topic", &subscribe_topic) &&
             subscribe_topic != "null") {
@@ -292,6 +296,7 @@ bool ParseServerConfig(const cJSON* root, ServerConfig* config) {
             for (char& character : safe_mac) {
                 if (character == ':') character = '_';
             }
+            // Current Xiaozhi gateway P2P routing convention.
             config->mqtt_subscribe_topic = "devices/p2p/" + safe_mac;
         }
 
@@ -469,20 +474,34 @@ esp_err_t FetchServerConfig(ServerConfig* config) {
               timezone_offset->valueint <= 840))) {
             const int64_t timestamp_ms = static_cast<int64_t>(timestamp->valuedouble);
             const int64_t offset_ms = cJSON_IsNumber(timezone_offset)
-                ? timezone_offset->valueint * 60000LL : 0;
-            timeval tv{};
-            tv.tv_sec = static_cast<time_t>((timestamp_ms + offset_ms) / 1000);
-            tv.tv_usec = static_cast<suseconds_t>((timestamp_ms + offset_ms) % 1000) * 1000;
-            settimeofday(&tv, nullptr);
+                ? static_cast<int64_t>(timezone_offset->valueint) * 60000 : 0;
+            const int64_t local_ms = timestamp_ms + offset_ms;
+            timeval system_time{};
+            system_time.tv_sec = static_cast<time_t>(local_ms / 1000);
+            system_time.tv_usec = static_cast<suseconds_t>((local_ms % 1000) * 1000);
+            if (settimeofday(&system_time, nullptr) != 0) {
+                ESP_LOGW(kTag, "Could not apply Xiaozhi server time");
+            } else {
+                ESP_LOGI(kTag, "System time synchronized from Xiaozhi OTA response");
+            }
+        } else {
+            ESP_LOGW(kTag, "Ignoring invalid Xiaozhi server_time fields");
         }
     }
 
     const bool parsed = ParseServerConfig(root, config);
     cJSON_Delete(root);
     if (!parsed) {
-        ESP_LOGE(kTag, "OTA configuration response has no supported transport");
-        return ESP_ERR_INVALID_RESPONSE;
+        ESP_LOGE(kTag, "OTA response has no supported MQTT or WebSocket configuration");
+        return ESP_ERR_NOT_SUPPORTED;
     }
+    if (config->activation_required) {
+        ESP_LOGW(kTag, "Xiaozhi device activation is required");
+        return ESP_ERR_NOT_FINISHED;
+    }
+
+    ESP_LOGI(kTag, "Xiaozhi OTA configuration received; selected transport=%s",
+             config->transport == Transport::kMqttUdp ? "mqtt+udp" : "websocket");
     return ESP_OK;
 }
 

@@ -127,6 +127,7 @@ bool AfeAudioEngine::Initialize(AudioCodec* codec, int frame_duration_ms,
         if (wakenet_models.size() > 1) {
             afe_config->wakenet_model_name_2 = wakenet_models[1];
         }
+        // Only the two models selected above are active in the AFE.
         wake_words_.clear();
         for (auto name : {afe_config->wakenet_model_name, afe_config->wakenet_model_name_2}) {
             if (name == nullptr) {
@@ -296,10 +297,16 @@ void AfeAudioEngine::UpdateActiveState() {
         std::lock_guard<std::mutex> lock(input_buffer_mutex_);
         input_buffer_.clear();
         if (afe_data_ != nullptr) {
+            // Don't call reset_buffer() here: this runs in the main task while
+            // ProcessingTask may be inside fetch_with_delay() on the same AFE
+            // instance, and a concurrent reset corrupts the ring buffer state.
+            // Defer the reset to ProcessingTask, which owns the fetch side.
             reset_pending_ = true;
         }
     }
     if ((bits & kVoiceProcessingEnabled) == 0) {
+        // output_buffer_ is owned by the task that produces output frames,
+        // so let that task clear it instead of racing with it here.
         output_reset_pending_ = true;
     }
     afe_control_dirty_ = true;
@@ -336,6 +343,8 @@ void AfeAudioEngine::ApplyPendingReset() {
     if (!reset_pending_.exchange(false)) {
         return;
     }
+    // Discard audio recorded before (re)activation. Holding input_buffer_mutex_
+    // serializes the reset against Feed(); fetch/reset both run in this task.
     std::lock_guard<std::mutex> lock(input_buffer_mutex_);
     input_buffer_.clear();
     afe_iface_->reset_buffer(afe_data_);
@@ -374,6 +383,8 @@ void AfeAudioEngine::HandleWakeWordResult(const afe_fetch_result_t* result) {
 
     last_detected_wake_word_ = wake_words_[model_index];
     xEventGroupClearBits(event_group_, kWakeWordEnabled);
+    // UpdateActiveState marks the AFE controls dirty; the next loop iteration
+    // of ProcessingTask disables WakeNet via ApplyAfeControls.
     UpdateActiveState();
     if (wake_word_detected_callback_) {
         wake_word_detected_callback_(last_detected_wake_word_);
