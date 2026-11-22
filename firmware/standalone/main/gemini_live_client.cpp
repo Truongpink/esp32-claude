@@ -1373,7 +1373,8 @@ void OutgoingAudioWorker(void*) {
                 "mutex_wait_avg_us=%llu mutex_wait_max_us=%llu ws_send_avg_us=%llu ws_send_max_us=%llu "
                 "mutex_hold_avg_us=%llu mutex_hold_max_us=%llu age_avg_ms=%llu age_max_ms=%llu "
                 "malloc_avg_us=%llu copy_avg_us=%llu enqueue_avg_us=%llu queue_attempts=%lu "
-                "send_fail=%lu queue_depth=%lu queue_max=%lu queue_full=%lu queue_dropped=%lu",
+                "send_fail=%lu queue_depth=%lu queue_max=%lu queue_full=%lu queue_dropped=%lu "
+                "tx_stack_watermark=%u",
                 static_cast<unsigned long>(calls),
                 static_cast<unsigned long long>(calls ? total_us / calls : 0),
                 static_cast<unsigned long long>(max_us),
@@ -1393,7 +1394,8 @@ void OutgoingAudioWorker(void*) {
                 static_cast<unsigned long>(uxQueueMessagesWaiting(g_outgoing_audio_queue)),
                 static_cast<unsigned long>(queue_max),
                 static_cast<unsigned long>(queue_full),
-                static_cast<unsigned long>(g_outgoing_audio_dropped.exchange(0)));
+                static_cast<unsigned long>(g_outgoing_audio_dropped.exchange(0)),
+                static_cast<unsigned>(uxTaskGetStackHighWaterMark(nullptr)));
             chatai::diagnostics::Add("AUDIO_TX_PIPELINE", "INFO", detail);
             report_tick = now;
         }
@@ -1466,7 +1468,7 @@ void MicrophoneWorker(void*) {
                 "gap_max_us=%llu gap_gt20=%lu gap_gt50=%lu gap_gt100=%lu "
                 "duration_avg_us=%llu duration_max_us=%llu read_avg_us=%llu read_max_us=%llu "
                 "encode_avg_us=%llu encode_max_us=%llu pcm_avg_us=%llu pcm_max_us=%llu "
-                "json_avg_us=%llu json_max_us=%llu",
+                "json_avg_us=%llu json_max_us=%llu mic_stack_watermark=%u",
                 static_cast<unsigned long long>(pipeline_now_us - pipeline_window_started_us),
                 static_cast<unsigned long>(pipeline_iterations),
                 static_cast<unsigned long long>(loop_interval_count ? loop_interval_total_us / loop_interval_count : 0),
@@ -1484,7 +1486,8 @@ void MicrophoneWorker(void*) {
                 static_cast<unsigned long long>(pcm_process_calls ? pcm_process_total_us / pcm_process_calls : 0),
                 static_cast<unsigned long long>(pcm_process_max_us),
                 static_cast<unsigned long long>(json_calls ? json_total_us / json_calls : 0),
-                static_cast<unsigned long long>(json_max_us));
+                static_cast<unsigned long long>(json_max_us),
+                static_cast<unsigned>(uxTaskGetStackHighWaterMark(nullptr)));
             chatai::diagnostics::Add("MIC_LOOP", "INFO", detail);
             const size_t internal_free = heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
             const size_t internal_min = heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);

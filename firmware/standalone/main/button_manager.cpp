@@ -92,7 +92,9 @@ void ReportButtonTransition(const char* name, const ButtonState& button) {
         if (button.stable_pressed) {
             chatai::diagnostics::SetCrashContext("PTT_PRESS", detail);
         } else {
-            chatai::diagnostics::ClearCrashContext();
+            // Preserve the last button event across a reboot; the next microphone/audio
+            // stage will replace this marker when a new listening session starts.
+            chatai::diagnostics::SetCrashContext("PTT_RELEASE", detail);
         }
     }
 }
