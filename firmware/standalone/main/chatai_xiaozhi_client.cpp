@@ -376,7 +376,7 @@ private:
             if (ReadString(root, "state", &state)) {
                 if (state == "start") {
                     tts_active_.store(true);
-                    audio_.SetCaptureEnabled(false);
+                    if (session_ready_.load()) audio_.SetCaptureEnabled(false);
                 } else if (state == "stop") {
                     tts_active_.store(false);
                     if (IsListening() && session_ready_.load()) {

@@ -90,6 +90,10 @@ esp_err_t MqttTransport::Start(const ServerConfig& config,
         return ESP_ERR_INVALID_ARG;
     }
 
+    broker_host_ = broker.host;
+    client_id_ = config.mqtt_client_id;
+    username_ = config.mqtt_username;
+    password_ = config.mqtt_password;
     publish_topic_ = config.mqtt_publish_topic;
     subscribe_topic_ = config.mqtt_subscribe_topic;
     {
@@ -100,17 +104,17 @@ esp_err_t MqttTransport::Start(const ServerConfig& config,
     }
 
     esp_mqtt_client_config_t mqtt_config{};
-    mqtt_config.broker.address.hostname = broker.host.c_str();
+    mqtt_config.broker.address.hostname = broker_host_.c_str();
     mqtt_config.broker.address.port = static_cast<uint32_t>(broker.port);
     mqtt_config.broker.address.transport = broker.tls
         ? MQTT_TRANSPORT_OVER_SSL : MQTT_TRANSPORT_OVER_TCP;
     if (broker.tls) {
         mqtt_config.broker.verification.crt_bundle_attach = esp_crt_bundle_attach;
     }
-    mqtt_config.credentials.client_id = config.mqtt_client_id.c_str();
-    mqtt_config.credentials.username = config.mqtt_username.c_str();
-    mqtt_config.credentials.authentication.password = config.mqtt_password.empty()
-        ? nullptr : config.mqtt_password.c_str();
+    mqtt_config.credentials.client_id = client_id_.c_str();
+    mqtt_config.credentials.username = username_.c_str();
+    mqtt_config.credentials.authentication.password = password_.empty()
+        ? nullptr : password_.c_str();
     mqtt_config.session.keepalive = config.mqtt_keepalive > 0
         ? config.mqtt_keepalive : 240;
     mqtt_config.network.timeout_ms = 10000;
@@ -120,6 +124,12 @@ esp_err_t MqttTransport::Start(const ServerConfig& config,
     if (client_ == nullptr) {
         std::lock_guard<std::mutex> lock(message_mutex_);
         message_handler_ = nullptr;
+    broker_host_.clear();
+    client_id_.clear();
+    username_.clear();
+    password_.clear();
+    publish_topic_.clear();
+    subscribe_topic_.clear();
         return ESP_ERR_NO_MEM;
     }
 
@@ -132,6 +142,12 @@ esp_err_t MqttTransport::Start(const ServerConfig& config,
             std::lock_guard<std::mutex> lock(message_mutex_);
             message_handler_ = nullptr;
         }
+    broker_host_.clear();
+    client_id_.clear();
+    username_.clear();
+    password_.clear();
+    publish_topic_.clear();
+    subscribe_topic_.clear();
         return result;
     }
 
@@ -141,6 +157,12 @@ esp_err_t MqttTransport::Start(const ServerConfig& config,
         client_ = nullptr;
         std::lock_guard<std::mutex> lock(message_mutex_);
         message_handler_ = nullptr;
+    broker_host_.clear();
+    client_id_.clear();
+    username_.clear();
+    password_.clear();
+    publish_topic_.clear();
+    subscribe_topic_.clear();
         return result;
     }
 
@@ -162,6 +184,12 @@ esp_err_t MqttTransport::Stop() {
     if (client_ == nullptr) {
         std::lock_guard<std::mutex> lock(message_mutex_);
         message_handler_ = nullptr;
+    broker_host_.clear();
+    client_id_.clear();
+    username_.clear();
+    password_.clear();
+    publish_topic_.clear();
+    subscribe_topic_.clear();
         return ESP_OK;
     }
 
@@ -174,6 +202,12 @@ esp_err_t MqttTransport::Stop() {
         incoming_topic_.clear();
         incoming_payload_.clear();
     }
+    broker_host_.clear();
+    client_id_.clear();
+    username_.clear();
+    password_.clear();
+    publish_topic_.clear();
+    subscribe_topic_.clear();
 
     if (stop_result != ESP_OK && stop_result != ESP_ERR_INVALID_STATE) {
         return stop_result;

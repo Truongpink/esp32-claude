@@ -50,6 +50,8 @@ private:
 
     esp_websocket_client_handle_t client_ = nullptr;
     EventGroupHandle_t events_ = nullptr;
+    std::string url_;
+    std::string headers_;
     std::atomic<bool> connected_{false};
     TextHandler text_handler_;
     BinaryHandler binary_handler_;

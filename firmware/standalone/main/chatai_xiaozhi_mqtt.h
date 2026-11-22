@@ -45,6 +45,10 @@ private:
     esp_mqtt_client_handle_t client_ = nullptr;
     EventGroupHandle_t events_ = nullptr;
     std::atomic<bool> connected_{false};
+    std::string broker_host_;
+    std::string client_id_;
+    std::string username_;
+    std::string password_;
     std::string publish_topic_;
     std::string subscribe_topic_;
     std::atomic<int> pending_subscribe_id_{-1};

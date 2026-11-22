@@ -50,16 +50,17 @@ esp_err_t WebSocketTransport::Start(const ServerConfig& config,
     if (!token.empty() && token.find(' ') == std::string::npos) {
         token = "Bearer " + token;
     }
-    std::string headers;
-    if (!token.empty()) headers += "Authorization: " + token + "\r\n";
-    headers += "Protocol-Version: " +
+    headers_.clear();
+    if (!token.empty()) headers_ += "Authorization: " + token + "\r\n";
+    headers_ += "Protocol-Version: " +
         std::to_string(config.websocket_version) + "\r\n";
-    headers += "Device-Id: " + config.device_mac_address + "\r\n";
-    headers += "Client-Id: " + config.device_client_id + "\r\n";
+    headers_ += "Device-Id: " + config.device_mac_address + "\r\n";
+    headers_ += "Client-Id: " + config.device_client_id + "\r\n";
+    url_ = config.websocket_url;
 
     esp_websocket_client_config_t ws_config{};
-    ws_config.uri = config.websocket_url.c_str();
-    ws_config.headers = headers.c_str();
+    ws_config.uri = url_.c_str();
+    ws_config.headers = headers_.c_str();
     if (config.websocket_url.rfind("wss://", 0) == 0) {
         ws_config.crt_bundle_attach = esp_crt_bundle_attach;
     }
@@ -76,6 +77,8 @@ esp_err_t WebSocketTransport::Start(const ServerConfig& config,
     if (client_ == nullptr) {
         text_handler_ = nullptr;
         binary_handler_ = nullptr;
+        url_.clear();
+        headers_.clear();
         return ESP_ERR_NO_MEM;
     }
 
@@ -101,6 +104,7 @@ esp_err_t WebSocketTransport::Start(const ServerConfig& config,
 
 esp_err_t WebSocketTransport::Stop() {
     connected_.store(false);
+    std::lock_guard<std::mutex> send_lock(send_mutex_);
     esp_err_t result = ESP_OK;
     if (client_ != nullptr) {
         result = esp_websocket_client_stop(client_);
@@ -118,6 +122,8 @@ esp_err_t WebSocketTransport::Stop() {
         incoming_frame_bytes_ = 0;
         incoming_type_ = MessageType::kNone;
     }
+    url_.clear();
+    headers_.clear();
     return result;
 }
 
