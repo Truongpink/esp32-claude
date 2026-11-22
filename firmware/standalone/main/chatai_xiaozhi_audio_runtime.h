@@ -1,6 +1,7 @@
 #pragma once
 
 #include <atomic>
+#include <cstddef>
 #include <condition_variable>
 #include <cstdint>
 #include <deque>
@@ -66,6 +67,7 @@ private:
     static constexpr EventBits_t kCaptureExited = 1 << 0;
     static constexpr EventBits_t kPlaybackExited = 1 << 1;
     static constexpr size_t kSpeakerFrameSamples = 24000 * 60 / 1000;
+    static constexpr size_t kMaxOpusPacketBytes = 4096;
 
     ChatAIOpusCodec opus_;
     EventGroupHandle_t task_events_ = nullptr;
