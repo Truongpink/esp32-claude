@@ -33,8 +33,10 @@ The upstream application also assumes its own Board, NetworkInterface, Settings,
 - Implemented ChatAI-owned base methods in `main/audio_codec.cpp`; persistent settings remain owned by ChatAI.
 - Added `ChatAIXiaozhiAudioCodec`, which adapts the contract to `ChatAIAudioCodecBridge` and therefore to ChatAI's existing `AudioManager` I2S channels.
 - Input/output remain mono PCM16 at 16 kHz / 24 kHz respectively, matching the current ChatAI audio manager.
-- The adapter is compiled as part of the standalone firmware, but is not yet instantiated by `app_main` and does not yet activate `AudioService`.
-- Opus/audio-engine dependencies, AudioService task lifecycle, and network transport integration remain subsequent steps. Do not claim end-to-end Xiaozhi voice operation yet.
+- Added Espressif `esp_audio_codec ~2.5.0` and a ChatAI-owned `ChatAIOpusCodec` adapter. The encoder accepts one mono 16 kHz / 60 ms PCM frame (960 samples); the decoder follows the server's negotiated sample rate and frame duration.
+- The standard Xiaozhi server hello advertises 24 kHz mono / 60 ms downlink, which matches the current 24 kHz speaker path. If a server negotiates another supported rate, the runtime must resample before writing to the speaker.
+- The codec adapter is not yet instantiated by `app_main`; no audio capture/playback tasks or network transport are active yet. Do not claim end-to-end Xiaozhi voice operation.
+- Audio Runtime task lifecycle and server-selected MQTT/UDP or WebSocket transport integration remain subsequent steps.
 
 The board-neutral header must remain definition-compatible with the pinned upstream declaration. Do not compile upstream `audio_codec.cc`, which reads Xiaozhi `Settings` and is not part of ChatAI's settings ownership.
 
