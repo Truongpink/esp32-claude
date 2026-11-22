@@ -9,5 +9,6 @@ std::string Get();
 void Clear();
 void SetCrashContext(const char* stage, const char* detail = nullptr);
 void ClearCrashContext();
+void SetBootContext(const char* stage, const char* detail = nullptr);
 void RestorePreviousCrashContext();
 }

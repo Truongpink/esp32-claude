@@ -50,6 +50,47 @@ bool IsCrashContextValid(const RetainedCrashContext& context) {
            context.checksum == CrashContextChecksum(context) &&
            context.stage[0] != '\0';
 }
+
+constexpr uint32_t kBootContextMagic = 0x424F4F54;
+constexpr size_t kBootEventCount = 4;
+struct BootEvent {
+    uint32_t sequence;
+    uint64_t uptime_ms;
+    char stage[24];
+    char detail[128];
+};
+struct RetainedBootContext {
+    uint32_t magic;
+    uint32_t checksum;
+    uint8_t next_index;
+    uint8_t count;
+    BootEvent events[kBootEventCount];
+};
+RTC_NOINIT_ATTR RetainedBootContext g_retained_boot_context;
+std::mutex g_boot_context_mutex;
+
+uint32_t BootContextChecksum(const RetainedBootContext& context) {
+    uint32_t hash = 2166136261u;
+    const auto* bytes = reinterpret_cast<const uint8_t*>(&context);
+    for (size_t i = 0; i < sizeof(context); ++i) {
+        if (i >= offsetof(RetainedBootContext, checksum) &&
+            i < offsetof(RetainedBootContext, checksum) + sizeof(context.checksum)) continue;
+        hash = (hash ^ bytes[i]) * 16777619u;
+    }
+    return hash;
+}
+
+bool IsBootContextValid(const RetainedBootContext& context) {
+    return context.magic == kBootContextMagic &&
+           context.count > 0 && context.count <= kBootEventCount &&
+           context.next_index < kBootEventCount &&
+           context.checksum == BootContextChecksum(context);
+}
+
+void ClearBootContextLocked() {
+    g_retained_boot_context.magic = 0;
+    g_retained_boot_context.checksum = 0;
+}
 }
 
 namespace chatai::diagnostics {
@@ -136,6 +177,8 @@ void Clear() {
         g_log.clear();
     }
     ClearCrashContext();
+    std::lock_guard<std::mutex> boot_lock(g_boot_context_mutex);
+    ClearBootContextLocked();
 }
 
 void SetCrashContext(const char* stage, const char* detail) {
@@ -159,30 +202,86 @@ void ClearCrashContext() {
     g_retained_crash_context.checksum = 0;
 }
 
+void SetBootContext(const char* stage, const char* detail) {
+    if (stage == nullptr || *stage == '\0') return;
+    std::lock_guard<std::mutex> lock(g_boot_context_mutex);
+    RetainedBootContext next{};
+    if (IsBootContextValid(g_retained_boot_context)) {
+        next = g_retained_boot_context;
+    } else {
+        next.magic = kBootContextMagic;
+    }
+    BootEvent& event = next.events[next.next_index];
+    event.sequence = next.count == 0 ? 1 :
+        (next.next_index == 0 ? next.events[kBootEventCount - 1].sequence + 1 :
+                               next.events[next.next_index - 1].sequence + 1);
+    event.uptime_ms = static_cast<uint64_t>(esp_timer_get_time() / 1000);
+    std::snprintf(event.stage, sizeof(event.stage), "%s", stage);
+    if (detail != nullptr) {
+        std::snprintf(event.detail, sizeof(event.detail), "%s", detail);
+    }
+    next.next_index = static_cast<uint8_t>((next.next_index + 1) % kBootEventCount);
+    if (next.count < kBootEventCount) ++next.count;
+    next.magic = kBootContextMagic;
+    next.checksum = BootContextChecksum(next);
+    g_retained_boot_context = next;
+}
+
 void RestorePreviousCrashContext() {
     const esp_reset_reason_t reason = esp_reset_reason();
-    if (reason != ESP_RST_PANIC && reason != ESP_RST_INT_WDT &&
-        reason != ESP_RST_TASK_WDT && reason != ESP_RST_WDT &&
-        reason != ESP_RST_SW) {
+    const bool retained_reset = reason == ESP_RST_PANIC || reason == ESP_RST_INT_WDT ||
+        reason == ESP_RST_TASK_WDT || reason == ESP_RST_WDT ||
+        reason == ESP_RST_SW || reason == ESP_RST_EXT ||
+        reason == ESP_RST_BROWNOUT;
+    if (retained_reset) {
+        RetainedCrashContext previous{};
+        bool valid = false;
+        {
+            std::lock_guard<std::mutex> lock(g_crash_context_mutex);
+            if (IsCrashContextValid(g_retained_crash_context)) {
+                previous = g_retained_crash_context;
+                valid = true;
+            }
+            g_retained_crash_context.magic = 0;
+            g_retained_crash_context.checksum = 0;
+        }
+        if (valid) {
+            char detail[144]{};
+            std::snprintf(detail, sizeof(detail),
+                          "previous_reset_reason=%d last_stage=%.23s sequence=%lu %.60s",
+                          static_cast<int>(reason), previous.stage,
+                          static_cast<unsigned long>(previous.sequence), previous.detail);
+            Add("PREVIOUS_BOOT", "WARN", detail);
+        }
+    } else {
         ClearCrashContext();
-        return;
     }
 
-    RetainedCrashContext previous{};
+    RetainedBootContext previous_boot{};
+    bool boot_valid = false;
     {
-        std::lock_guard<std::mutex> lock(g_crash_context_mutex);
-        if (!IsCrashContextValid(g_retained_crash_context)) return;
-        previous = g_retained_crash_context;
-        g_retained_crash_context.magic = 0;
-        g_retained_crash_context.checksum = 0;
+        std::lock_guard<std::mutex> lock(g_boot_context_mutex);
+        if (retained_reset && IsBootContextValid(g_retained_boot_context)) {
+            previous_boot = g_retained_boot_context;
+            boot_valid = true;
+        }
+        ClearBootContextLocked();
     }
-
-    char detail[144]{};
-    std::snprintf(detail, sizeof(detail),
-                  "previous_reset_reason=%d last_stage=%.23s sequence=%lu %.60s",
-                  static_cast<int>(reason), previous.stage,
-                  static_cast<unsigned long>(previous.sequence), previous.detail);
-    Add("PREVIOUS_BOOT", "WARN", detail);
+    if (boot_valid) {
+        const size_t first = (previous_boot.next_index + kBootEventCount -
+                              previous_boot.count) % kBootEventCount;
+        for (size_t i = 0; i < previous_boot.count; ++i) {
+            const BootEvent& event =
+                previous_boot.events[(first + i) % kBootEventCount];
+            char detail[192]{};
+            std::snprintf(detail, sizeof(detail),
+                          "event_seq=%lu uptime_ms=%llu stage=%.23s %.120s",
+                          static_cast<unsigned long>(event.sequence),
+                          static_cast<unsigned long long>(event.uptime_ms),
+                          event.stage, event.detail);
+            Add("PREVIOUS_BOOT_EVENT", "WARN", detail);
+        }
+    }
 }
 
 }  // namespace chatai::diagnostics
