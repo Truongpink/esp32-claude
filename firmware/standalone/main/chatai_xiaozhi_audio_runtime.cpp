@@ -11,8 +11,8 @@ XiaozhiAudioRuntime::~XiaozhiAudioRuntime(){Stop();codec_.Stop();}
 esp_err_t XiaozhiAudioRuntime::Initialize(){
  std::lock_guard<std::mutex> l(lifecycle_mutex_);if(initialized_)return ESP_OK;
  AudioServiceCallbacks cb;cb.on_send_queue_available=[this](){ {std::lock_guard<std::mutex>g(send_mutex_);send_queue_notified_=true;}send_cv_.notify_one();};
- service_.SetCallbacks(cb);esp_err_t e=service_.Initialize(&codec_);if(e!=ESP_OK){ESP_LOGE(kTag,"AudioService init: %s",esp_err_to_name(e));return e;}
- if(codec_.last_error()!=ESP_OK)return codec_.last_error();initialized_=true;return ESP_OK;
+ service_.SetCallbacks(cb);esp_err_t e=service_.Initialize(&codec_);if(e!=ESP_OK){ESP_LOGE(kTag,"AudioService init: %s",esp_err_to_name(e));codec_.Stop();return e;}
+ if(codec_.last_error()!=ESP_OK){esp_err_t ce=codec_.last_error();codec_.Stop();return ce;}initialized_=true;return ESP_OK;
 }
 esp_err_t XiaozhiAudioRuntime::Start(){
  std::lock_guard<std::mutex>l(lifecycle_mutex_);if(!initialized_)return ESP_ERR_INVALID_STATE;if(running_)return ESP_OK;
