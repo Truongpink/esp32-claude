@@ -21,7 +21,7 @@ esp_err_t ChatAIOpusCodec::Initialize() {
         .bits_per_sample = ESP_AUDIO_BIT16,
         .bitrate = ESP_OPUS_BITRATE_AUTO,
         .frame_duration = ESP_OPUS_ENC_FRAME_DURATION_60_MS,
-        .application_mode = ESP_OPUS_ENC_APPLICATION_AUDIO,
+        .application_mode = ESP_OPUS_ENC_APPLICATION_VOIP,
         .complexity = 0,
         .enable_fec = false,
         .enable_dtx = true,

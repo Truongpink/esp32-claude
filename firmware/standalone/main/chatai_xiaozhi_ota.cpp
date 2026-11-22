@@ -4,6 +4,9 @@
 
 #include <cstdio>
 #include <cstring>
+#include <ctime>
+#include <mutex>
+#include <sys/time.h>
 #include <string>
 #include <utility>
 
@@ -19,6 +22,8 @@
 #include <esp_partition.h>
 #include <esp_random.h>
 #include <esp_system.h>
+#include <esp_netif_sntp.h>
+#include <freertos/FreeRTOS.h>
 #include <nvs.h>
 
 namespace chatai::xiaozhi {
@@ -94,6 +99,31 @@ std::string GetMacAddress() {
     std::snprintf(value, sizeof(value), "%02x:%02x:%02x:%02x:%02x:%02x",
                   mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
     return value;
+}
+
+esp_err_t EnsureSystemTime() {
+    static std::mutex mutex;
+    std::lock_guard<std::mutex> lock(mutex);
+    const std::time_t now = std::time(nullptr);
+    if (now >= 1735689600 && now < 4102444800) return ESP_OK;
+
+    const esp_sntp_config_t config =
+        ESP_NETIF_SNTP_DEFAULT_CONFIG("pool.ntp.org");
+    const esp_err_t init_result = esp_netif_sntp_init(&config);
+    if (init_result != ESP_OK && init_result != ESP_ERR_INVALID_STATE) {
+        ESP_LOGW(kTag, "Could not initialize SNTP: %s", esp_err_to_name(init_result));
+        return init_result;
+    }
+    const esp_err_t sync_result =
+        esp_netif_sntp_sync_wait(pdMS_TO_TICKS(12000));
+    if (init_result == ESP_OK) esp_netif_sntp_deinit();
+    if (sync_result != ESP_OK) {
+        ESP_LOGW(kTag, "System time is not synchronized: %s",
+                 esp_err_to_name(sync_result));
+        return sync_result;
+    }
+    ESP_LOGI(kTag, "System time synchronized for TLS certificate validation");
+    return ESP_OK;
 }
 
 void AddString(cJSON* object, const char* key, const std::string& value) {
@@ -246,9 +276,14 @@ bool ParseServerConfig(const cJSON* root, ServerConfig* config) {
                 const size_t separator = subscribe_topic.find('/');
                 if (separator != std::string::npos)
                     subscribe_topic.resize(separator);
-                if (!subscribe_topic.empty()) {
+                if (!subscribe_topic.empty() &&
+                    !config->device_mac_address.empty()) {
+                    std::string safe_mac = config->device_mac_address;
+                    for (char& character : safe_mac) {
+                        if (character == ':') character = '_';
+                    }
                     config->mqtt_subscribe_topic =
-                        subscribe_topic + "/p2p/" + config->mqtt_client_id;
+                        subscribe_topic + "/p2p/" + safe_mac;
                 }
             }
         }
@@ -280,8 +315,9 @@ bool ParseServerConfig(const cJSON* root, ServerConfig* config) {
         ReadOptionalString(websocket, "token", &config->websocket_token);
         const cJSON* version =
             cJSON_GetObjectItemCaseSensitive(websocket, "version");
-        if (cJSON_IsNumber(version) && version->valueint >= 1 &&
-            version->valueint <= 3) {
+        if (version != nullptr) {
+            if (!cJSON_IsNumber(version) || version->valueint < 1 ||
+                version->valueint > 3) return false;
             config->websocket_version = version->valueint;
         }
         config->transport = Transport::kWebSocket;
@@ -293,10 +329,15 @@ bool ParseServerConfig(const cJSON* root, ServerConfig* config) {
 
 }  // namespace
 
-esp_err_t CheckActivation() {
+esp_err_t CheckActivation(const ServerConfig& config) {
+    if (!config.activation_required || config.activation_challenge.empty()) {
+        return ESP_ERR_INVALID_ARG;
+    }
     if (!chatai::network::NetworkManager::IsConnected()) {
         return ESP_ERR_INVALID_STATE;
     }
+    const esp_err_t time_result = EnsureSystemTime();
+    if (time_result != ESP_OK) return time_result;
 
     const std::string mac = GetMacAddress();
     const std::string client_id = GetClientId();
@@ -350,6 +391,8 @@ esp_err_t FetchServerConfig(ServerConfig* config) {
     if (!chatai::network::NetworkManager::IsConnected()) {
         return ESP_ERR_INVALID_STATE;
     }
+    const esp_err_t time_result = EnsureSystemTime();
+    if (time_result != ESP_OK) return time_result;
 
     const std::string mac = GetMacAddress();
     const std::string client_id = GetClientId();
@@ -416,6 +459,33 @@ esp_err_t FetchServerConfig(ServerConfig* config) {
         ESP_LOGE(kTag, "OTA configuration response is not valid JSON");
         return ESP_ERR_INVALID_RESPONSE;
     }
+    const cJSON* server_time = cJSON_GetObjectItemCaseSensitive(root, "server_time");
+    if (cJSON_IsObject(server_time)) {
+        const cJSON* timestamp = cJSON_GetObjectItemCaseSensitive(server_time, "timestamp");
+        const cJSON* timezone_offset =
+            cJSON_GetObjectItemCaseSensitive(server_time, "timezone_offset");
+        if (cJSON_IsNumber(timestamp) && timestamp->valuedouble > 1735689600000.0 &&
+            timestamp->valuedouble < 4102444800000.0 &&
+            (timezone_offset == nullptr ||
+             (cJSON_IsNumber(timezone_offset) && timezone_offset->valueint >= -840 &&
+              timezone_offset->valueint <= 840))) {
+            const int64_t timestamp_ms = static_cast<int64_t>(timestamp->valuedouble);
+            const int64_t offset_ms = cJSON_IsNumber(timezone_offset)
+                ? static_cast<int64_t>(timezone_offset->valueint) * 60000 : 0;
+            const int64_t local_ms = timestamp_ms + offset_ms;
+            timeval system_time{};
+            system_time.tv_sec = static_cast<time_t>(local_ms / 1000);
+            system_time.tv_usec = static_cast<suseconds_t>((local_ms % 1000) * 1000);
+            if (settimeofday(&system_time, nullptr) != 0) {
+                ESP_LOGW(kTag, "Could not apply Xiaozhi server time");
+            } else {
+                ESP_LOGI(kTag, "System time synchronized from Xiaozhi OTA response");
+            }
+        } else {
+            ESP_LOGW(kTag, "Ignoring invalid Xiaozhi server_time fields");
+        }
+    }
+
     const bool parsed = ParseServerConfig(root, config);
     cJSON_Delete(root);
     if (!parsed) {

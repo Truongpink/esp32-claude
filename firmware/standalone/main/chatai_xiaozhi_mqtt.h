@@ -9,7 +9,6 @@
 
 #include <esp_err.h>
 #include <esp_event.h>
-#include <esp_event.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/event_groups.h>
 #include <mqtt_client.h>
@@ -49,7 +48,7 @@ private:
     std::string publish_topic_;
     std::string subscribe_topic_;
     std::atomic<int> pending_subscribe_id_{-1};
-    std::atomic<int> pending_subscribe_id_{-1};
+    std::mutex client_mutex_;
     MessageHandler message_handler_;
 
     std::mutex message_mutex_;

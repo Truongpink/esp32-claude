@@ -70,12 +70,8 @@ esp_err_t XiaozhiAudioRuntime::Start() {
         return result;
     }
 
-    result = EnableMicrophone(true);
-    if (result != ESP_OK) {
-        EnableSpeaker(false);
-        return result;
-    }
-
+    // Keep the microphone peripheral disabled until listen-start.
+    // This prevents stale DMA samples accumulating while idle or during TTS.
     capture_enabled_.store(false);
     session_start_us_ = esp_timer_get_time();
     running_.store(true);
@@ -141,10 +137,24 @@ esp_err_t XiaozhiAudioRuntime::Stop() {
 }
 
 void XiaozhiAudioRuntime::SetCaptureEnabled(bool enabled) {
-    capture_enabled_.store(enabled);
     if (!enabled) {
-        std::lock_guard<std::mutex> lock(queue_mutex_);
-        uplink_queue_.clear();
+        capture_enabled_.store(false);
+        {
+            std::lock_guard<std::mutex> lock(queue_mutex_);
+            uplink_queue_.clear();
+        }
+        const esp_err_t result = EnableMicrophone(false);
+        if (result != ESP_OK && result != ESP_ERR_INVALID_STATE) {
+            ESP_LOGW(kTag, "Could not pause microphone: %s", esp_err_to_name(result));
+        }
+    } else {
+        const esp_err_t result = EnableMicrophone(true);
+        if (result != ESP_OK) {
+            capture_enabled_.store(false);
+            ESP_LOGW(kTag, "Could not enable microphone: %s", esp_err_to_name(result));
+            return;
+        }
+        capture_enabled_.store(true);
     }
     uplink_cv_.notify_all();
 }

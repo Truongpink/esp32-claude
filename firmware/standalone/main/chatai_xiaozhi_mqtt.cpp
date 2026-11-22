@@ -92,9 +92,9 @@ esp_err_t MqttTransport::Start(const ServerConfig& config,
 
     publish_topic_ = config.mqtt_publish_topic;
     subscribe_topic_ = config.mqtt_subscribe_topic;
-    message_handler_ = std::move(handler);
     {
         std::lock_guard<std::mutex> lock(message_mutex_);
+        message_handler_ = std::move(handler);
         incoming_topic_.clear();
         incoming_payload_.clear();
     }
@@ -118,6 +118,7 @@ esp_err_t MqttTransport::Start(const ServerConfig& config,
 
     client_ = esp_mqtt_client_init(&mqtt_config);
     if (client_ == nullptr) {
+        std::lock_guard<std::mutex> lock(message_mutex_);
         message_handler_ = nullptr;
         return ESP_ERR_NO_MEM;
     }
@@ -127,7 +128,10 @@ esp_err_t MqttTransport::Start(const ServerConfig& config,
     if (result != ESP_OK) {
         esp_mqtt_client_destroy(client_);
         client_ = nullptr;
-        message_handler_ = nullptr;
+        {
+            std::lock_guard<std::mutex> lock(message_mutex_);
+            message_handler_ = nullptr;
+        }
         return result;
     }
 
@@ -135,6 +139,7 @@ esp_err_t MqttTransport::Start(const ServerConfig& config,
     if (result != ESP_OK) {
         esp_mqtt_client_destroy(client_);
         client_ = nullptr;
+        std::lock_guard<std::mutex> lock(message_mutex_);
         message_handler_ = nullptr;
         return result;
     }
@@ -153,7 +158,9 @@ esp_err_t MqttTransport::Start(const ServerConfig& config,
 
 esp_err_t MqttTransport::Stop() {
     connected_.store(false);
+    std::lock_guard<std::mutex> client_lock(client_mutex_);
     if (client_ == nullptr) {
+        std::lock_guard<std::mutex> lock(message_mutex_);
         message_handler_ = nullptr;
         return ESP_OK;
     }
@@ -161,9 +168,9 @@ esp_err_t MqttTransport::Stop() {
     const esp_err_t stop_result = esp_mqtt_client_stop(client_);
     const esp_err_t destroy_result = esp_mqtt_client_destroy(client_);
     client_ = nullptr;
-    message_handler_ = nullptr;
     {
         std::lock_guard<std::mutex> lock(message_mutex_);
+        message_handler_ = nullptr;
         incoming_topic_.clear();
         incoming_payload_.clear();
     }
@@ -175,6 +182,7 @@ esp_err_t MqttTransport::Stop() {
 }
 
 esp_err_t MqttTransport::Publish(const std::string& payload) {
+    std::lock_guard<std::mutex> client_lock(client_mutex_);
     if (client_ == nullptr || !connected_.load()) {
         return ESP_ERR_INVALID_STATE;
     }

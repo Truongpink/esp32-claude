@@ -196,7 +196,7 @@ private:
                 chatai::display::Notify("XIAOZHI", activation_notice.c_str(), 8000);
 
                 for (int attempt = 0; attempt < 10; ++attempt) {
-                    const esp_err_t activation_result = CheckActivation();
+                    const esp_err_t activation_result = CheckActivation(config);
                     if (activation_result == ESP_OK) {
                         chatai::diagnostics::Add("XIAOZHI_ACTIVATION", "OK",
                                                  "Device binding completed; refreshing OTA config");
@@ -302,6 +302,7 @@ private:
             chat_enabled_.store(false);
             push_to_talk_.store(false);
             last_listening_.store(false);
+            tts_active_.store(false);
             vTaskDelay(pdMS_TO_TICKS(kRetryDelayMs));
         }
     }
@@ -370,6 +371,19 @@ private:
                 received_session == current_session) {
                 xEventGroupSetBits(events_, kServerEnded);
             }
+        } else if (type == "tts") {
+            std::string state;
+            if (ReadString(root, "state", &state)) {
+                if (state == "start") {
+                    tts_active_.store(true);
+                    audio_.SetCaptureEnabled(false);
+                } else if (state == "stop") {
+                    tts_active_.store(false);
+                    if (IsListening() && session_ready_.load()) {
+                        audio_.SetCaptureEnabled(true);
+                    }
+                }
+            }
         } else if (type == "alert") {
             std::string message;
             if (ReadString(root, "message", &message)) {
@@ -379,8 +393,23 @@ private:
         cJSON_Delete(root);
     }
 
+    void SuspendGeminiAudio() {
+        if (!gemini_suspended_.exchange(true)) {
+            gemini_previous_chat_enabled_ = chatai::gemini::IsChatEnabled();
+        }
+        chatai::gemini::SetChatEnabled(false);
+        chatai::gemini::SetPushToTalk(false);
+        if (chatai::gemini::IsSpeaking()) chatai::gemini::AbortSpeaking();
+    }
+
+    void RestoreGeminiAudio() {
+        if (gemini_suspended_.exchange(false)) {
+            chatai::gemini::SetChatEnabled(gemini_previous_chat_enabled_);
+        }
+    }
+
     bool WaitForGeminiMicrophoneRelease() {
-        for (int attempt = 0; attempt < 20; ++attempt) {
+        for (int attempt = 0; attempt < 40; ++attempt) {
             if (!chatai::audio::IsMicrophoneEnabled()) return true;
             vTaskDelay(pdMS_TO_TICKS(25));
         }
@@ -491,9 +520,8 @@ private:
             remote_sequence_ = 0;
         }
 
-        chatai::gemini::SetChatEnabled(false);
-        chatai::gemini::SetPushToTalk(false);
-        if (chatai::gemini::IsSpeaking()) chatai::gemini::AbortSpeaking();
+        SuspendGeminiAudio();
+        if (!WaitForGeminiMicrophoneRelease()) return ESP_ERR_TIMEOUT;
 
         esp_err_t result = audio_.Start();
         if (result != ESP_OK) {
@@ -549,9 +577,7 @@ private:
             frame_duration_ms_ = frame_duration;
         }
 
-        chatai::gemini::SetChatEnabled(false);
-        chatai::gemini::SetPushToTalk(false);
-        if (chatai::gemini::IsSpeaking()) chatai::gemini::AbortSpeaking();
+        SuspendGeminiAudio();
         if (!WaitForGeminiMicrophoneRelease()) return ESP_ERR_TIMEOUT;
 
         const esp_err_t result = audio_.Start();
@@ -600,13 +626,12 @@ private:
     bool Crypt(const uint8_t* input, size_t size, const uint8_t* nonce,
                uint8_t* output) {
         if (input == nullptr || nonce == nullptr || output == nullptr) return false;
+        std::lock_guard<std::mutex> lock(crypto_mutex_);
+        if (aes_key_id_ == PSA_KEY_ID_NULL) return false;
+
         psa_cipher_operation_t operation = PSA_CIPHER_OPERATION_INIT;
-        psa_status_t result;
-        {
-            std::lock_guard<std::mutex> lock(crypto_mutex_);
-            if (aes_key_id_ == PSA_KEY_ID_NULL) return false;
-            result = psa_cipher_encrypt_setup(&operation, aes_key_id_, PSA_ALG_CTR);
-        }
+        psa_status_t result =
+            psa_cipher_encrypt_setup(&operation, aes_key_id_, PSA_ALG_CTR);
         if (result == PSA_SUCCESS) result = psa_cipher_set_iv(&operation, nonce, 16);
         size_t output_size = 0;
         if (result == PSA_SUCCESS) {
@@ -808,7 +833,7 @@ private:
         if (!session_ready_.load()) return;
         const bool previous = last_listening_.load();
         if (previous == listening) {
-            audio_.SetCaptureEnabled(listening);
+            audio_.SetCaptureEnabled(listening && !tts_active_.load());
             return;
         }
         if (!listening) audio_.SetCaptureEnabled(false);
@@ -834,14 +859,16 @@ private:
         cJSON_free(json);
         if (result == ESP_OK) {
             last_listening_.store(listening);
-            if (listening) audio_.SetCaptureEnabled(true);
+            if (listening) audio_.SetCaptureEnabled(!tts_active_.load());
         } else {
             ESP_LOGW(kTag, "Could not send listen state to Xiaozhi server");
         }
     }
 
     void SendGoodbye() {
-        if (!session_ready_.load() || !IsTransportConnected() ||
+        // WebSocket sessions close the socket without an MQTT goodbye control frame.
+        if (active_transport_ != Transport::kMqttUdp ||
+            !session_ready_.load() || !IsTransportConnected() ||
             (xEventGroupGetBits(events_) & kServerEnded) != 0) return;
         std::string session_id;
         {
@@ -885,6 +912,7 @@ private:
         udp_rx_task_ = nullptr;
         udp_tx_task_ = nullptr;
         ReleaseUdpResources();
+        RestoreGeminiAudio();
     }
 
     void ReleaseUdpResources() {
@@ -893,9 +921,12 @@ private:
             close(socket_fd_);
             socket_fd_ = -1;
         }
-        if (aes_key_id_ != PSA_KEY_ID_NULL) {
-            psa_destroy_key(aes_key_id_);
-            aes_key_id_ = PSA_KEY_ID_NULL;
+        {
+            std::lock_guard<std::mutex> crypto_lock(crypto_mutex_);
+            if (aes_key_id_ != PSA_KEY_ID_NULL) {
+                psa_destroy_key(aes_key_id_);
+                aes_key_id_ = PSA_KEY_ID_NULL;
+            }
         }
         udp_nonce_.fill(0);
         session_id_.clear();
@@ -923,6 +954,9 @@ private:
     std::atomic<bool> chat_enabled_{false};
     std::atomic<bool> push_to_talk_{false};
     std::atomic<bool> last_listening_{false};
+    std::atomic<bool> tts_active_{false};
+    std::atomic<bool> gemini_suspended_{false};
+    bool gemini_previous_chat_enabled_ = false;
     std::mutex channel_mutex_;
     std::mutex listening_mutex_;
     std::mutex hello_mutex_;

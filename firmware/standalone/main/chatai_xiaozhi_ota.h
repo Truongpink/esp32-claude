@@ -41,6 +41,6 @@ struct ServerConfig {
 // Queries the public Xiaozhi OTA configuration endpoint. The request uses a
 // stable UUID v4 stored in ChatAI's own NVS namespace and never logs credentials.
 esp_err_t FetchServerConfig(ServerConfig* config);
-esp_err_t CheckActivation();
+esp_err_t CheckActivation(const ServerConfig& config);
 
 }  // namespace chatai::xiaozhi
