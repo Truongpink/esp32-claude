@@ -30,8 +30,6 @@ AfeAudioEngine::~AfeAudioEngine() {
         processing_task_=nullptr;
     }
     if(afe_data_!=nullptr&&afe_iface_!=nullptr){afe_iface_->destroy(afe_data_);afe_data_=nullptr;}
-    if(processing_task_stack_!=nullptr){heap_caps_free(processing_task_stack_);processing_task_stack_=nullptr;}
-    if(processing_task_buffer_!=nullptr){heap_caps_free(processing_task_buffer_);processing_task_buffer_=nullptr;}
     if(owns_models_&&models_!=nullptr){esp_srmodel_deinit(models_);models_=nullptr;}
     if(event_group_!=nullptr){vEventGroupDelete(event_group_);event_group_=nullptr;}
 }
@@ -177,31 +175,14 @@ bool AfeAudioEngine::Initialize(AudioCodec* codec, int frame_duration_ms,
     }
     afe_iface_->print_pipeline(afe_data_);
 
-    if (processing_task_stack_ == nullptr) {
-        processing_task_stack_ = static_cast<StackType_t*>(
-            heap_caps_malloc(kProcessingTaskStackSize, MALLOC_CAP_SPIRAM));
-    }
-    if (processing_task_buffer_ == nullptr) {
-        processing_task_buffer_ =
-            static_cast<StaticTask_t*>(heap_caps_malloc(sizeof(StaticTask_t), MALLOC_CAP_INTERNAL));
-    }
-    if (processing_task_stack_ == nullptr || processing_task_buffer_ == nullptr) {
-        ESP_LOGE(TAG, "Failed to allocate AFE processing task memory");
-        afe_iface_->destroy(afe_data_);
-        afe_data_ = nullptr;
-        afe_iface_ = nullptr;
-        return false;
-    }
-
-    processing_task_ = xTaskCreateStatic(
+    const BaseType_t task_result = xTaskCreate(
         [](void* arg) {
             auto* engine = static_cast<AfeAudioEngine*>(arg);
             engine->ProcessingTask();
             vTaskDelete(nullptr);
         },
-        "audio_afe", kProcessingTaskStackSize, this, 3, processing_task_stack_,
-        processing_task_buffer_);
-    if (processing_task_ == nullptr) {
+        "audio_afe", kProcessingTaskStackSize, this, 3, &processing_task_);
+    if (task_result != pdPASS || processing_task_ == nullptr) {
         ESP_LOGE(TAG, "Failed to create AFE processing task, internal free=%u largest=%u",
                  heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
                  heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL));
