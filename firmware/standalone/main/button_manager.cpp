@@ -114,12 +114,14 @@ void ButtonTask(void*) {
 
         if (UpdateButton(g_boot, now)) {
             ReportButtonTransition("BOOT", g_boot);
-            if (g_boot.stable_pressed) {
+            // Match Xiaozhi's BOOT OnClick behavior: act once after release,
+            // rather than starting a one-shot listen on the press edge.
+            if (!g_boot.stable_pressed) {
                 const bool provisioning =
                     chatai::network::NetworkManager::IsProvisioningActive();
                 char boot_start_detail[160]{};
                 std::snprintf(boot_start_detail, sizeof(boot_start_detail),
-                    "uptime_ms=%llu phase=before_one_shot_start provisioning=%d button_stack_watermark=%u",
+                    "uptime_ms=%llu phase=click_release provisioning=%d button_stack_watermark=%u",
                     static_cast<unsigned long long>(esp_timer_get_time() / 1000),
                     provisioning ? 1 : 0,
                     static_cast<unsigned>(uxTaskGetStackHighWaterMark(nullptr)));
@@ -129,21 +131,24 @@ void ButtonTask(void*) {
 
                 if (provisioning) {
                     chatai::display::Notify("WI-FI", "Cấu hình qua Web Admin");
-                    ESP_LOGI(kTag, "BOOT pressed while Wi-Fi provisioning is active");
+                    ESP_LOGI(kTag, "BOOT clicked while Wi-Fi provisioning is active");
                 } else {
-                    const bool started = chatai::xiaozhi::StartConversation();
-                    const char* message = !chatai::xiaozhi::IsReady()
-                        ? "Đang kết nối Xiaozhi"
-                        : (started ? "Đang nghe - hãy nói" : "Đang xử lý lượt trước");
+                    const bool enabled = !chatai::xiaozhi::IsChatEnabled();
+                    chatai::xiaozhi::SetChatEnabled(enabled);
+                    const bool chat_enabled = chatai::xiaozhi::IsChatEnabled();
+                    const bool ready = chatai::xiaozhi::IsReady();
+                    const char* message = chat_enabled
+                        ? (ready ? "Đang nghe liên tục" : "Đã bật nghe - chờ kết nối")
+                        : "Đã ngừng nghe";
                     chatai::display::Notify("XIAOZHI", message);
-                    ESP_LOGI(kTag, "BOOT one-shot conversation %s",
-                             started ? "started" : "not started");
+                    ESP_LOGI(kTag, "BOOT chat toggle %s (ready=%d)",
+                             chat_enabled ? "enabled" : "disabled", ready ? 1 : 0);
                     char boot_detail[160]{};
                     std::snprintf(boot_detail, sizeof(boot_detail),
-                        "uptime_ms=%llu action=START_ONE_SHOT_LISTEN started=%d xiaozhi_ready=%d listening=%d",
+                        "uptime_ms=%llu action=TOGGLE_CHAT enabled=%d xiaozhi_ready=%d listening=%d",
                         static_cast<unsigned long long>(esp_timer_get_time() / 1000),
-                        started ? 1 : 0,
-                        chatai::xiaozhi::IsReady() ? 1 : 0,
+                        chat_enabled ? 1 : 0,
+                        ready ? 1 : 0,
                         chatai::xiaozhi::IsListening() ? 1 : 0);
                     chatai::diagnostics::SetBootContext("BOOT_ACTION", boot_detail);
                     chatai::diagnostics::SetCrashContext("BOOT_ACTION_DONE", boot_detail);
