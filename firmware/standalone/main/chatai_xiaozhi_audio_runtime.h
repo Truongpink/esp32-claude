@@ -21,7 +21,11 @@ public:
     esp_err_t SubmitDownlinkFrame(const uint8_t* payload,size_t payload_size,uint32_t sample_rate,uint32_t frame_duration_ms);
     using PlaybackProgressCallback = std::function<void(uint32_t, uint32_t)>;
     using PlaybackDrainedCallback = std::function<void()>;
+    using PlaybackStartedCallback = std::function<void()>;
+    using VadCallback = std::function<void(bool)>;
     void SetPlaybackCallbacks(PlaybackProgressCallback progress, PlaybackDrainedCallback drained);
+    void SetPlaybackStartedCallback(PlaybackStartedCallback started);
+    void SetVadCallback(VadCallback callback);
     esp_err_t SubmitNotificationFrame(const uint8_t* payload, size_t payload_size,
                                       uint32_t sample_rate, uint32_t frame_duration_ms,
                                       uint32_t playback_id, uint32_t media_position_ms);
@@ -37,5 +41,7 @@ private:
     std::mutex playback_callback_mutex_;
     PlaybackProgressCallback playback_progress_callback_;
     PlaybackDrainedCallback playback_drained_callback_;
+    PlaybackStartedCallback playback_started_callback_;
+    VadCallback vad_callback_;
 };
 }
