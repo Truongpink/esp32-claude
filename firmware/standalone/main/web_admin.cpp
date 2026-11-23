@@ -96,7 +96,7 @@ select,input[type=text]{width:100%;min-width:0;padding:13px;border:1px solid #ff
 <nav class="tabbar" role="tablist" aria-label="Các mục quản trị">
 <button type="button" role="tab" data-tab="overview" aria-selected="true"><span class="tab-icon">⌂</span><span>Tổng quan</span></button>
 <button type="button" role="tab" data-tab="wifi" aria-selected="false"><span class="tab-icon">⌁</span><span>Wi-Fi</span></button>
-<button type="button" role="tab" data-tab="gemini" aria-selected="false"><span class="tab-icon">✧</span><span>Gemini</span></button>
+<button type="button" role="tab" data-tab="gemini" aria-selected="false"><span class="tab-icon">✧</span><span>Gemini (đã tắt)</span></button>
 <button type="button" role="tab" data-tab="audio" aria-selected="false"><span class="tab-icon">♫</span><span>Âm thanh</span></button>
 <button type="button" role="tab" data-tab="ota" aria-selected="false"><span class="tab-icon">⇧</span><span>OTA</span></button>
 <button type="button" role="tab" data-tab="logs" aria-selected="false"><span class="tab-icon">≋</span><span>Nhật ký</span></button>
@@ -115,7 +115,7 @@ select,input[type=text]{width:100%;min-width:0;padding:13px;border:1px solid #ff
 <div class="metric"><span>TCP 443</span><strong id="dashTcpProbe">—</strong></div>
 <div class="metric"><span>SoftAP</span><strong id="dashAp">—</strong></div>
 <div class="metric"><span>Xiaozhi Server</span><strong id="dashXiaozhi">—</strong></div>
-<div class="metric"><span>API Key</span><strong id="dashKey">—</strong></div>
+<div class="metric"><span>Gemini API Key (đã tắt)</span><strong id="dashKey">Không dùng</strong></div>
 <div class="metric"><span>Âm lượng loa</span><strong id="dashVolume">—</strong></div>
 <div class="metric"><span>Heap còn trống</span><strong id="dashHeap">—</strong></div>
 <div class="metric"><span>Heap thấp nhất</span><strong id="dashMinHeap">—</strong></div>
@@ -145,7 +145,7 @@ select,input[type=text]{width:100%;min-width:0;padding:13px;border:1px solid #ff
 <p id="diagnosticResult" class="hint" role="status" aria-live="polite"></p>
 </section>
 <section class="card tab-panel" data-panel="gemini" role="tabpanel" aria-labelledby="geminiTitle" hidden>
-<div class="card-head"><div class="card-icon" aria-hidden="true">✧</div><div><h2 id="geminiTitle">Cấu hình Gemini Live</h2><p class="hint">API Key được lưu an toàn trong bộ nhớ thiết bị</p></div></div>
+<div class="card-head"><div class="card-icon" aria-hidden="true">✧</div><div><h2 id="geminiTitle">Gemini Live (đang tắt)</h2><p class="hint">Firmware hiện chỉ sử dụng server Xiaozhi. Các thiết lập Gemini được giữ lại nhưng không được sử dụng.</p></div></div>
 <label for="apiKey">Gemini API Key</label>
 <input id="apiKey" type="password" maxlength="256" autocomplete="new-password" autocapitalize="off" spellcheck="false" placeholder="Nhập API Key mới">
 <p class="hint">Khóa đã lưu không được gửi ngược về trình duyệt. Để giữ khóa hiện tại, hãy để trống và không nhấn lưu.</p>
@@ -769,7 +769,7 @@ async function refreshDeviceStatus() {
    document.getElementById("dashXiaozhi").textContent = data.xiaozhi_ready
      ? (data.xiaozhi_listening ? "Đã kết nối · Đang nghe" : "Đã kết nối")
      : "Đang kết nối";
-   document.getElementById("dashKey").textContent = data.key_configured ? "Đã lưu" : "Chưa cấu hình";
+   document.getElementById("dashKey").textContent = "Không sử dụng";
    document.getElementById("dashVolume").textContent = data.speaker_volume + "%";
    document.getElementById("dashHeap").textContent = data.free_heap + " byte";
    document.getElementById("dashMinHeap").textContent = data.min_free_heap + " byte";
@@ -782,8 +782,8 @@ async function refreshStatus() {
   const response = await fetch("/api/gemini/status", {cache:"no-store"});
   if (!response.ok) throw new Error("Không đọc được trạng thái (HTTP " + response.status + ")");
   const data = await response.json();
-  statusText.textContent = data.key_configured ? "Trạng thái: API Key đã được lưu." :
-    "Trạng thái: Chưa cấu hình API Key.";
+  statusText.textContent = data.key_configured ? "Gemini Live đã tắt; API Key không được sử dụng." :
+    "Gemini Live đã tắt; API Key không được sử dụng.";
   removeButton.hidden = !data.key_configured;
   try { await refreshDeviceStatus(); }
   catch (error) { deviceStatus.textContent = error.message; }
