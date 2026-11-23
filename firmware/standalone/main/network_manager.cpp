@@ -69,7 +69,7 @@ std::string g_pending_password;
 esp_err_t SaveCredentials(const std::string& ssid, const std::string& password);
 esp_err_t StopProvisioning();
 
-bool ProbeGeminiInternet() {
+bool ProbeXiaozhiServer() {
     if (g_sta_netif == nullptr) return false;
 
     esp_netif_ip_info_t ip_info{};
@@ -92,7 +92,7 @@ bool ProbeGeminiInternet() {
     hints.ai_socktype = SOCK_STREAM;
     addrinfo* addresses = nullptr;
     const int lookup_result = getaddrinfo(
-        "generativelanguage.googleapis.com", "443", &hints, &addresses);
+        "api.tenclass.net", "443", &hints, &addresses);
     if (lookup_result != 0 || addresses == nullptr) {
         char detail[96]{};
         std::snprintf(detail, sizeof(detail), "getaddrinfo failed code=%d", lookup_result);
@@ -143,8 +143,8 @@ bool ProbeGeminiInternet() {
     const int tcp_state = reachable ? 1 : 0;
     if (g_last_tcp_state.exchange(tcp_state) != tcp_state)
         chatai::diagnostics::Add("TCP_443", reachable ? "OK" : "FAIL",
-                                 reachable ? "Google endpoint reachable on port 443" :
-                                             "TCP connection to Google port 443 failed");
+                                 reachable ? "Xiaozhi endpoint reachable on port 443" :
+                                             "TCP connection to Xiaozhi port 443 failed");
     return reachable;
 }
 
@@ -160,10 +160,10 @@ void InternetCheckTask(void*) {
         const bool previous = g_internet_available.exchange(available);
         if (available != previous) {
             if (available) {
-                ESP_LOGI(kTag, "Internet verified: Gemini DNS resolved and TCP port 443 reachable");
+                ESP_LOGI(kTag, "Internet verified: Xiaozhi DNS resolved and TCP port 443 reachable");
                 chatai::diagnostics::Add("INTERNET", "OK", "DNS and TCP 443 probe passed");
             } else {
-                ESP_LOGW(kTag, "Internet unavailable: Gemini DNS or TCP port 443 check failed");
+                ESP_LOGW(kTag, "Internet unavailable: Xiaozhi DNS or TCP port 443 check failed");
                 chatai::diagnostics::Add("INTERNET", "FAIL", "DNS or TCP 443 probe failed");
             }
         }
@@ -429,7 +429,7 @@ esp_err_t StartDnsServer() {
     if (socket_fd < 0) return ESP_FAIL;
     // Bind captive DNS only to the SoftAP address. Binding INADDR_ANY also
     // captures DNS traffic from the station interface and can poison the
-    // ESP32's own lookups (including Gemini's Google endpoint).
+    // ESP32's own lookups (including the Xiaozhi OTA endpoint).
     esp_netif_ip_info_t ap_ip_info{};
     if (g_ap_netif == nullptr ||
         esp_netif_get_ip_info(g_ap_netif, &ap_ip_info) != ESP_OK ||
@@ -536,7 +536,7 @@ a{color:#c4a5ff;text-decoration:none;font-size:13px}
 <header><div class="mark" aria-hidden="true">✦</div><div><h1>ChatAI TPIOS</h1><p class="sub">Thiết lập kết nối mạng Wi-Fi</p></div></header>
 <section class="card">
 <h2>Kết nối Wi-Fi nhà anh</h2>
-<p>Chọn mạng Wi-Fi, nhập mật khẩu rồi lưu để thiết bị kết nối Internet và khởi chạy Gemini Live.</p>
+<p>Chọn mạng Wi-Fi, nhập mật khẩu rồi lưu để thiết bị kết nối Internet và kết nối máy chủ Xiaozhi.</p>
 <form id="wifiForm" method="post" action="/wifi">
 <input type="hidden" name="token" value=")html" + g_form_token + R"html(">
 <label for="ssid">Tên mạng Wi-Fi (SSID)</label>
