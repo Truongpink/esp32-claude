@@ -27,6 +27,7 @@ public:
                                       uint32_t playback_id, uint32_t media_position_ms);
     void ResetNotificationPlayback();
     bool IsRunning() const{return running_.load();}
+    bool IsPlaybackIdle() { return service_.IsPlaybackIdle(); }
 private:
     static constexpr size_t kMaxOpusPacketBytes=4096;
     ChatAIXiaozhiAudioCodec codec_; AudioService service_;
