@@ -7,12 +7,15 @@
 #include <cstdint>
 #include <cstring>
 #include <cstdio>
+#include <cstdlib>
+#include <ctime>
 #include <iterator>
 #include <string_view>
 
 #include <driver/gpio.h>
 #include <driver/i2c_master.h>
 #include <esp_log.h>
+#include <esp_sntp.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
 
@@ -71,7 +74,7 @@ const chatai::display::Glyph8x10* FindGlyph(uint32_t codepoint) {
         [](const chatai::display::Glyph8x10& glyph, uint32_t value) {
             return glyph.codepoint < value;
         });
-    return found != end && found->codepoint == codepoint ? found : nullptr;
+    return found != end && found->codepoint == codepoint ? &*found : nullptr;
 }
 
 // Every character occupies the same 8x10 cell; clipping also supports the
@@ -115,6 +118,74 @@ void DrawText(int x, int y, std::string_view text) {
 
 int TextWidth(std::string_view text) {
     return static_cast<int>(text.size()) * kGlyphWidth;
+}
+
+void SetPixel(int x, int y) {
+    if (x < 0 || x >= kWidth || y < 0 || y >= 64) return;
+    g_frame[(y / 8) * kWidth + x] |= static_cast<uint8_t>(1U << (y % 8));
+}
+
+void DrawWifiIcon() {
+    constexpr std::array<uint16_t, 10> rows{
+        0b000000000000,
+        0b000111111000,
+        0b011000000110,
+        0b100000000001,
+        0b000011110000,
+        0b000100001000,
+        0b001000000100,
+        0b000001100000,
+        0b000001100000,
+        0b000000000000
+    };
+    constexpr int x = 2;
+    constexpr int y = 1;
+    for (int row = 0; row < static_cast<int>(rows.size()); ++row) {
+        for (int column = 0; column < 12; ++column) {
+            if ((rows[row] & (1U << (11 - column))) != 0) {
+                SetPixel(x + column, y + row);
+            }
+        }
+    }
+}
+
+void DrawBatteryIcon() {
+    constexpr int x = 108;
+    constexpr int y = 2;
+    constexpr int body_width = 16;
+    constexpr int body_height = 8;
+    for (int column = 0; column < body_width; ++column) {
+        SetPixel(x + column, y);
+        SetPixel(x + column, y + body_height - 1);
+    }
+    for (int row = 1; row < body_height - 1; ++row) {
+        SetPixel(x, y + row);
+        SetPixel(x + body_width - 1, y + row);
+    }
+    for (int row = 2; row < 6; ++row) {
+        SetPixel(x + body_width, y + row);
+    }
+}
+
+void InitializeClockSync() {
+    setenv("TZ", "ICT-7", 1);
+    tzset();
+    esp_sntp_setoperatingmode(SNTP_OPMODE_POLL);
+    esp_sntp_setservername(0, "pool.ntp.org");
+    esp_sntp_init();
+    ESP_LOGI(kTag, "SNTP time synchronization started; timezone=ICT-7");
+}
+
+void DrawClock() {
+    char clock_text[9] = "--:--:--";
+    const std::time_t now = std::time(nullptr);
+    if (now >= 1700000000) {
+        std::tm local_time{};
+        if (localtime_r(&now, &local_time) != nullptr) {
+            std::strftime(clock_text, sizeof(clock_text), "%H:%M:%S", &local_time);
+        }
+    }
+    DrawText((kWidth - TextWidth(clock_text)) / 2, 1, clock_text);
 }
 
 void UpdateFooter() {
@@ -162,10 +233,15 @@ void RenderStatus() {
     g_frame.fill(0);
     UpdateFooter();
 
+    if (chatai::network::NetworkManager::IsConnected()) {
+        DrawWifiIcon();
+    }
+    DrawClock();
+    DrawBatteryIcon();
+
     const char* status = !g_audio_ready.load()
         ? "LOI AM THANH"
         : StatusText(chatai::xiaozhi::GetRuntimeState());
-    DrawText((kWidth - TextWidth("CHATAI TPIOS")) / 2, 5, "CHATAI TPIOS");
     DrawText((kWidth - TextWidth(status)) / 2, 23, status);
 
     for (int x = 0; x < kWidth; x += 2) {
@@ -226,6 +302,7 @@ esp_err_t Initialize() {
     result = i2c_master_transmit(g_display, initialization, sizeof(initialization), 250);
     if (result != ESP_OK) return result;
 
+    InitializeClockSync();
     g_initialized = true;
     g_last_scroll_tick = xTaskGetTickCount();
     if (xTaskCreate(DisplayTask, "chatai_oled", 4096, nullptr, 3, nullptr) != pdPASS) {
