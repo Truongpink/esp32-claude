@@ -38,6 +38,8 @@ constexpr TickType_t kScrollStepTicks = pdMS_TO_TICKS(60);
 i2c_master_bus_handle_t g_bus = nullptr;
 i2c_master_dev_handle_t g_display = nullptr;
 bool g_initialized = false;
+bool g_sntp_started = false;
+bool g_time_synced = false;
 std::atomic<bool> g_audio_ready{false};
 std::array<uint8_t, kWidth * kPages> g_frame{};
 char g_footer[96] = "CHATAI TPIOS - WIFI WAIT - SERVER WAIT";
@@ -167,19 +169,31 @@ void DrawBatteryIcon() {
     }
 }
 
-void InitializeClockSync() {
-    setenv("TZ", "ICT-7", 1);
-    tzset();
-    esp_sntp_setoperatingmode(SNTP_OPMODE_POLL);
-    esp_sntp_setservername(0, "pool.ntp.org");
-    esp_sntp_init();
-    ESP_LOGI(kTag, "SNTP time synchronization started; timezone=ICT-7");
+void UpdateClockSync() {
+    if (!chatai::network::NetworkManager::IsConnected()) return;
+
+    if (!g_sntp_started) {
+        // POSIX TZ offsets use the opposite sign: UTC-7 means Vietnam (UTC+7).
+        setenv("TZ", "UTC-7", 1);
+        tzset();
+        esp_sntp_setoperatingmode(SNTP_OPMODE_POLL);
+        esp_sntp_setservername(0, "pool.ntp.org");
+        esp_sntp_init();
+        g_sntp_started = true;
+        ESP_LOGI(kTag, "SNTP started after Wi-Fi connection; timezone=UTC+7");
+    }
+
+    if (esp_sntp_get_sync_status() == SNTP_SYNC_STATUS_COMPLETED) {
+        g_time_synced = true;
+    }
 }
 
 void DrawClock() {
+    UpdateClockSync();
+
     char clock_text[9] = "--:--:--";
     const std::time_t now = std::time(nullptr);
-    if (now >= 1700000000) {
+    if (g_time_synced && now >= 1700000000) {
         std::tm local_time{};
         if (localtime_r(&now, &local_time) != nullptr) {
             std::strftime(clock_text, sizeof(clock_text), "%H:%M:%S", &local_time);
@@ -306,7 +320,6 @@ esp_err_t Initialize() {
     result = i2c_master_transmit(g_display, initialization, sizeof(initialization), 250);
     if (result != ESP_OK) return result;
 
-    InitializeClockSync();
     g_initialized = true;
     g_last_scroll_tick = xTaskGetTickCount();
     if (xTaskCreate(DisplayTask, "chatai_oled", 4096, nullptr, 3, nullptr) != pdPASS) {
