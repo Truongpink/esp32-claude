@@ -23,6 +23,7 @@ private:
     static constexpr size_t kMaxOpusPacketBytes=4096;
     ChatAIXiaozhiAudioCodec codec_; AudioService service_;
     std::atomic<bool> initialized_{false},running_{false};
+    bool capture_enabled_=false;
     std::mutex lifecycle_mutex_,send_mutex_; std::condition_variable send_cv_; bool send_queue_notified_=false;
 };
 }

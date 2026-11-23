@@ -134,15 +134,21 @@ public:
     bool IsReady() const { return session_ready_.load(); }
 
     bool StartConversation() {
-        if (!session_ready_.load() || tts_active_.load() || IsListening()) {
+        if (!session_ready_.load()) {
             chatai::diagnostics::Add("XIAOZHI_PTT", "REJECTED",
-                "session_not_ready_or_previous_turn_active");
+                "reason=session_not_ready");
+            return false;
+        }
+        if (tts_active_.load() || IsListening()) {
+            chatai::diagnostics::Add("XIAOZHI_PTT", "REJECTED",
+                "reason=previous_turn_or_tts_active");
             return false;
         }
         chat_enabled_.store(true);
-        UpdateListeningState();
-        if (!last_listening_.load()) {
+        if (!UpdateListeningState() || !last_listening_.load()) {
             chat_enabled_.store(false);
+            chatai::diagnostics::Add("XIAOZHI_PTT", "START_FAILED",
+                "listen_start_control_not_confirmed");
             return false;
         }
         chatai::diagnostics::Add("XIAOZHI_PTT", "LISTEN_START",
@@ -288,6 +294,7 @@ private:
 
             if (result == ESP_OK) {
                 UpdateListeningState();
+                const int64_t session_started_us = esp_timer_get_time();
                 chatai::diagnostics::Add("XIAOZHI", "READY",
                     active_transport_ == Transport::kMqttUdp
                         ? "MQTT control and encrypted UDP audio channel ready"
@@ -302,6 +309,22 @@ private:
                     // microphone enable if a transient driver error occurred.
                     UpdateListeningState();
                 }
+                const EventBits_t end_bits = xEventGroupGetBits(events_);
+                const bool server_ended = (end_bits & kServerEnded) != 0;
+                const bool transport_connected = IsTransportConnected();
+                const bool wifi_connected =
+                    chatai::network::NetworkManager::IsConnected();
+                const char* end_reason = server_ended ? "server_goodbye" :
+                    (!transport_connected ? "transport_disconnected" :
+                     (!wifi_connected ? "wifi_disconnected" : "session_state_changed"));
+                char detail[192]{};
+                std::snprintf(detail, sizeof(detail),
+                    "reason=%s duration_ms=%llu transport_connected=%d wifi_connected=%d",
+                    end_reason,
+                    static_cast<unsigned long long>(
+                        std::max<int64_t>(0, esp_timer_get_time() - session_started_us) / 1000),
+                    transport_connected ? 1 : 0, wifi_connected ? 1 : 0);
+                chatai::diagnostics::Add("XIAOZHI_SESSION", "STOP", detail);
             } else {
                 char detail[96]{};
                 std::snprintf(detail, sizeof(detail), "session setup failed: %s",
@@ -317,6 +340,8 @@ private:
             push_to_talk_.store(false);
             last_listening_.store(false);
             tts_active_.store(false);
+            chatai::diagnostics::Add("XIAOZHI_SESSION", "RETRY",
+                "next OTA/session attempt scheduled after 15000 ms");
             vTaskDelay(pdMS_TO_TICKS(kRetryDelayMs));
         }
     }
@@ -383,6 +408,8 @@ private:
             }
             if (ReadString(root, "session_id", &received_session) &&
                 received_session == current_session) {
+                chatai::diagnostics::Add("XIAOZHI_SESSION", "SERVER_GOODBYE",
+                    "server ended the current voice session");
                 xEventGroupSetBits(events_, kServerEnded);
             }
         } else if (type == "tts") {
@@ -576,6 +603,7 @@ private:
             ReleaseUdpResources();
             return ESP_ERR_NO_MEM;
         }
+        uplink_packet_reported_.store(false);
         session_ready_.store(true);
         return ESP_OK;
     }
@@ -618,6 +646,7 @@ private:
             audio_.Stop();
             return ESP_ERR_NO_MEM;
         }
+        uplink_packet_reported_.store(false);
         session_ready_.store(true);
         UpdateListeningState();
         return ESP_OK;
@@ -769,6 +798,16 @@ private:
                 if (sent != ESP_OK) {
                     ESP_LOGW(kTag, "WebSocket audio send failed: %s",
                              esp_err_to_name(sent));
+                    chatai::diagnostics::Add("XIAOZHI_AUDIO", "SEND_FAILED",
+                        "transport=websocket");
+                } else if (!uplink_packet_reported_.exchange(true)) {
+                    char detail[112]{};
+                    std::snprintf(detail, sizeof(detail),
+                        "transport=websocket sample_rate=%lu frame_ms=%lu opus_bytes=%lu",
+                        static_cast<unsigned long>(frame.sample_rate),
+                        static_cast<unsigned long>(frame.frame_duration_ms),
+                        static_cast<unsigned long>(frame.payload.size()));
+                    chatai::diagnostics::Add("XIAOZHI_AUDIO", "UPLINK_FIRST_PACKET", detail);
                 }
                 continue;
             }
@@ -801,6 +840,16 @@ private:
             const int sent = send(fd, packet.data(), packet.size(), 0);
             if (sent != static_cast<int>(packet.size())) {
                 ESP_LOGW(kTag, "UDP audio send failed");
+                chatai::diagnostics::Add("XIAOZHI_AUDIO", "SEND_FAILED",
+                    "transport=udp");
+            } else if (!uplink_packet_reported_.exchange(true)) {
+                char detail[112]{};
+                std::snprintf(detail, sizeof(detail),
+                    "transport=udp sample_rate=%lu frame_ms=%lu opus_bytes=%lu",
+                    static_cast<unsigned long>(frame.sample_rate),
+                    static_cast<unsigned long>(frame.frame_duration_ms),
+                    static_cast<unsigned long>(frame.payload.size()));
+                chatai::diagnostics::Add("XIAOZHI_AUDIO", "UPLINK_FIRST_PACKET", detail);
             }
         }
     }
@@ -856,19 +905,23 @@ private:
             ? websocket_.SendText(payload) : mqtt_.Publish(payload);
     }
 
-    void UpdateListeningState() {
+    bool UpdateListeningState() {
         std::lock_guard<std::mutex> state_lock(listening_mutex_);
         const bool listening = IsListening();
-        if (!session_ready_.load()) return;
+        if (!session_ready_.load()) return false;
         const bool previous = last_listening_.load();
         if (previous == listening) {
             audio_.SetCaptureEnabled(listening && !tts_active_.load());
-            return;
+            return true;
         }
         if (!listening) audio_.SetCaptureEnabled(false);
 
         cJSON* root = cJSON_CreateObject();
-        if (root == nullptr) return;
+        if (root == nullptr) {
+            chatai::diagnostics::Add("XIAOZHI_LISTEN", "FAILED",
+                "could_not_allocate_listen_control");
+            return false;
+        }
         std::string session_id;
         {
             std::lock_guard<std::mutex> lock(channel_mutex_);
@@ -877,21 +930,32 @@ private:
         cJSON_AddStringToObject(root, "session_id", session_id.c_str());
         cJSON_AddStringToObject(root, "type", "listen");
         cJSON_AddStringToObject(root, "state", listening ? "start" : "stop");
-        if (listening) {
-            cJSON_AddStringToObject(root, "mode",
-                chat_enabled_.load() ? "auto" : "manual");
-        }
+        const char* mode = chat_enabled_.load() ? "auto" : "manual";
+        if (listening) cJSON_AddStringToObject(root, "mode", mode);
         char* json = cJSON_PrintUnformatted(root);
         cJSON_Delete(root);
-        if (json == nullptr) return;
+        if (json == nullptr) {
+            chatai::diagnostics::Add("XIAOZHI_LISTEN", "FAILED",
+                "could_not_serialize_listen_control");
+            return false;
+        }
         const esp_err_t result = PublishControl(json);
         cJSON_free(json);
         if (result == ESP_OK) {
             last_listening_.store(listening);
             if (listening) audio_.SetCaptureEnabled(!tts_active_.load());
-        } else {
-            ESP_LOGW(kTag, "Could not send listen state to Xiaozhi server");
+            chatai::diagnostics::Add("XIAOZHI_LISTEN",
+                listening ? "START_SENT" : "STOP_SENT",
+                listening ? mode : "server_listen_stop_control_published");
+            return true;
         }
+        char detail[96]{};
+        std::snprintf(detail, sizeof(detail), "state=%s esp_err=%s",
+            listening ? "start" : "stop", esp_err_to_name(result));
+        chatai::diagnostics::Add("XIAOZHI_LISTEN", "SEND_FAILED", detail);
+        ESP_LOGW(kTag, "Could not send listen state to Xiaozhi server: %s",
+                 esp_err_to_name(result));
+        return false;
     }
 
     void SendGoodbye() {
@@ -983,6 +1047,7 @@ private:
     std::atomic<bool> push_to_talk_{false};
     std::atomic<bool> last_listening_{false};
     std::atomic<bool> tts_active_{false};
+    std::atomic<bool> uplink_packet_reported_{false};
     std::mutex channel_mutex_;
     std::mutex listening_mutex_;
     std::mutex hello_mutex_;

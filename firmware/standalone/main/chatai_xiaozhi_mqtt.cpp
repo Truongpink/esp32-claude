@@ -7,6 +7,8 @@
 #include <esp_crt_bundle.h>
 #include <esp_log.h>
 
+#include "diagnostic_manager.h"
+
 namespace chatai::xiaozhi {
 namespace {
 
@@ -267,6 +269,8 @@ void MqttTransport::HandleEvent(esp_mqtt_event_handle_t event) {
     switch (event->event_id) {
         case MQTT_EVENT_CONNECTED: {
             connected_.store(false);
+            chatai::diagnostics::Add("XIAOZHI_MQTT", "BROKER_CONNECTED",
+                "TLS broker connected; waiting for response-topic subscription");
             const int message_id = esp_mqtt_client_subscribe(
                 client_, subscribe_topic_.c_str(), 0);
             if (message_id <= 0) {
@@ -281,6 +285,8 @@ void MqttTransport::HandleEvent(esp_mqtt_event_handle_t event) {
         case MQTT_EVENT_SUBSCRIBED:
             if (event->msg_id == pending_subscribe_id_.load()) {
                 connected_.store(true);
+                chatai::diagnostics::Add("XIAOZHI_MQTT", "SUBSCRIBED",
+                    "response topic subscription acknowledged");
                 xEventGroupSetBits(events_, kSubscribed);
             }
             break;
@@ -290,6 +296,8 @@ void MqttTransport::HandleEvent(esp_mqtt_event_handle_t event) {
             xEventGroupClearBits(events_, kSubscribed);
             pending_subscribe_id_.store(-1);
             xEventGroupSetBits(events_, kStartFailed);
+            chatai::diagnostics::Add("XIAOZHI_MQTT", "DISCONNECTED",
+                "broker transport disconnected");
             ESP_LOGW(kTag, "MQTT disconnected");
             break;
 
@@ -351,6 +359,8 @@ void MqttTransport::HandleEvent(esp_mqtt_event_handle_t event) {
         case MQTT_EVENT_ERROR:
             connected_.store(false);
             xEventGroupSetBits(events_, kStartFailed);
+            chatai::diagnostics::Add("XIAOZHI_MQTT", "ERROR",
+                "MQTT_EVENT_ERROR received; transport marked disconnected");
             ESP_LOGE(kTag, "MQTT transport reported an error");
             break;
 

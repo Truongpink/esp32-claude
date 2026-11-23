@@ -160,7 +160,6 @@ bool AfeAudioEngine::Initialize(AudioCodec* codec, int frame_duration_ms,
             }
         }
     }
-    afe_config->agc_init = false;
     afe_config->memory_alloc_mode = AFE_MEMORY_ALLOC_MORE_PSRAM;
 
     ESP_LOGI(TAG, "Before AFE create: free=%u min=%u largest=%u",
@@ -175,10 +174,14 @@ bool AfeAudioEngine::Initialize(AudioCodec* codec, int frame_duration_ms,
 
     if (afe_iface_ == nullptr || afe_data_ == nullptr) {
         ESP_LOGE(TAG, "Failed to create FD AFE instance");
+        chatai::diagnostics::Add("AFE", "INIT_FAILED",
+            "FD AFE instance creation failed");
         afe_iface_ = nullptr;
         afe_data_ = nullptr;
         return false;
     }
+    chatai::diagnostics::Add("AFE", "READY",
+        "vad_mode=1 min_speech_ms=64 agc=webrtc compression_gain_db=9 target=-3dBFS");
 
     if (wake_detector_ == WakeDetector::kWakeNet) {
         afe_iface_->disable_wakenet(afe_data_);

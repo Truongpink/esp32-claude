@@ -65,7 +65,7 @@ The board-neutral header must remain definition-compatible with the pinned upstr
 - FD AFE voice processing and VAD are enabled. With no VAD model supplied, ESP-SR uses its WebRTC VAD fallback. ChatAI configures VAD mode 1 (higher speech-trigger probability than mode 0), a 64 ms minimum speech window, and WebRTC AGC (9 dB compression gain, -3 dBFS target). `MIC_VAD` diagnostics record speech/silence transitions and input level in dBFS; use these readings to assess actual microphone level before changing the I2S conversion or hardware gain.
 - WakeNet is not active: the standalone partition table has no `model` partition and this repository does not ship an ESP-SR model image. `esp_srmodel_init("model")` therefore cannot load WakeNet models. Wake-word audio upload is also disabled.
 - Device AEC is not active: `ChatAIXiaozhiAudioCodec` exposes one microphone channel and declares no playback-reference channel. The current speaker output callback is not a calibrated, synchronized AFE reference path.
-- Noise suppression is disabled because no NSNet model is provisioned. AGC is also disabled.
+- Noise suppression is disabled because no NSNet model is provisioned. WebRTC AGC is enabled with 9 dB compression gain and a -3 dBFS target; this is dynamic gain control, not a fixed microphone gain.
 - Do not report WakeNet, AEC, or NS as operational until the required model assets and/or verified reference signal path are supplied. The existing assets partition and OTA layout must not be repurposed or changed without explicit approval.
 
 ## Validation status

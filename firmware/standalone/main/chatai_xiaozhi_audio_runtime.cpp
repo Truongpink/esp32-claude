@@ -6,6 +6,8 @@
 
 #include <esp_log.h>
 
+#include "diagnostic_manager.h"
+
 namespace chatai::audio {
 namespace {
 
@@ -79,6 +81,7 @@ esp_err_t XiaozhiAudioRuntime::Start() {
 
     const esp_err_t result = service_.Start();
     if (result == ESP_OK) {
+        capture_enabled_ = false;
         running_ = true;
     }
     return result;
@@ -93,6 +96,7 @@ esp_err_t XiaozhiAudioRuntime::Stop() {
 
     service_.EnableVoiceProcessing(false);
     service_.RequestInputStop();
+    capture_enabled_ = false;
     service_.Stop();
 
     const esp_err_t codec_result = codec_.Stop();
@@ -102,17 +106,26 @@ esp_err_t XiaozhiAudioRuntime::Stop() {
 
 void XiaozhiAudioRuntime::SetCaptureEnabled(bool enabled) {
     std::lock_guard<std::mutex> lock(lifecycle_mutex_);
-    if (!running_) {
+    if (!running_ || enabled == capture_enabled_) {
         return;
     }
 
     if (enabled) {
         if (!service_.EnableVoiceProcessing(true)) {
             ESP_LOGE(kTag, "AFE initialization failed");
+            chatai::diagnostics::Add("AFE_CAPTURE", "START_FAILED",
+                "AudioService EnableVoiceProcessing(true) returned false");
+            return;
         }
+        capture_enabled_ = true;
+        chatai::diagnostics::Add("AFE_CAPTURE", "STARTED",
+            "microphone capture and voice processing enabled");
     } else {
         service_.EnableVoiceProcessing(false);
         service_.RequestInputStop();
+        capture_enabled_ = false;
+        chatai::diagnostics::Add("AFE_CAPTURE", "STOPPED",
+            "microphone capture disabled");
     }
 }
 
