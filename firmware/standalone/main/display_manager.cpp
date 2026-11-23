@@ -82,15 +82,29 @@ void DrawText(int x, int y, std::string_view text) {
         const uint32_t codepoint = DecodeUtf8(text, offset);
         const auto* glyph = FindGlyph(codepoint);
         if (glyph != nullptr) {
+            int min_column = kGlyphWidth;
+            int max_column = -1;
             for (int row = 0; row < kGlyphHeight; ++row) {
                 for (int column = 0; column < kGlyphWidth; ++column) {
-                    if ((glyph->rows[row] & (1U << (7 - column))) == 0) continue;
-                    const int pixel_x = x + column;
-                    const int pixel_y = y + row;
-                    if (pixel_x >= 0 && pixel_x < kWidth &&
-                        pixel_y >= 0 && pixel_y < 64) {
-                        g_frame[(pixel_y / 8) * kWidth + pixel_x] |=
-                            static_cast<uint8_t>(1U << (pixel_y % 8));
+                    if ((glyph->rows[row] & (1U << (7 - column))) != 0) {
+                        min_column = std::min(min_column, column);
+                        max_column = std::max(max_column, column);
+                    }
+                }
+            }
+            if (max_column >= min_column) {
+                const int glyph_width = max_column - min_column + 1;
+                const int glyph_offset = (kGlyphWidth - glyph_width) / 2;
+                for (int row = 0; row < kGlyphHeight; ++row) {
+                    for (int column = min_column; column <= max_column; ++column) {
+                        if ((glyph->rows[row] & (1U << (7 - column))) == 0) continue;
+                        const int pixel_x = x + glyph_offset + column - min_column;
+                        const int pixel_y = y + row;
+                        if (pixel_x >= 0 && pixel_x < kWidth &&
+                            pixel_y >= 0 && pixel_y < 64) {
+                            g_frame[(pixel_y / 8) * kWidth + pixel_x] |=
+                                static_cast<uint8_t>(1U << (pixel_y % 8));
+                        }
                     }
                 }
             }
