@@ -101,7 +101,7 @@ bool ProbeXiaozhiServer() {
         return false;
     }
     if (g_last_dns_state.exchange(1) != 1)
-        chatai::diagnostics::Add("DNS", "OK", "generativelanguage.googleapis.com resolved");
+        chatai::diagnostics::Add("DNS", "OK", "api.tenclass.net resolved");
 
     bool reachable = false;
     for (addrinfo* address = addresses; address != nullptr && !reachable;
