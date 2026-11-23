@@ -139,14 +139,20 @@ void NotifyPlayer::WorkerTask() {
     FinishedCallback cb; uint32_t completed_id = 0; bool report_success = false;
     {
         std::lock_guard<std::mutex> lock(mutex_);
-        worker_running_ = false; task_handle_ = nullptr;
         if (!cancelled_ && active_ && playback_id_ == id) {
             if (!success) { should_reset = stream_started_; cb = CompleteLocked(completed_id); }
             else { http_finished_ = true; if (playback_drained_) {
                 cb = CompleteLocked(completed_id); report_success = true; } }
         }
     }
+    // Keep worker_running_ set until cleanup finishes so a new notification
+    // cannot enqueue audio just before a failed stream clears the old queue.
     if (should_reset) audio_.ResetNotificationPlayback();
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        worker_running_ = false;
+        task_handle_ = nullptr;
+    }
     if (cb) cb(completed_id, report_success);
 }
 }  // namespace chatai::xiaozhi
