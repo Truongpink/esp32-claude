@@ -87,11 +87,6 @@ bool InitializePlatform() {
         return false;
     }
 
-    const esp_err_t migration_result = chatai::settings::MigrateLegacyGeminiApiKey();
-    if (migration_result != ESP_OK) {
-        ESP_LOGW(kTag, "Could not migrate existing Gemini API Key; it can be entered in Web Admin");
-    }
-
     const esp_err_t netif_result = esp_netif_init();
     if (netif_result != ESP_OK) {
         ESP_LOGE(kTag, "Network interface initialization failed: %s",
