@@ -105,15 +105,18 @@ void NotifyPlayer::WorkerTask() {
                 demuxer.OnPacket([this, id, &media_ms, &packet_error](
                     const uint8_t* data, int rate, int duration, size_t len) {
                     if (packet_error || IsCancelled(id)) { packet_error = true; return; }
+                    {
+                        std::lock_guard<std::mutex> lock(mutex_);
+                        if (!active_ || cancelled_ || playback_id_ != id) { packet_error = true; return; }
+                        // Mark the stream before enqueueing: the audio task may decode and
+                        // drain this first packet immediately on another core.
+                        stream_started_ = true;
+                        playback_drained_ = false;
+                    }
                     const esp_err_t result = audio_.SubmitNotificationFrame(
                         data, len, static_cast<uint32_t>(rate),
                         static_cast<uint32_t>(duration), id, media_ms);
                     if (result != ESP_OK) { packet_error = true; return; }
-                    {
-                        std::lock_guard<std::mutex> lock(mutex_);
-                        if (!active_ || cancelled_ || playback_id_ != id) { packet_error = true; return; }
-                        stream_started_ = true; playback_drained_ = false;
-                    }
                     media_ms += static_cast<uint32_t>(duration);
                 });
                 std::array<char, kReadBufferSize> buffer{};
