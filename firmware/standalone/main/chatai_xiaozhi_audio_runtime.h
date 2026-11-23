@@ -31,12 +31,13 @@ public:
                                       uint32_t playback_id, uint32_t media_position_ms);
     void ResetNotificationPlayback();
     bool IsRunning() const{return running_.load();}
+    bool IsCaptureEnabled() const{return capture_enabled_.load();}
     bool IsPlaybackIdle() { return service_.IsPlaybackIdle(); }
 private:
     static constexpr size_t kMaxOpusPacketBytes=4096;
     ChatAIXiaozhiAudioCodec codec_; AudioService service_;
     std::atomic<bool> initialized_{false},running_{false};
-    bool capture_enabled_=false;
+    std::atomic<bool> capture_enabled_{false};
     std::mutex lifecycle_mutex_,send_mutex_; std::condition_variable send_cv_; bool send_queue_notified_=false;
     std::mutex playback_callback_mutex_;
     PlaybackProgressCallback playback_progress_callback_;
