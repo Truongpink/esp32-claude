@@ -8,7 +8,6 @@
 #include <cstring>
 #include <cstdio>
 #include <iterator>
-#include <mutex>
 #include <string_view>
 
 #include <driver/gpio.h>
@@ -17,8 +16,7 @@
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
 
-#include "gemini_live_client.h"
-#include "gemini_settings.h"
+#include "chatai_xiaozhi_client.h"
 #include "network_manager.h"
 #include "vietnamese_font.h"
 
@@ -27,20 +25,21 @@ constexpr char kTag[] = "ChatAI-OLED";
 constexpr gpio_num_t kSdaPin = GPIO_NUM_41;
 constexpr gpio_num_t kSclPin = GPIO_NUM_42;
 constexpr uint16_t kAddress = 0x3C;
-constexpr size_t kWidth = 128;
+constexpr int kWidth = 128;
 constexpr size_t kPages = 8;
-constexpr TickType_t kBootLogoDuration = pdMS_TO_TICKS(1800);
+constexpr int kGlyphWidth = 8;
+constexpr int kGlyphHeight = 10;
+constexpr int kFooterY = 53;
+constexpr TickType_t kScrollStepTicks = pdMS_TO_TICKS(60);
 
 i2c_master_bus_handle_t g_bus = nullptr;
 i2c_master_dev_handle_t g_display = nullptr;
 bool g_initialized = false;
 std::atomic<bool> g_audio_ready{false};
-std::mutex g_notification_mutex;
-char g_notification_title[24]{};
-char g_notification_message[24]{};
-TickType_t g_notification_until = 0;
-TickType_t g_boot_screen_until = 0;
 std::array<uint8_t, kWidth * kPages> g_frame{};
+char g_footer[96] = "CHATAI TPIOS - WIFI WAIT - SERVER WAIT";
+int g_footer_x = -static_cast<int>(sizeof("CHATAI TPIOS - WIFI WAIT - SERVER WAIT") - 1) * kGlyphWidth;
+TickType_t g_last_scroll_tick = 0;
 
 uint32_t DecodeUtf8(std::string_view text, size_t& offset) {
     const auto first = static_cast<uint8_t>(text[offset++]);
@@ -75,24 +74,58 @@ const chatai::display::Glyph8x10* FindGlyph(uint32_t codepoint) {
     return found != end && found->codepoint == codepoint ? found : nullptr;
 }
 
-void DrawText(size_t x, size_t y, std::string_view text) {
+// Every character occupies the same 8x10 cell; clipping also supports the
+// ticker entering from the left edge and moving toward the right.
+void DrawText(int x, int y, std::string_view text) {
     size_t offset = 0;
-    while (offset < text.size() && x + 8 <= kWidth && y + 10 <= 64) {
+    while (offset < text.size()) {
         const uint32_t codepoint = DecodeUtf8(text, offset);
         const auto* glyph = FindGlyph(codepoint);
         if (glyph != nullptr) {
-            for (size_t row = 0; row < 10; ++row) {
-                for (size_t column = 0; column < 8; ++column) {
+            for (int row = 0; row < kGlyphHeight; ++row) {
+                for (int column = 0; column < kGlyphWidth; ++column) {
                     if ((glyph->rows[row] & (1U << (7 - column))) == 0) continue;
-                    const size_t pixel_x = x + column;
-                    const size_t pixel_y = y + row;
-                    g_frame[(pixel_y / 8) * kWidth + pixel_x] |=
-                        static_cast<uint8_t>(1U << (pixel_y % 8));
+                    const int pixel_x = x + column;
+                    const int pixel_y = y + row;
+                    if (pixel_x >= 0 && pixel_x < kWidth &&
+                        pixel_y >= 0 && pixel_y < 64) {
+                        g_frame[(pixel_y / 8) * kWidth + pixel_x] |=
+                            static_cast<uint8_t>(1U << (pixel_y % 8));
+                    }
                 }
             }
         }
-        x += 8;
+        x += kGlyphWidth;
     }
+}
+
+int TextWidth(std::string_view text) {
+    return static_cast<int>(text.size()) * kGlyphWidth;
+}
+
+void UpdateFooter() {
+    const bool wifi_ready = chatai::network::NetworkManager::IsConnected();
+    const bool server_ready = chatai::xiaozhi::IsReady();
+    char next[sizeof(g_footer)]{};
+    std::snprintf(next, sizeof(next), "CHATAI TPIOS - WIFI %s - SERVER %s",
+                  wifi_ready ? "OK" : "WAIT",
+                  server_ready ? "READY" : "WAIT");
+    if (std::strcmp(next, g_footer) == 0) return;
+    std::snprintf(g_footer, sizeof(g_footer), "%s", next);
+    g_footer_x = -TextWidth(g_footer);
+}
+
+const char* StatusText(chatai::xiaozhi::RuntimeState state) {
+    using chatai::xiaozhi::RuntimeState;
+    switch (state) {
+        case RuntimeState::kConnecting: return "DANG KET NOI";
+        case RuntimeState::kWaiting: return "DANG CHO";
+        case RuntimeState::kListening: return "DANG NGHE";
+        case RuntimeState::kProcessing: return "DANG XU LY";
+        case RuntimeState::kSpeaking: return "DANG NOI";
+        case RuntimeState::kError: return "LOI MICROPHONE";
+    }
+    return "DANG KET NOI";
 }
 
 esp_err_t FlushFrame() {
@@ -113,57 +146,26 @@ esp_err_t FlushFrame() {
 
 void RenderStatus() {
     g_frame.fill(0);
-    DrawText(8, 8, "ChatAI TPIOS");
+    UpdateFooter();
+
+    const char* status = !g_audio_ready.load()
+        ? "LOI AM THANH"
+        : StatusText(chatai::xiaozhi::GetRuntimeState());
+    DrawText((kWidth - TextWidth("CHATAI TPIOS")) / 2, 5, "CHATAI TPIOS");
+    DrawText((kWidth - TextWidth(status)) / 2, 23, status);
+
+    for (int x = 0; x < kWidth; x += 2) {
+        const int y = 46;
+        g_frame[(y / 8) * kWidth + x] |= static_cast<uint8_t>(1U << (y % 8));
+    }
 
     const TickType_t now = xTaskGetTickCount();
-    char notification_title[sizeof(g_notification_title)]{};
-    char notification_message[sizeof(g_notification_message)]{};
-    bool show_notification = false;
-    {
-        std::lock_guard<std::mutex> lock(g_notification_mutex);
-        show_notification = static_cast<int32_t>(g_notification_until - now) > 0;
-        if (show_notification) {
-            std::snprintf(notification_title, sizeof(notification_title), "%s", g_notification_title);
-            std::snprintf(notification_message, sizeof(notification_message), "%s", g_notification_message);
-        }
+    if (static_cast<TickType_t>(now - g_last_scroll_tick) >= kScrollStepTicks) {
+        ++g_footer_x;
+        g_last_scroll_tick = now;
+        if (g_footer_x > kWidth) g_footer_x = -TextWidth(g_footer);
     }
-
-    if (static_cast<int32_t>(g_boot_screen_until - now) > 0) {
-        DrawText(8, 30, "Đang khởi động");
-    } else if (show_notification) {
-        DrawText(0, 20, notification_title);
-        DrawText(0, 32, notification_message);
-    } else if (chatai::network::NetworkManager::IsProvisioningActive()) {
-        DrawText(0, 26,
-            chatai::network::NetworkManager::HasSavedCredentials()
-                ? "Mất kết nối mạng" : "Chưa có Wi-Fi");
-        DrawText(8, 44, "Mở 192.168.4.1");
-    } else if (!chatai::network::NetworkManager::IsConnected()) {
-        DrawText(0, 30, "Kết nối Wi-Fi");
-    } else if (!chatai::network::NetworkManager::IsInternetAvailable()) {
-        DrawText(8, 30, "Kiểm tra Internet");
-    } else if (!chatai::settings::HasGeminiApiKey()) {
-        DrawText(0, 26, "Thiếu Gemini Key");
-        DrawText(8, 44, "Mở chatai.local");
-    } else if (!g_audio_ready.load()) {
-        DrawText(8, 30, "Lỗi âm thanh");
-    } else if (chatai::gemini::HasError()) {
-        DrawText(8, 30, "Lỗi Gemini");
-    } else if (!chatai::gemini::IsReady()) {
-        DrawText(8, 30, "Kết nối Gemini");
-    } else if (chatai::gemini::IsSpeaking()) {
-        DrawText(8, 30, "Đang trả lời");
-    } else if (chatai::gemini::IsListening()) {
-        DrawText(8, 30, "Đang nghe");
-    } else {
-        DrawText(0, 30, "Gemini sẵn sàng");
-    }
-
-    if (chatai::network::NetworkManager::IsConnected()) {
-        const std::string ip = chatai::network::NetworkManager::GetIpAddress();
-        DrawText(0, 42, "IP:");
-        DrawText(0, 52, ip.empty() ? "Đang nhận IP" : ip);
-    }
+    DrawText(g_footer_x, kFooterY, g_footer);
 
     const esp_err_t result = FlushFrame();
     if (result != ESP_OK) {
@@ -174,7 +176,7 @@ void RenderStatus() {
 void DisplayTask(void*) {
     while (true) {
         RenderStatus();
-        vTaskDelay(pdMS_TO_TICKS(250));
+        vTaskDelay(pdMS_TO_TICKS(60));
     }
 }
 }  // namespace
@@ -202,7 +204,6 @@ esp_err_t Initialize() {
     result = i2c_master_bus_add_device(g_bus, &device_config, &g_display);
     if (result != ESP_OK) return result;
 
-    // The current board configuration uses the SSD1306 command sequence.
     const uint8_t initialization[] = {
         0x00, 0xAE, 0xD5, 0x80, 0xA8, 0x3F, 0xD3, 0x00,
         0x40, 0x8D, 0x14, 0x20, 0x02, 0xA1, 0xC8, 0xDA,
@@ -211,13 +212,14 @@ esp_err_t Initialize() {
     result = i2c_master_transmit(g_display, initialization, sizeof(initialization), 250);
     if (result != ESP_OK) return result;
 
-    g_boot_screen_until = xTaskGetTickCount() + kBootLogoDuration;
     g_initialized = true;
+    g_last_scroll_tick = xTaskGetTickCount();
     if (xTaskCreate(DisplayTask, "chatai_oled", 4096, nullptr, 3, nullptr) != pdPASS) {
         g_initialized = false;
         return ESP_ERR_NO_MEM;
     }
-    ESP_LOGI(kTag, "Vietnamese OLED initialized on SDA=%d SCL=%d", kSdaPin, kSclPin);
+    ESP_LOGI(kTag, "Real-time OLED status initialized on SDA=%d SCL=%d",
+             kSdaPin, kSclPin);
     return ESP_OK;
 }
 
@@ -225,13 +227,11 @@ void SetAudioReady(bool ready) {
     g_audio_ready.store(ready);
 }
 
+// Notifications no longer replace the real-time device-state screen.
 void Notify(const char* title, const char* message, uint32_t duration_ms) {
-    std::lock_guard<std::mutex> lock(g_notification_mutex);
-    std::snprintf(g_notification_title, sizeof(g_notification_title), "%s",
-                  title != nullptr ? title : "ChatAI");
-    std::snprintf(g_notification_message, sizeof(g_notification_message), "%s",
-                  message != nullptr ? message : "");
-    g_notification_until = xTaskGetTickCount() + pdMS_TO_TICKS(duration_ms);
+    (void)title;
+    (void)message;
+    (void)duration_ms;
 }
 
 }  // namespace chatai::display
