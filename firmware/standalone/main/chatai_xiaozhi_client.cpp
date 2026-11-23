@@ -1326,5 +1326,6 @@ void SetChatEnabled(bool enabled) { g_client.SetChatEnabled(enabled); }
 bool IsChatEnabled() { return g_client.IsChatEnabled(); }
 void SetPushToTalk(bool pressed) { g_client.SetPushToTalk(pressed); }
 bool IsListening() { return g_client.IsListening(); }
+RuntimeState GetRuntimeState() { return g_client.GetRuntimeState(); }
 
 }  // namespace chatai::xiaozhi
