@@ -2,7 +2,6 @@
 #include "web_admin.h"
 #include "display_manager.h"
 #include "diagnostic_manager.h"
-#include "gemini_live_client.h"
 
 #include <atomic>
 #include <cerrno>
@@ -184,8 +183,6 @@ void InternetCheckTask(void*) {
                     g_wifi_setup_state.store(3);
                     chatai::diagnostics::Add("WIFI", "OK", "Credentials saved after Internet verification");
                     chatai::display::Notify("WI-FI", "Da co Internet");
-                    chatai::gemini::QueueNotificationSound(
-                        chatai::gemini::NotificationSound::kSuccess);
                 } else {
                     ESP_LOGE(kTag, "Could not save verified Wi-Fi credentials: %s",
                              esp_err_to_name(save_result));
