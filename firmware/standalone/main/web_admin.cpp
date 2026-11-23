@@ -851,7 +851,7 @@ removeButton.addEventListener("click", async () => {
   resultText.textContent = "Đang xóa API Key...";
   try {
     const data = await sendKeyRequest("DELETE");
-    resultText.textContent = data.message || "Đã xóa Gemini API Key. Gemini Live hiện đang bị tắt.";
+    resultText.textContent = data.message || "Đã xóa API Key khỏi thiết bị; Gemini Live hiện đang bị tắt trong firmware. Gemini Live hiện đang bị tắt.";
     await refreshStatus();
   } catch (error) {
     resultText.textContent = error.message;
@@ -1088,7 +1088,7 @@ esp_err_t GeminiVoicePostHandler(httpd_req_t* request) {
     const esp_err_t result = chatai::settings::SaveGeminiVoice(voice);
     if (result != ESP_OK) return SendError(request, "500 Internal Server Error", "Không thể lưu giọng nói vào NVS");
     chatai::display::Notify("WEB ADMIN", "Đã lưu cấu hình");
-    return SendJson(request, "200 OK", "{\"message\":\"Đã lưu giọng nói. Phiên Gemini Live mới sẽ sử dụng lựa chọn này.\"}");
+    return SendJson(request, "200 OK", "{\"message\":\"Đã lưu cấu hình giọng nói; Gemini Live hiện đang bị tắt trong firmware.\"}");
 }
 
 esp_err_t GeminiPromptPostHandler(httpd_req_t* request) {
@@ -1190,7 +1190,7 @@ esp_err_t GeminiKeyPostHandler(httpd_req_t* request) {
         return SendError(request, "500 Internal Server Error", "Không thể lưu API Key vào NVS");
     }
     chatai::display::Notify("WEB ADMIN", "Đã lưu API Key");
-    return SendJson(request, "200 OK", "{\"message\":\"Đã lưu Gemini API Key.\"}");
+    return SendJson(request, "200 OK", "{\"message\":\"Đã lưu API Key vào thiết bị; Gemini Live hiện đang bị tắt trong firmware.\"}");
 }
 
 esp_err_t AudioVolumePostHandler(httpd_req_t* request) {
