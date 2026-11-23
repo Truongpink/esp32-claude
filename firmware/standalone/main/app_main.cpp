@@ -13,7 +13,6 @@
 #include "network_manager.h"
 #include "display_manager.h"
 #include "audio_manager.h"
-#include "gemini_live_client.h"
 #include "gemini_settings.h"
 #include "firmware_info.h"
 #include "button_manager.h"
@@ -204,28 +203,11 @@ extern "C" void app_main(void) {
         ESP_LOGW(kTag, "Hardware button initialization failed: %s", esp_err_to_name(buttons_result));
     }
 
-    const esp_err_t gemini_result = chatai::gemini::Initialize();
-    if (gemini_result != ESP_OK) {
-        ESP_LOGE(kTag, "Gemini Live initialization failed: %s",
-                 esp_err_to_name(gemini_result));
-        RestartIfOtaImageIsPending();
-        return;
-    }
-
-    // Standalone ChatAI uses Gemini Live as its only voice client.
-    // Keep the legacy Xiaozhi AudioService/AFE pipeline inactive to avoid
-    // competing microphone and speaker ownership.
-    chatai::diagnostics::Add("VOICE_CLIENT", "READY",
-                             "Gemini Live only; legacy Xiaozhi transport disabled");
-
-    if (ota_rollback_detected) {
-        chatai::gemini::QueueNotificationSound(chatai::gemini::NotificationSound::kRollback);
-    } else if (ota_image_confirmed) {
-        chatai::gemini::QueueNotificationSound(chatai::gemini::NotificationSound::kFirmwareUpdated);
-    } else {
-        chatai::gemini::QueueNotificationSound(chatai::gemini::NotificationSound::kSuccess);
-    }
+    // Voice isolation test: do not initialize Gemini or Xiaozhi.
+    // No voice worker, WebSocket, reconnect loop, or voice audio ownership starts.
+    chatai::diagnostics::Add("VOICE_CLIENT", "DISABLED",
+                             "Gemini Live and Xiaozhi voice clients disabled");
 
     ESP_LOGI(kTag, "ESP-IDF platform, native Wi-Fi and OLED startup completed");
-    ESP_LOGI(kTag, "Gemini Live standalone mode initialized");
+    ESP_LOGW(kTag, "All voice clients disabled for hardware isolation test");
 }
