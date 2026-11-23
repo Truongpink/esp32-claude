@@ -7,7 +7,6 @@
 #include "chatai_xiaozhi_ota.h"
 #include "diagnostic_manager.h"
 #include "display_manager.h"
-#include "gemini_live_client.h"
 #include "network_manager.h"
 
 #include <algorithm>
@@ -405,22 +404,7 @@ private:
         cJSON_Delete(root);
     }
 
-    void SuspendGeminiAudio() {
-        if (!gemini_suspended_.exchange(true)) {
-            gemini_previous_chat_enabled_ = chatai::gemini::IsChatEnabled();
-        }
-        chatai::gemini::SetChatEnabled(false);
-        chatai::gemini::SetPushToTalk(false);
-        if (chatai::gemini::IsSpeaking()) chatai::gemini::AbortSpeaking();
-    }
-
-    void RestoreGeminiAudio() {
-        if (gemini_suspended_.exchange(false)) {
-            chatai::gemini::SetChatEnabled(gemini_previous_chat_enabled_);
-        }
-    }
-
-    bool WaitForGeminiAudioRelease() {
+    bool WaitForAudioIdle() {
         for (int attempt = 0; attempt < 40; ++attempt) {
             if (!chatai::audio::IsMicrophoneEnabled() &&
                 !chatai::audio::IsSpeakerEnabled()) return true;
@@ -534,7 +518,6 @@ private:
             remote_sequence_ = 0;
         }
 
-        SuspendGeminiAudio();
         if (!WaitForGeminiAudioRelease()) return ESP_ERR_TIMEOUT;
 
         esp_err_t result = audio_.Start();
@@ -926,7 +909,6 @@ private:
         udp_rx_task_ = nullptr;
         udp_tx_task_ = nullptr;
         ReleaseUdpResources();
-        RestoreGeminiAudio();
     }
 
     void ReleaseUdpResources() {
@@ -969,8 +951,6 @@ private:
     std::atomic<bool> push_to_talk_{false};
     std::atomic<bool> last_listening_{false};
     std::atomic<bool> tts_active_{false};
-    std::atomic<bool> gemini_suspended_{false};
-    bool gemini_previous_chat_enabled_ = false;
     std::mutex channel_mutex_;
     std::mutex listening_mutex_;
     std::mutex hello_mutex_;
