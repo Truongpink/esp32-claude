@@ -1,6 +1,7 @@
 #include "chatai_xiaozhi_client.h"
 
 #include "chatai_xiaozhi_audio_runtime.h"
+#include "chatai_xiaozhi_notify_player.h"
 #include "chatai_xiaozhi_mqtt.h"
 #include "chatai_xiaozhi_websocket.h"
 #include "audio_manager.h"
@@ -106,7 +107,12 @@ bool ReadNegotiatedAudioParams(const cJSON* root, uint32_t* sample_rate,
 
 class XiaozhiClient final {
 public:
+    XiaozhiClient() : notify_player_(audio_) {}
+
     esp_err_t Initialize() {
+        audio_.SetPlaybackCallbacks(
+            [this](uint32_t id, uint32_t position) { notify_player_.OnPlaybackProgress(id, position); },
+            [this]() { notify_player_.OnPlaybackDrained(); });
         if (initialized_.load()) return ESP_OK;
         events_ = xEventGroupCreate();
         if (events_ == nullptr) return ESP_ERR_NO_MEM;
@@ -139,7 +145,7 @@ public:
                 "reason=session_not_ready");
             return false;
         }
-        if (tts_active_.load() || IsListening()) {
+        if (tts_active_.load() || IsListening() || notify_player_.IsBusy()) {
             chatai::diagnostics::Add("XIAOZHI_PTT", "REJECTED",
                 "reason=previous_turn_or_tts_active");
             return false;
@@ -157,6 +163,7 @@ public:
     }
 
     void SetChatEnabled(bool enabled) {
+        if (enabled && notify_player_.IsBusy()) return;
         chat_enabled_.store(enabled);
         UpdateListeningState();
     }
@@ -164,6 +171,7 @@ public:
     bool IsChatEnabled() const { return chat_enabled_.load(); }
 
     void SetPushToTalk(bool pressed) {
+        if (pressed && notify_player_.IsBusy()) return;
         push_to_talk_.store(pressed);
         UpdateListeningState();
     }
@@ -444,6 +452,8 @@ private:
                     if (finish_one_shot) UpdateListeningState();
                 }
             }
+        } else if (type == "notify") {
+            HandleNotify(root);
         } else if (type == "error") {
             std::string message;
             if (!ReadString(root, "message", &message)) {
@@ -462,6 +472,58 @@ private:
             }
         }
         cJSON_Delete(root);
+    }
+
+    void HandleNotify(const cJSON* root) {
+        if (!session_ready_.load() || tts_active_.load() || IsListening() ||
+            notify_player_.IsBusy()) {
+            chatai::diagnostics::Add("XIAOZHI_NOTIFY", "IGNORED", "device_not_idle_or_busy");
+            return;
+        }
+        std::string audio_url;
+        if (!ReadString(root, "audio_url", &audio_url)) {
+            chatai::diagnostics::Add("XIAOZHI_NOTIFY", "REJECTED", "missing_audio_url");
+            return;
+        }
+        std::vector<NotifySubtitle> subtitles;
+        const cJSON* items = cJSON_GetObjectItemCaseSensitive(root, "subtitles");
+        if (cJSON_IsArray(items)) {
+            const int count = std::min(cJSON_GetArraySize(items), 32);
+            for (int i = 0; i < count; ++i) {
+                const cJSON* item = cJSON_GetArrayItem(items, i);
+                const cJSON* start = cJSON_GetObjectItemCaseSensitive(item, "start_ms");
+                const cJSON* text = cJSON_GetObjectItemCaseSensitive(item, "text");
+                if (!cJSON_IsObject(item) || !cJSON_IsNumber(start) ||
+                    start->valuedouble < 0 || start->valuedouble > UINT32_MAX ||
+                    !cJSON_IsString(text) || text->valuestring == nullptr ||
+                    text->valuestring[0] == '\0') continue;
+                NotifySubtitle subtitle;
+                subtitle.start_ms = static_cast<uint32_t>(start->valuedouble);
+                subtitle.text.assign(text->valuestring,
+                    std::min<size_t>(std::strlen(text->valuestring), 256));
+                subtitles.push_back(std::move(subtitle));
+            }
+        }
+        uint32_t id = ++next_notification_id_;
+        if (id == 0) id = ++next_notification_id_;
+        const bool started = notify_player_.Start(
+            std::move(audio_url), std::move(subtitles), id,
+            [this](uint32_t, const std::string& text) {
+                chatai::display::Notify("XIAOZHI", text.c_str(), 4000);
+            },
+            [this](uint32_t, bool success) {
+                chatai::diagnostics::Add("XIAOZHI_NOTIFY", success ? "PLAYED" : "FAILED",
+                    success ? "notification_stream_playback_complete" : "notification_stream_failed");
+                if (!success) chatai::display::Notify("XIAOZHI", "Lỗi phát thông báo", 5000);
+            });
+        if (started) {
+            chatai::diagnostics::Add("XIAOZHI_NOTIFY", "STARTED",
+                "streaming_notification_without_microphone_uplink");
+            chatai::display::Notify("XIAOZHI", "Thông báo từ Xiaozhi", 2500);
+        } else {
+            chatai::diagnostics::Add("XIAOZHI_NOTIFY", "REJECTED",
+                "invalid_url_or_worker_unavailable");
+        }
     }
 
     bool WaitForAudioIdle() {
@@ -984,6 +1046,7 @@ private:
     }
 
     void StopAudioChannel() {
+        notify_player_.Stop();
         SendGoodbye();
         {
             std::lock_guard<std::mutex> state_lock(listening_mutex_);
@@ -1032,6 +1095,8 @@ private:
     }
 
     chatai::audio::XiaozhiAudioRuntime audio_;
+    NotifyPlayer notify_player_;
+    std::atomic<uint32_t> next_notification_id_{0};
     MqttTransport mqtt_;
     WebSocketTransport websocket_;
     Transport active_transport_ = Transport::kNone;
