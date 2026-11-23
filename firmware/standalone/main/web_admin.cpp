@@ -17,7 +17,6 @@
 #include <freertos/task.h>
 
 #include "gemini_settings.h"
-#include "gemini_live_client.h"
 #include "display_manager.h"
 #include "network_manager.h"
 #include "firmware_info.h"
@@ -840,7 +839,7 @@ saveButton.addEventListener("click", async () => {
   try {
     const data = await sendKeyRequest("POST", {api_key:apiKey});
     keyInput.value = "";
-    resultText.textContent = data.message || "Đã lưu Gemini API Key.";
+    resultText.textContent = data.message || "Đã lưu API Key vào thiết bị; Gemini Live hiện đang bị tắt.";
     await refreshStatus();
   } catch (error) {
     resultText.textContent = error.message;
@@ -852,7 +851,7 @@ removeButton.addEventListener("click", async () => {
   resultText.textContent = "Đang xóa API Key...";
   try {
     const data = await sendKeyRequest("DELETE");
-    resultText.textContent = data.message || "Đã xóa Gemini API Key.";
+    resultText.textContent = data.message || "Đã xóa Gemini API Key. Gemini Live hiện đang bị tắt.";
     await refreshStatus();
   } catch (error) {
     resultText.textContent = error.message;
@@ -883,7 +882,6 @@ esp_err_t SendJson(httpd_req_t* request, const char* status, const char* json) {
 }
 
 esp_err_t SendError(httpd_req_t* request, const char* status, const char* message) {
-    chatai::gemini::QueueNotificationSound(chatai::gemini::NotificationSound::kWarning);
     const std::string body = std::string("{\"error\":\"") + message + "\"}";
     return SendJson(request, status, body.c_str());
 }
@@ -1008,9 +1006,10 @@ esp_err_t DeviceStatusHandler(httpd_req_t* request) {
     cJSON_AddBoolToObject(root, "wifi_connected", wifi);
     cJSON_AddBoolToObject(root, "internet_available", chatai::network::NetworkManager::IsInternetAvailable());
     cJSON_AddBoolToObject(root, "key_configured", chatai::settings::HasGeminiApiKey());
-    cJSON_AddBoolToObject(root, "gemini_ready", chatai::gemini::IsReady());
-    cJSON_AddBoolToObject(root, "gemini_error", chatai::gemini::HasError());
-    cJSON_AddBoolToObject(root, "gemini_tls_fatal", chatai::gemini::IsTlsFatal());
+    cJSON_AddBoolToObject(root, "gemini_enabled", false);
+    cJSON_AddBoolToObject(root, "gemini_ready", false);
+    cJSON_AddBoolToObject(root, "gemini_error", false);
+    cJSON_AddBoolToObject(root, "gemini_tls_fatal", false);
     const std::string ssid = chatai::network::NetworkManager::GetSsid();
     const std::string ip = chatai::network::NetworkManager::GetIpAddress();
     const std::string gateway = chatai::network::NetworkManager::GetGatewayAddress();
@@ -1088,9 +1087,7 @@ esp_err_t GeminiVoicePostHandler(httpd_req_t* request) {
     if (!chatai::settings::IsSupportedGeminiVoice(voice)) return SendError(request, "400 Bad Request", "Giọng nói Gemini Live không hợp lệ");
     const esp_err_t result = chatai::settings::SaveGeminiVoice(voice);
     if (result != ESP_OK) return SendError(request, "500 Internal Server Error", "Không thể lưu giọng nói vào NVS");
-    chatai::display::Notify("GEMINI", "Da luu giong noi");
-    chatai::gemini::QueueNotificationSound(chatai::gemini::NotificationSound::kSuccess);
-    if (chatai::settings::HasGeminiApiKey()) chatai::gemini::RequestReconnect();
+    chatai::display::Notify("WEB ADMIN", "Đã lưu cấu hình");
     return SendJson(request, "200 OK", "{\"message\":\"Đã lưu giọng nói. Phiên Gemini Live mới sẽ sử dụng lựa chọn này.\"}");
 }
 
@@ -1152,11 +1149,9 @@ esp_err_t GeminiPromptPostHandler(httpd_req_t* request) {
         return SendError(request, "500 Internal Server Error",
                          "Không thể ghi đầy đủ System Prompt vào phân vùng assets.");
     }
-    chatai::display::Notify("GEMINI", "Da luu System Prompt");
-    chatai::gemini::QueueNotificationSound(chatai::gemini::NotificationSound::kSuccess);
-    if (chatai::settings::HasGeminiApiKey()) chatai::gemini::RequestReconnect();
+    chatai::display::Notify("WEB ADMIN", "Đã lưu cấu hình");
     return SendJson(request, "200 OK",
-        R"({"message":"Đã lưu System Prompt. Phiên Gemini Live mới sẽ áp dụng."})");
+        R"({"message":"Đã lưu System Prompt. Gemini Live hiện đang bị tắt trong firmware."})");
 }
 
 esp_err_t GeminiStatusHandler(httpd_req_t* request) {
@@ -1194,9 +1189,7 @@ esp_err_t GeminiKeyPostHandler(httpd_req_t* request) {
     if (result != ESP_OK) {
         return SendError(request, "500 Internal Server Error", "Không thể lưu API Key vào NVS");
     }
-    chatai::gemini::RequestReconnect();
     chatai::display::Notify("WEB ADMIN", "Đã lưu API Key");
-    chatai::gemini::QueueNotificationSound(chatai::gemini::NotificationSound::kSuccess);
     return SendJson(request, "200 OK", "{\"message\":\"Đã lưu Gemini API Key.\"}");
 }
 
@@ -1219,7 +1212,6 @@ esp_err_t AudioVolumePostHandler(httpd_req_t* request) {
     const esp_err_t result = chatai::audio::SaveOutputVolume(value);
     if (result != ESP_OK) return SendError(request, "500 Internal Server Error", "Không thể lưu âm lượng vào NVS");
     chatai::display::Notify("ÂM THANH", "Đã lưu âm lượng");
-    chatai::gemini::QueueNotificationSound(chatai::gemini::NotificationSound::kSuccess);
     return SendJson(request, "200 OK", "{\"message\":\"Đã lưu âm lượng loa.\"}");
 }
 
@@ -1254,12 +1246,8 @@ esp_err_t GeminiReconnectHandler(httpd_req_t* request) {
     if (!IsAuthorizedMutation(request)) {
         return SendError(request, "403 Forbidden", "Yêu cầu không hợp lệ");
     }
-    if (!chatai::settings::HasGeminiApiKey()) {
-        return SendError(request, "400 Bad Request", "Chưa cấu hình Gemini API Key");
-    }
-    chatai::gemini::RequestReconnect();
-    chatai::display::Notify("GEMINI", "Dang thu ket noi lai");
-    return SendJson(request, "200 OK", "{\"message\":\"Đã yêu cầu Gemini kết nối lại.\"}");
+    return SendError(request, "503 Service Unavailable",
+                     "Gemini Live đang bị tắt trong firmware kiểm tra phần cứng.");
 }
 
 esp_err_t DeviceRestartHandler(httpd_req_t* request) {
@@ -1426,9 +1414,7 @@ esp_err_t GeminiKeyDeleteHandler(httpd_req_t* request) {
     if (result != ESP_OK) {
         return SendError(request, "500 Internal Server Error", "Không thể xóa API Key khỏi NVS");
     }
-    chatai::gemini::RequestReconnect();
     chatai::display::Notify("WEB ADMIN", "Đã xóa API Key");
-    chatai::gemini::QueueNotificationSound(chatai::gemini::NotificationSound::kSuccess);
     return SendJson(request, "200 OK", "{\"message\":\"Đã xóa Gemini API Key.\"}");
 }
 }  // namespace
