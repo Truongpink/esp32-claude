@@ -423,6 +423,12 @@ private:
         } else if (type == "tts") {
             std::string state;
             if (ReadString(root, "state", &state)) {
+                if (state == "start" && notify_player_.IsBusy()) {
+                    notify_player_.Stop();
+                    audio_.ResetNotificationPlayback();
+                    chatai::diagnostics::Add("XIAOZHI_NOTIFY", "CANCELLED",
+                        "server_voice_response_preempted_idle_notification");
+                }
                 bool finish_one_shot = false;
                 {
                     std::lock_guard<std::mutex> state_lock(listening_mutex_);
