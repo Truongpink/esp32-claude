@@ -377,7 +377,7 @@ esp_err_t ReadMicrophonePcm16(int16_t* destination, size_t requested_samples,
                 static_cast<double>(s_mic_level_sum_squares) / s_mic_level_samples);
             const double rms_dbfs = 20.0 * std::log10(std::max(rms, 1.0) / 32768.0);
             const double peak_dbfs =
-                20.0 * std::log10(std::max(s_mic_level_peak, 1) / 32768.0);
+                20.0 * std::log10(std::max<int32_t>(s_mic_level_peak, 1) / 32768.0);
             char level_detail[160]{};
             std::snprintf(level_detail, sizeof(level_detail),
                 "samples=%lu rms=%.0f rms_dbfs=%.1f peak=%ld peak_dbfs=%.1f",
