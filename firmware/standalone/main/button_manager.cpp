@@ -120,6 +120,17 @@ void ButtonTask(void*) {
                 const bool speaking_before = chatai::gemini::IsSpeaking();
                 const bool chat_before = chatai::gemini::IsChatEnabled();
                 const bool gemini_ready = chatai::gemini::IsReady();
+                char boot_start_detail[160]{};
+                std::snprintf(boot_start_detail, sizeof(boot_start_detail),
+                    "uptime_ms=%llu phase=before_dispatch provisioning=%d speaking=%d chat_enabled=%d gemini_ready=%d button_stack_watermark=%u",
+                    static_cast<unsigned long long>(esp_timer_get_time() / 1000),
+                    provisioning ? 1 : 0, speaking_before ? 1 : 0,
+                    chat_before ? 1 : 0, gemini_ready ? 1 : 0,
+                    static_cast<unsigned>(uxTaskGetStackHighWaterMark(nullptr)));
+                chatai::diagnostics::SetCrashContext("BOOT_ACTION_BEGIN", boot_start_detail);
+                chatai::diagnostics::SetBootContext("BOOT_ACTION_BEGIN", boot_start_detail);
+                chatai::diagnostics::Add("BOOT_ACTION", "BEGIN", boot_start_detail);
+
                 const char* action = "NONE";
                 if (provisioning) {
                     action = "PROVISIONING_NOTICE";
