@@ -14,6 +14,7 @@
 #include "audio_manager.h"
 #include "display_manager.h"
 #include "network_manager.h"
+#include "chatai_xiaozhi_client.h"
 #include "diagnostic_manager.h"
 
 namespace chatai::buttons {
@@ -125,19 +126,29 @@ void ButtonTask(void*) {
                 chatai::diagnostics::SetBootContext("BOOT_ACTION_BEGIN", boot_start_detail);
                 chatai::diagnostics::Add("BOOT_ACTION", "BEGIN", boot_start_detail);
 
-                const char* action = provisioning ? "PROVISIONING_NOTICE" : "VOICE_DISABLED_NOTICE";
+                const bool chat_enabled = !provisioning &&
+                    !chatai::xiaozhi::IsChatEnabled();
                 if (provisioning) {
                     chatai::display::Notify("WI-FI", "Cấu hình qua Web Admin");
                     ESP_LOGI(kTag, "BOOT clicked while Wi-Fi provisioning is active");
                 } else {
-                    chatai::display::Notify("CHAT AI", "Voice đang tắt");
-                    ESP_LOGI(kTag, "BOOT ignored: all voice clients are disabled");
+                    chatai::xiaozhi::SetChatEnabled(chat_enabled);
+                    const char* message = !chatai::xiaozhi::IsReady()
+                        ? "Đang kết nối Xiaozhi"
+                        : (chat_enabled ? "Đã bật nghe liên tục" : "Đã tắt nghe");
+                    chatai::display::Notify("XIAOZHI", message);
+                    ESP_LOGI(kTag, "Xiaozhi continuous listening %s",
+                             chat_enabled ? "enabled" : "disabled");
                 }
+                const char* action = provisioning ? "PROVISIONING_NOTICE" :
+                    (chat_enabled ? "ENABLE_XIAOZHI_LISTENING" : "DISABLE_XIAOZHI_LISTENING");
                 char boot_detail[160]{};
                 std::snprintf(boot_detail, sizeof(boot_detail),
-                    "uptime_ms=%llu action=%s provisioning=%d voice_clients=disabled",
+                    "uptime_ms=%llu action=%s provisioning=%d xiaozhi_ready=%d chat_enabled=%d",
                     static_cast<unsigned long long>(esp_timer_get_time() / 1000),
-                    action, provisioning ? 1 : 0);
+                    action, provisioning ? 1 : 0,
+                    chatai::xiaozhi::IsReady() ? 1 : 0,
+                    chatai::xiaozhi::IsChatEnabled() ? 1 : 0);
                 chatai::diagnostics::SetBootContext("BOOT_ACTION", boot_detail);
                 chatai::diagnostics::SetCrashContext("BOOT_ACTION_DONE", boot_detail);
                 chatai::diagnostics::Add("BOOT_ACTION", "INFO", boot_detail);
@@ -146,8 +157,12 @@ void ButtonTask(void*) {
 
         if (UpdateButton(g_touch, now)) {
             ReportButtonTransition("PTT", g_touch);
-            chatai::display::Notify("CHAT AI",
-                g_touch.stable_pressed ? "Voice đang tắt" : "Voice đã tắt");
+            chatai::xiaozhi::SetPushToTalk(g_touch.stable_pressed);
+            const char* message = !chatai::xiaozhi::IsReady()
+                ? "Đang kết nối Xiaozhi"
+                : (g_touch.stable_pressed ? "Đang nghe" :
+                   (chatai::xiaozhi::IsChatEnabled() ? "Nghe liên tục" : "Đã ngừng nghe"));
+            chatai::display::Notify("XIAOZHI", message);
         }
 
         if (UpdateButton(g_volume_up, now)) {
