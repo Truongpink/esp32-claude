@@ -5,6 +5,7 @@
 #include <array>
 #include <atomic>
 #include <climits>
+#include <cmath>
 #include <cstdio>
 #include <chrono>
 #include <mutex>
@@ -40,6 +41,10 @@ std::atomic<bool> s_mic_enabled{false};
 std::atomic<bool> s_speaker_enabled{false};
 std::atomic<int> s_output_volume{100};
 std::atomic<bool> s_mic_raw_reported{false};
+uint64_t s_mic_level_sum_squares = 0;
+uint32_t s_mic_level_samples = 0;
+int32_t s_mic_level_peak = 0;
+int64_t s_mic_level_window_started_us = 0;
 std::mutex s_state_mutex;
 std::timed_mutex s_mic_io_mutex;
 std::mutex s_speaker_io_mutex;
@@ -351,10 +356,38 @@ esp_err_t ReadMicrophonePcm16(int16_t* destination, size_t requested_samples,
         }
         const int64_t conversion_started_us = esp_timer_get_time();
         for (size_t i = 0; i < received; ++i) {
-            // Match the upstream XH-S3E-AI Xiaozhi 32-bit I2S-to-PCM16 conversion.
+            // Preserve the current upstream-compatible I2S-to-PCM16 conversion.
             const int32_t value = raw_samples[i] >> 12;
-            destination[*samples_read + i] = static_cast<int16_t>(
+            const int16_t pcm = static_cast<int16_t>(
                 std::clamp<int32_t>(value, INT16_MIN, INT16_MAX));
+            destination[*samples_read + i] = pcm;
+            const int32_t magnitude = pcm < 0 ? -static_cast<int32_t>(pcm) : pcm;
+            s_mic_level_peak = std::max(s_mic_level_peak, magnitude);
+            s_mic_level_sum_squares +=
+                static_cast<uint64_t>(static_cast<int64_t>(pcm) * pcm);
+            ++s_mic_level_samples;
+        }
+        const int64_t level_now_us = esp_timer_get_time();
+        if (s_mic_level_window_started_us == 0) {
+            s_mic_level_window_started_us = level_now_us;
+        }
+        if (level_now_us - s_mic_level_window_started_us >= 2000000 &&
+            s_mic_level_samples > 0) {
+            const double rms = std::sqrt(
+                static_cast<double>(s_mic_level_sum_squares) / s_mic_level_samples);
+            const double rms_dbfs = 20.0 * std::log10(std::max(rms, 1.0) / 32768.0);
+            const double peak_dbfs =
+                20.0 * std::log10(std::max(s_mic_level_peak, 1) / 32768.0);
+            char level_detail[160]{};
+            std::snprintf(level_detail, sizeof(level_detail),
+                "samples=%lu rms=%.0f rms_dbfs=%.1f peak=%ld peak_dbfs=%.1f",
+                static_cast<unsigned long>(s_mic_level_samples), rms, rms_dbfs,
+                static_cast<long>(s_mic_level_peak), peak_dbfs);
+            chatai::diagnostics::Add("MIC_LEVEL", "PCM", level_detail);
+            s_mic_level_sum_squares = 0;
+            s_mic_level_samples = 0;
+            s_mic_level_peak = 0;
+            s_mic_level_window_started_us = level_now_us;
         }
         const uint64_t conversion_elapsed_us = static_cast<uint64_t>(
             std::max<int64_t>(0, esp_timer_get_time() - conversion_started_us));

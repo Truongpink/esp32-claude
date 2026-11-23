@@ -217,7 +217,6 @@ private:
     std::atomic<bool> service_stopped_{true};
     bool initialized_ = false;
     EventBits_t started_task_exit_bits_ = 0;
-    std::atomic<bool> audio_input_need_warmup_{false};
 
     esp_timer_handle_t audio_power_timer_ = nullptr;
     std::chrono::steady_clock::time_point last_input_time_;

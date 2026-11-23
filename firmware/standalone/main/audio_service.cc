@@ -293,11 +293,6 @@ void AudioService::AudioInputTask() {
             }
         }
 
-        if (audio_input_need_warmup_.exchange(false)) {
-            vTaskDelay(pdMS_TO_TICKS(120));
-            continue;
-        }
-
         /* Used for audio testing in NetworkConfiguring mode by clicking the BOOT button */
         if (bits & AS_EVENT_AUDIO_TESTING_RUNNING) {
             bool testing_queue_full = false;
@@ -749,7 +744,6 @@ bool AudioService::EnableVoiceProcessing(bool enable) {
             return false;
         }
         ResetDecoder();
-        audio_input_need_warmup_ = true;
         {
             std::lock_guard<std::mutex> lock(input_resampler_mutex_);
             if (input_resampler_ != nullptr) {

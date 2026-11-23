@@ -62,10 +62,10 @@ The board-neutral header must remain definition-compatible with the pinned upstr
 
 ## Current AFE feature availability on the ChatAI board
 
-- FD AFE voice processing and VAD are enabled. With no VAD model supplied, ESP-SR uses its WebRTC VAD fallback. ChatAI configures VAD mode 1 (higher speech-trigger probability than mode 0), a 64 ms minimum speech window, and WebRTC AGC (9 dB compression gain, -3 dBFS target). `MIC_VAD` diagnostics record speech/silence transitions and input level in dBFS; use these readings to assess actual microphone level before changing the I2S conversion or hardware gain.
+- FD AFE voice processing and VAD are enabled. With no VAD model supplied, ESP-SR uses its WebRTC VAD fallback. ChatAI configures VAD mode 2, a 64 ms minimum speech window, a 64 ms VAD delay, and WebRTC AGC (12 dB compression gain, -3 dBFS target). `MIC_VAD` records speech/silence transitions; `MIC_LEVEL` reports pre-AFE PCM RMS/peak levels every two seconds while capture is active. The fixed 120 ms delay before the first microphone read has been removed. The codec bridge does not expose hardware microphone gain, so do not claim a hardware preamp adjustment.
 - WakeNet is not active: the standalone partition table has no `model` partition and this repository does not ship an ESP-SR model image. `esp_srmodel_init("model")` therefore cannot load WakeNet models. Wake-word audio upload is also disabled.
 - Device AEC is not active: `ChatAIXiaozhiAudioCodec` exposes one microphone channel and declares no playback-reference channel. The current speaker output callback is not a calibrated, synchronized AFE reference path.
-- Noise suppression is disabled because no NSNet model is provisioned. WebRTC AGC is enabled with 9 dB compression gain and a -3 dBFS target; this is dynamic gain control, not a fixed microphone gain.
+- Noise suppression is disabled because no NSNet model is provisioned. WebRTC AGC is enabled with 12 dB compression gain and a -3 dBFS target; this is dynamic gain control, not a fixed microphone gain. PCM input level is measured by `MIC_LEVEL` diagnostics. The current codec bridge does not support hardware input-gain control.
 - Do not report WakeNet, AEC, or NS as operational until the required model assets and/or verified reference signal path are supplied. The existing assets partition and OTA layout must not be repurposed or changed without explicit approval.
 
 ## Validation status

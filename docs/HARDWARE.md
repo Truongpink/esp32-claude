@@ -69,7 +69,7 @@ These are the pins currently configured in ChatAI source. They are **not a verif
 - The actual microphone device type (I²S digital MEMS vs codec-fed I²S) is not established by the seller's product page. Do not infer it from the firmware's I²S RX configuration.
 - The actual amplifier IC, enable polarity and GPIO are not established by the seller's product page. GPIO 17 HIGH is only the current firmware setting.
 - The upstream Xiaozhi AudioService uses an AudioCodec abstraction, Opus encode/decode, optional resampling, FreeRTOS tasks/queues and an AFE engine on ESP32-S3. This architecture is a software reference, not evidence of the seller board's electrical design.
-- ChatAI's AFE input currently has one microphone channel and no synchronized playback-reference channel. Device AEC is therefore not operational. Noise suppression is disabled; WebRTC AGC is enabled with 9 dB compression gain and a -3 dBFS target. WakeNet is unavailable without the required ESP-SR model partition/assets; the current configuration uses WebRTC VAD fallback as documented in `XIAOZHI_INTEGRATION.md`.
+- ChatAI's AFE input currently has one microphone channel and no synchronized playback-reference channel. Device AEC is therefore not operational. Noise suppression is disabled; WebRTC AGC is enabled with 12 dB compression gain and a -3 dBFS target. VAD uses mode 2 with 64 ms minimum speech and 64 ms delay; PCM RMS/peak diagnostics are emitted as `MIC_LEVEL`. The current codec bridge has no hardware microphone-gain control. WakeNet is unavailable without the required ESP-SR model partition/assets; the current configuration uses WebRTC VAD fallback as documented in `XIAOZHI_INTEGRATION.md`.
 
 ## BOOT/PTT investigation constraints
 

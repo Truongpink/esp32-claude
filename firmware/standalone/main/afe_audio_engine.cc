@@ -107,14 +107,15 @@ bool AfeAudioEngine::Initialize(AudioCodec* codec, int frame_duration_ms,
     afe_config->aec_nlp_level = AEC_NLP_LEVEL_VERYAGGR;
     afe_config->ns_init = false;
     afe_config->vad_init = kUseAfeForVoiceProcessing;
-    // ESP-SR documents higher VAD modes as more likely to trigger on speech.
-    afe_config->vad_mode = VAD_MODE_1;
+    // Mode 2 is more responsive to quiet speech than the previous mode 1.
+    afe_config->vad_mode = VAD_MODE_2;
     afe_config->vad_min_speech_ms = 64;
     afe_config->vad_min_noise_ms = 100;
+    afe_config->vad_delay_ms = 64;
     // WebRTC AGC lifts quiet speech while compressing louder input.
     afe_config->agc_init = kUseAfeForVoiceProcessing;
     afe_config->agc_mode = AFE_AGC_MODE_WEBRTC;
-    afe_config->agc_compression_gain_db = 9;
+    afe_config->agc_compression_gain_db = 12;
     afe_config->agc_target_level_dbfs = 3;
     if (vad_model_name != nullptr) {
         afe_config->vad_model_name = vad_model_name;
@@ -181,7 +182,7 @@ bool AfeAudioEngine::Initialize(AudioCodec* codec, int frame_duration_ms,
         return false;
     }
     chatai::diagnostics::Add("AFE", "READY",
-        "vad_mode=1 min_speech_ms=64 agc=webrtc compression_gain_db=9 target=-3dBFS");
+        "vad_mode=2 min_speech_ms=64 vad_delay_ms=64 agc=webrtc compression_gain_db=12 target=-3dBFS");
 
     if (wake_detector_ == WakeDetector::kWakeNet) {
         afe_iface_->disable_wakenet(afe_data_);
