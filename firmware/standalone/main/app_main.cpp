@@ -19,7 +19,6 @@
 #include "button_manager.h"
 #include "diagnostic_manager.h"
 #include "status_led_manager.h"
-#include "chatai_xiaozhi_client.h"
 
 namespace {
 constexpr char kTag[] = "ChatAI";
@@ -213,13 +212,11 @@ extern "C" void app_main(void) {
         return;
     }
 
-    const esp_err_t xiaozhi_result = chatai::xiaozhi::Initialize();
-    if (xiaozhi_result != ESP_OK) {
-        ESP_LOGW(kTag, "Xiaozhi Chat Voice startup deferred: %s",
-                 esp_err_to_name(xiaozhi_result));
-    }
-
-
+    // Standalone ChatAI uses Gemini Live as its only voice client.
+    // Keep the legacy Xiaozhi AudioService/AFE pipeline inactive to avoid
+    // competing microphone and speaker ownership.
+    chatai::diagnostics::Add("VOICE_CLIENT", "READY",
+                             "Gemini Live only; legacy Xiaozhi transport disabled");
 
     if (ota_rollback_detected) {
         chatai::gemini::QueueNotificationSound(chatai::gemini::NotificationSound::kRollback);
