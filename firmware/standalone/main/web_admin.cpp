@@ -176,9 +176,16 @@ select,input[type=text]{width:100%;min-width:0;padding:13px;border:1px solid #ff
 <div class="card-head"><div class="card-icon" aria-hidden="true">♫</div><div><h2 id="audioTitle">Âm thanh</h2><p class="hint">Điều chỉnh âm lượng loa Xiaozhi</p></div></div>
 <label for="speakerVolume">Âm lượng loa: <output id="speakerVolumeValue">100%</output></label>
 <input id="speakerVolume" type="range" min="0" max="100" step="1" value="100" style="width:100%;accent-color:#9b5cff">
-<p class="hint">Thiết lập được lưu riêng vào NVS và tự áp dụng sau khi lưu. Mic Gain chưa được cung cấp vì firmware chưa có tầng điều chỉnh gain microphone.</p>
+<p class="hint">Thiết lập được lưu riêng vào NVS và tự áp dụng sau khi lưu.</p>
 <div class="actions"><button id="saveSpeakerVolume">Lưu âm lượng</button></div>
 <p id="audioResult" class="hint" role="status" aria-live="polite"></p>
+<hr>
+<h2>Độ nhạy Microphone</h2>
+<p class="hint">Điều chỉnh gain số từ -6 đến +6 dB trước AFE/AGC. Nếu tín hiệu đã chạm 0 dBFS, hãy giảm gain; theo dõi log MIC_LEVEL để kiểm tra clipping.</p>
+<label for="micGain">Độ nhạy microphone: <output id="micGainValue">0 dB</output></label>
+<input id="micGain" type="range" min="-6" max="6" step="1" value="0" style="width:100%;accent-color:#55d6c2">
+<div class="actions"><button id="saveMicGain">Lưu độ nhạy</button><button id="resetMicGain" class="secondary">Khôi phục mặc định</button></div>
+<p id="micGainResult" class="hint" role="status" aria-live="polite"></p>
 </section>
 <section class="card tab-panel" data-panel="ota" role="tabpanel" aria-labelledby="otaTitle" hidden>
 <div class="card-head"><div class="card-icon" aria-hidden="true">⇧</div><div><h2 id="otaTitle">Cập nhật Firmware OTA</h2><p class="hint">Cập nhật trực tiếp từ điện thoại, không cần cáp USB</p></div></div>
@@ -219,6 +226,15 @@ const speakerVolumeInput = document.getElementById("speakerVolume");
 const speakerVolumeValue = document.getElementById("speakerVolumeValue");
 const saveSpeakerVolumeButton = document.getElementById("saveSpeakerVolume");
 const audioResult = document.getElementById("audioResult");
+const micGainInput = document.getElementById("micGain");
+const micGainValue = document.getElementById("micGainValue");
+const saveMicGainButton = document.getElementById("saveMicGain");
+const resetMicGainButton = document.getElementById("resetMicGain");
+const micGainResult = document.getElementById("micGainResult");
+let speakerVolumeDirty = false;
+let speakerVolumeSaving = false;
+let micGainDirty = false;
+let micGainSaving = false;
 const voiceSelect = document.getElementById("geminiVoice");
 const voiceResult = document.getElementById("voiceResult");
 const promptInput = document.getElementById("systemPrompt");
@@ -250,23 +266,64 @@ document.querySelectorAll("[data-tab]").forEach(button => {
 });
 
 speakerVolumeInput.addEventListener("input", () => {
+  speakerVolumeDirty = true;
   speakerVolumeValue.textContent = speakerVolumeInput.value + "%";
 });
 saveSpeakerVolumeButton.addEventListener("click", async () => {
+  const requestedVolume = Number(speakerVolumeInput.value);
+  speakerVolumeSaving = true;
   saveSpeakerVolumeButton.disabled = true;
   audioResult.textContent = "Đang lưu âm lượng...";
   try {
     const response = await fetch("/api/audio/volume", {
       method:"POST", cache:"no-store",
       headers:{"Content-Type":"application/json","X-ChatAI-CSRF":csrfToken},
-      body:JSON.stringify({volume:Number(speakerVolumeInput.value)})
+      body:JSON.stringify({volume:requestedVolume})
     });
     const data = await response.json().catch(() => ({}));
     if (!response.ok) throw new Error(data.error || ("Không lưu được âm lượng (HTTP " + response.status + ")"));
+    speakerVolumeInput.value = String(requestedVolume);
+    speakerVolumeValue.textContent = requestedVolume + "%";
+    speakerVolumeDirty = false;
     audioResult.textContent = data.message || "Đã lưu âm lượng loa.";
   } catch (error) {
     audioResult.textContent = error.message;
-  } finally { saveSpeakerVolumeButton.disabled = false; }
+  } finally { speakerVolumeSaving = false; saveSpeakerVolumeButton.disabled = false; }
+});
+micGainInput.addEventListener("input", () => {
+  micGainDirty = true;
+  micGainValue.textContent = micGainInput.value + " dB";
+});
+async function saveMicGain() {
+  const requestedGain = Number(micGainInput.value);
+  micGainSaving = true;
+  saveMicGainButton.disabled = true;
+  resetMicGainButton.disabled = true;
+  micGainResult.textContent = "Đang lưu độ nhạy microphone...";
+  try {
+    const response = await fetch("/api/audio/mic-gain", {
+      method:"POST", cache:"no-store",
+      headers:{"Content-Type":"application/json","X-ChatAI-CSRF":csrfToken},
+      body:JSON.stringify({gain_db:requestedGain})
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(data.error || ("Không lưu được độ nhạy (HTTP " + response.status + ")"));
+    micGainDirty = false;
+    micGainResult.textContent = data.message || "Đã lưu độ nhạy microphone.";
+  } catch (error) {
+    micGainResult.textContent = error.message;
+  } finally {
+    micGainSaving = false;
+    saveMicGainButton.disabled = false;
+    resetMicGainButton.disabled = false;
+  }
+}
+saveMicGainButton.addEventListener("click", saveMicGain);
+resetMicGainButton.addEventListener("click", () => {
+  micGainInput.value = "0";
+  micGainValue.textContent = "0 dB";
+  micGainDirty = true;
+  saveMicGain();
 });
 
 async function scanAdminWifi() {
@@ -752,8 +809,14 @@ async function refreshDeviceStatus() {
     ? "Xiaozhi: Đã kết nối · Đang nghe"
     : "Xiaozhi: Đã kết nối server · Chưa bật nghe";
   else state = "Xiaozhi: Đang tìm server hoặc chờ ghép nối thiết bị";
-  speakerVolumeInput.value = String(Number(data.speaker_volume ?? 100));
-  speakerVolumeValue.textContent = speakerVolumeInput.value + "%";
+  if (!speakerVolumeDirty && !speakerVolumeSaving && document.activeElement !== speakerVolumeInput) {
+    speakerVolumeInput.value = String(Number(data.speaker_volume ?? 100));
+    speakerVolumeValue.textContent = speakerVolumeInput.value + "%";
+  }
+  if (!micGainDirty && !micGainSaving && document.activeElement !== micGainInput) {
+    micGainInput.value = String(Number(data.mic_gain_db ?? 0));
+    micGainValue.textContent = micGainInput.value + " dB";
+  }
   deviceStatus.textContent = state +
     (data.ip ? " · IP: " + data.ip : "") +
     (data.gateway ? " · Gateway: " + data.gateway : "");
@@ -1029,6 +1092,7 @@ esp_err_t DeviceStatusHandler(httpd_req_t* request) {
     cJSON_AddNumberToObject(root, "dns_probe_state", chatai::network::NetworkManager::GetDnsProbeState());
     cJSON_AddNumberToObject(root, "tcp443_probe_state", chatai::network::NetworkManager::GetTcp443ProbeState());
     cJSON_AddNumberToObject(root, "speaker_volume", chatai::audio::GetOutputVolume());
+    cJSON_AddNumberToObject(root, "mic_gain_db", chatai::audio::GetInputGainDb());
     cJSON_AddNumberToObject(root, "free_heap", esp_get_free_heap_size());
     cJSON_AddNumberToObject(root, "min_free_heap", esp_get_minimum_free_heap_size());
     cJSON_AddNumberToObject(root, "uptime_seconds", esp_timer_get_time() / 1000000);
@@ -1218,6 +1282,29 @@ esp_err_t AudioVolumePostHandler(httpd_req_t* request) {
     if (result != ESP_OK) return SendError(request, "500 Internal Server Error", "Không thể lưu âm lượng vào NVS");
     chatai::display::Notify("ÂM THANH", "Đã lưu âm lượng");
     return SendJson(request, "200 OK", "{\"message\":\"Đã lưu âm lượng loa.\"}");
+}
+
+esp_err_t MicGainPostHandler(httpd_req_t* request) {
+    if (!IsAuthorizedMutation(request)) {
+        return SendError(request, "403 Forbidden", "Yêu cầu không hợp lệ");
+    }
+    std::string body;
+    if (!ReadBody(request, body)) {
+        return SendError(request, "400 Bad Request", "Dữ liệu độ nhạy microphone không hợp lệ");
+    }
+    cJSON* root = cJSON_ParseWithLength(body.c_str(), body.size());
+    const cJSON* gain = cJSON_IsObject(root)
+        ? cJSON_GetObjectItemCaseSensitive(root, "gain_db") : nullptr;
+    const bool valid = cJSON_IsNumber(gain) && gain->valuedouble >= -6 &&
+        gain->valuedouble <= 6 && gain->valuedouble == gain->valueint;
+    const int value = valid ? gain->valueint : -99;
+    if (root != nullptr) cJSON_Delete(root);
+    if (!valid) return SendError(request, "400 Bad Request", "Độ nhạy phải là số nguyên từ -6 đến +6 dB");
+    const esp_err_t result = chatai::audio::SaveInputGainDb(value);
+    if (result != ESP_OK) return SendError(request, "500 Internal Server Error", "Không thể lưu độ nhạy microphone vào NVS");
+    char response[96]{};
+    std::snprintf(response, sizeof(response), "{\"gain_db\":%d,\"message\":\"Đã lưu độ nhạy microphone.\"}", value);
+    return SendJson(request, "200 OK", response);
 }
 
 esp_err_t WifiConnectAdminHandler(httpd_req_t* request) {
@@ -1470,6 +1557,11 @@ esp_err_t RegisterRoutes(httpd_handle_t server, const std::string& csrf_token) {
     audio_volume_uri.method = HTTP_POST;
     audio_volume_uri.handler = AudioVolumePostHandler;
 
+    httpd_uri_t mic_gain_uri{};
+    mic_gain_uri.uri = "/api/audio/mic-gain";
+    mic_gain_uri.method = HTTP_POST;
+    mic_gain_uri.handler = MicGainPostHandler;
+
     httpd_uri_t wifi_connect_uri{};
     wifi_connect_uri.uri = "/api/wifi/connect";
     wifi_connect_uri.method = HTTP_POST;
@@ -1522,6 +1614,7 @@ esp_err_t RegisterRoutes(httpd_handle_t server, const std::string& csrf_token) {
     if (result == ESP_OK) result = httpd_register_uri_handler(server, &gemini_voice_uri);
     if (result == ESP_OK) result = httpd_register_uri_handler(server, &gemini_prompt_uri);
     if (result == ESP_OK) result = httpd_register_uri_handler(server, &audio_volume_uri);
+    if (result == ESP_OK) result = httpd_register_uri_handler(server, &mic_gain_uri);
     if (result == ESP_OK) result = httpd_register_uri_handler(server, &wifi_connect_uri);
     if (result == ESP_OK) result = httpd_register_uri_handler(server, &device_status_uri);
     if (result == ESP_OK) result = httpd_register_uri_handler(server, &reconnect_uri);

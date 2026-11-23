@@ -3,6 +3,7 @@
 #include "display_manager.h"
 #include "diagnostic_manager.h"
 
+#include <algorithm>
 #include <atomic>
 #include <cerrno>
 #include <cstdint>
@@ -39,7 +40,6 @@ constexpr char kSsidKey[] = "ssid";
 constexpr char kPasswordKey[] = "password";
 constexpr char kFirmwareBuildKey[] = "fw_build";
 
-constexpr uint8_t kMaxReconnectAttempts = 5;
 constexpr size_t kMaxFormLength = 512;
 
 esp_netif_t* g_sta_netif = nullptr;
@@ -50,6 +50,7 @@ esp_event_handler_instance_t g_ip_handler{};
 bool g_initialized = false;
 std::atomic<bool> g_has_credentials{false};
 std::atomic<uint8_t> g_reconnect_attempts{0};
+std::atomic<TickType_t> g_next_reconnect_ticks{0};
 std::atomic<bool> g_connected{false};
 std::atomic<bool> g_internet_available{false};
 std::atomic<bool> g_provisioning_started{false};
@@ -68,6 +69,42 @@ std::string g_pending_ssid;
 std::string g_pending_password;
 esp_err_t SaveCredentials(const std::string& ssid, const std::string& password);
 esp_err_t StopProvisioning();
+esp_err_t StartProvisioning();
+
+void WifiReconnectTask(void*) {
+    while (true) {
+        if (g_connected.load()) {
+            g_reconnect_attempts.store(0);
+            g_next_reconnect_ticks.store(0);
+        } else if (g_has_credentials.load() && !g_connection_pending.load() && g_initialized) {
+            const TickType_t now = xTaskGetTickCount();
+            const TickType_t due = g_next_reconnect_ticks.load();
+            if (due != 0 && static_cast<int32_t>(now - due) >= 0) {
+                uint8_t attempt = g_reconnect_attempts.load();
+                if (attempt < 255) ++attempt;
+                g_reconnect_attempts.store(attempt);
+                const uint32_t backoff_ms = std::min<uint32_t>(
+                    1000u << std::min<unsigned>(attempt > 0 ? attempt - 1 : 0, 5), 30000u);
+                const esp_err_t result = esp_wifi_connect();
+                char detail[128]{};
+                std::snprintf(detail, sizeof(detail),
+                    "attempt=%u backoff_ms=%lu reason=%d result=%s",
+                    static_cast<unsigned>(attempt), static_cast<unsigned long>(backoff_ms),
+                    g_wifi_disconnect_reason.load(), esp_err_to_name(result));
+                ESP_LOGW(kTag, "Saved Wi-Fi reconnect: %s", detail);
+                chatai::diagnostics::Add("WIFI_RECONNECT", result == ESP_OK ? "ATTEMPT" : "FAIL", detail);
+                g_next_reconnect_ticks.store(result == ESP_OK ? 0 : now + pdMS_TO_TICKS(backoff_ms));
+                if (attempt >= 6 && !g_provisioning_started.load()) {
+                    const esp_err_t ap_result = StartProvisioning();
+                    if (ap_result != ESP_OK) {
+                        ESP_LOGE(kTag, "Could not start fallback setup AP: %s", esp_err_to_name(ap_result));
+                    }
+                }
+            }
+        }
+        vTaskDelay(pdMS_TO_TICKS(250));
+    }
+}
 
 bool ProbeXiaozhiServer() {
     if (g_sta_netif == nullptr) return false;
@@ -788,8 +825,13 @@ esp_err_t StopProvisioning() {
 void EventHandler(void*, esp_event_base_t event_base, int32_t event_id, void* event_data) {
     if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_START) {
         if (g_has_credentials) {
-            g_reconnect_attempts = 0;
-            esp_wifi_connect();
+            g_reconnect_attempts.store(0);
+            g_next_reconnect_ticks.store(0);
+            const esp_err_t connect_result = esp_wifi_connect();
+            if (connect_result != ESP_OK) {
+                ESP_LOGW(kTag, "Initial saved Wi-Fi connect request failed: %s", esp_err_to_name(connect_result));
+                g_next_reconnect_ticks.store(xTaskGetTickCount() + pdMS_TO_TICKS(1000));
+            }
         }
         return;
     }
@@ -806,21 +848,18 @@ void EventHandler(void*, esp_event_base_t event_base, int32_t event_id, void* ev
             chatai::display::Notify("WI-FI", "Ket noi that bai");
             return;
         }
-        if (g_has_credentials && g_reconnect_attempts < kMaxReconnectAttempts) {
-            ++g_reconnect_attempts;
-            ESP_LOGW(kTag, "Wi-Fi disconnected; reconnect attempt %u/%u",
-                     static_cast<unsigned>(g_reconnect_attempts),
-                     static_cast<unsigned>(kMaxReconnectAttempts));
-            esp_wifi_connect();
-        } else {
-            ESP_LOGW(kTag, "Wi-Fi is disconnected");
-            chatai::diagnostics::Add("WIFI", "FAIL", "station disconnected");
-            if (g_initialized) {
-                const esp_err_t result = StartProvisioning();
-                if (result != ESP_OK) {
-                    ESP_LOGE(kTag, "Could not start Wi-Fi provisioning: %s",
-                             esp_err_to_name(result));
-                }
+        g_wifi_disconnect_reason.store(reason);
+        ESP_LOGW(kTag, "Wi-Fi disconnected; reason=%d", reason);
+        chatai::diagnostics::Add("WIFI", "DISCONNECTED", "station connection lost; reconnect worker scheduled");
+        if (g_has_credentials.load()) {
+            const uint8_t attempt = g_reconnect_attempts.load();
+            const uint32_t backoff_ms = std::min<uint32_t>(
+                1000u << std::min<unsigned>(attempt > 0 ? attempt - 1 : 0, 5), 30000u);
+            g_next_reconnect_ticks.store(xTaskGetTickCount() + pdMS_TO_TICKS(backoff_ms));
+        } else if (g_initialized) {
+            const esp_err_t result = StartProvisioning();
+            if (result != ESP_OK) {
+                ESP_LOGE(kTag, "Could not start Wi-Fi provisioning: %s", esp_err_to_name(result));
             }
         }
         return;
@@ -828,7 +867,8 @@ void EventHandler(void*, esp_event_base_t event_base, int32_t event_id, void* ev
 
     if (event_base == IP_EVENT && event_id == IP_EVENT_STA_GOT_IP) {
         const auto* event = static_cast<const ip_event_got_ip_t*>(event_data);
-        g_reconnect_attempts = 0;
+        g_reconnect_attempts.store(0);
+        g_next_reconnect_ticks.store(0);
         g_internet_available.store(false);
         g_connected.store(true);
         ESP_LOGI(kTag, "Wi-Fi received IPv4: " IPSTR " gateway: " IPSTR,
@@ -847,6 +887,9 @@ void EventHandler(void*, esp_event_base_t event_base, int32_t event_id, void* ev
         g_internet_available.store(false);
         ESP_LOGW(kTag, "Wi-Fi station lost its IPv4 address");
         chatai::diagnostics::Add("WIFI", "FAIL", "station lost IPv4 address");
+        if (g_has_credentials.load() && !g_connection_pending.load()) {
+            g_next_reconnect_ticks.store(xTaskGetTickCount() + pdMS_TO_TICKS(1000));
+        }
     }
 }
 }  // namespace
@@ -922,6 +965,10 @@ esp_err_t NetworkManager::Initialize() {
     if (result != ESP_OK) return result;
 
     if (xTaskCreate(InternetCheckTask, "chatai_netcheck", 4096,
+                    nullptr, 4, nullptr) != pdPASS) {
+        return ESP_ERR_NO_MEM;
+    }
+    if (xTaskCreate(WifiReconnectTask, "chatai_wifi_retry", 3072,
                     nullptr, 4, nullptr) != pdPASS) {
         return ESP_ERR_NO_MEM;
     }

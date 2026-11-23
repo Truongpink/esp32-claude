@@ -18,6 +18,7 @@ The Web Admin supports:
 - Save or replace a Gemini API Key.
 - Delete the saved Gemini API Key.
 - Adjust speaker output volume (0–100); the value is persisted in NVS and applied at audio initialization.
+- Adjust digital microphone input gain (-6 to +6 dB) from the Audio tab; the value is persisted in NVS and applied to PCM before AFE/AGC. The default is 0 dB. Increasing gain can cause clipping when the raw microphone signal already approaches full scale.
 - Select a Gemini Live prebuilt voice and persist it in NVS.
 - Edit and persist the Gemini Live System Prompt; the current firmware limit is 3,000 UTF-8 bytes because the deployed NVS partition is 16 KB.
 - Use built-in editable prompt templates for personal assistant, companion, technology expert, coding assistant, language teacher, and customer support.
@@ -44,6 +45,7 @@ OTA updates do not erase the NVS namespaces used by Wi-Fi (`chatai_net`), Gemini
 | POST | `/api/gemini/prompt` | Validates and saves the System Prompt (up to 3,000 UTF-8 bytes) |
 | GET | `/api/device/status` | Returns live network, Gemini, heap, uptime, firmware, and audio telemetry |
 | POST | `/api/audio/volume` | Saves speaker output volume (0–100) in NVS |
+| POST | `/api/audio/mic-gain` | Saves microphone digital input gain (-6 to +6 dB) in NVS |
 | GET | `/api/firmware/status` | Returns running Build Number, marker, active slot, inactive OTA slot, and slot capacity |
 | POST | `/api/gemini/key` | Validate and save a key |
 | DELETE | `/api/gemini/key` | Delete the saved Gemini API Key |
@@ -53,7 +55,7 @@ Mutating requests require same-origin validation and the per-boot CSRF token. Th
 
 ## Current feature boundaries
 
-The current Standalone firmware does not yet expose microphone gain, bot name, language selection, wake-word controls, or OLED idle-mode selection. Gemini Live voice preview is not implemented: the current Live API setup accepts the selected voice when a session starts, but the firmware has no independent preview endpoint or safe preview playback path. These controls are intentionally omitted from the Web Admin rather than presented as non-functional switches. OLED save notifications are supported for Wi-Fi, Gemini API Key, and speaker volume. A separate sound-confirmation tone is not enabled because the speaker is shared with Gemini Live playback and there is no independent notification buzzer/mixer path. Saving a voice or System Prompt sends an OLED notification and requests a new Gemini Live session when an API Key is configured.
+The current Standalone firmware does not expose bot name, language selection, wake-word controls, or OLED idle-mode selection. Gemini Live voice preview is not implemented: the current Live API setup accepts the selected voice when a session starts, but the firmware has no independent preview endpoint or safe preview playback path. These controls are intentionally omitted from the Web Admin rather than presented as non-functional switches. OLED save notifications are supported for Wi-Fi, Gemini API Key, and speaker volume. A separate sound-confirmation tone is not enabled because the speaker is shared with Gemini Live playback and there is no independent notification buzzer/mixer path. Saving a voice or System Prompt sends an OLED notification and requests a new Gemini Live session when an API Key is configured.
 
 ## Security
 

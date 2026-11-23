@@ -40,9 +40,11 @@ i2s_chan_handle_t s_speaker_tx = nullptr;
 std::atomic<bool> s_mic_enabled{false};
 std::atomic<bool> s_speaker_enabled{false};
 std::atomic<int> s_output_volume{100};
+std::atomic<int> s_input_gain_db{0};
 std::atomic<bool> s_mic_raw_reported{false};
 uint64_t s_mic_level_sum_squares = 0;
 uint32_t s_mic_level_samples = 0;
+uint32_t s_mic_level_clipped_samples = 0;
 int32_t s_mic_level_peak = 0;
 int64_t s_mic_level_window_started_us = 0;
 std::mutex s_state_mutex;
@@ -141,8 +143,12 @@ esp_err_t Initialize() {
     nvs_handle_t settings_handle;
     if (nvs_open("chatai_cfg", NVS_READONLY, &settings_handle) == ESP_OK) {
         int32_t saved_volume = 100;
+        int32_t saved_mic_gain_db = 0;
         if (nvs_get_i32(settings_handle, "speaker_vol", &saved_volume) == ESP_OK) {
             s_output_volume.store(std::clamp<int32_t>(saved_volume, 0, 100));
+        }
+        if (nvs_get_i32(settings_handle, "mic_gain_db", &saved_mic_gain_db) == ESP_OK) {
+            s_input_gain_db.store(std::clamp<int32_t>(saved_mic_gain_db, -6, 6));
         }
         nvs_close(settings_handle);
     }
@@ -311,6 +317,8 @@ esp_err_t ReadMicrophonePcm16(int16_t* destination, size_t requested_samples,
     }
 
     std::array<int32_t, kReadChunkSamples> raw_samples{};
+    const int input_gain_db = s_input_gain_db.load();
+    const double input_gain = std::pow(10.0, input_gain_db / 20.0);
     while (*samples_read < requested_samples) {
         const size_t chunk = std::min(kReadChunkSamples, requested_samples - *samples_read);
         size_t bytes_read = 0;
@@ -358,8 +366,12 @@ esp_err_t ReadMicrophonePcm16(int16_t* destination, size_t requested_samples,
         for (size_t i = 0; i < received; ++i) {
             // Preserve the current upstream-compatible I2S-to-PCM16 conversion.
             const int32_t value = raw_samples[i] >> 12;
+            const int32_t gained_value = static_cast<int32_t>(std::lround(value * input_gain));
+            if (gained_value > INT16_MAX || gained_value < INT16_MIN) {
+                ++s_mic_level_clipped_samples;
+            }
             const int16_t pcm = static_cast<int16_t>(
-                std::clamp<int32_t>(value, INT16_MIN, INT16_MAX));
+                std::clamp<int32_t>(gained_value, INT16_MIN, INT16_MAX));
             destination[*samples_read + i] = pcm;
             const int32_t magnitude = pcm < 0 ? -static_cast<int32_t>(pcm) : pcm;
             s_mic_level_peak = std::max(s_mic_level_peak, magnitude);
@@ -380,12 +392,14 @@ esp_err_t ReadMicrophonePcm16(int16_t* destination, size_t requested_samples,
                 20.0 * std::log10(std::max<int32_t>(s_mic_level_peak, 1) / 32768.0);
             char level_detail[160]{};
             std::snprintf(level_detail, sizeof(level_detail),
-                "samples=%lu rms=%.0f rms_dbfs=%.1f peak=%ld peak_dbfs=%.1f",
-                static_cast<unsigned long>(s_mic_level_samples), rms, rms_dbfs,
-                static_cast<long>(s_mic_level_peak), peak_dbfs);
+                "samples=%lu gain_db=%d rms=%.0f rms_dbfs=%.1f peak=%ld peak_dbfs=%.1f clipped=%lu",
+                static_cast<unsigned long>(s_mic_level_samples), input_gain_db, rms, rms_dbfs,
+                static_cast<long>(s_mic_level_peak), peak_dbfs,
+                static_cast<unsigned long>(s_mic_level_clipped_samples));
             chatai::diagnostics::Add("MIC_LEVEL", "PCM", level_detail);
             s_mic_level_sum_squares = 0;
             s_mic_level_samples = 0;
+            s_mic_level_clipped_samples = 0;
             s_mic_level_peak = 0;
             s_mic_level_window_started_us = level_now_us;
         }
@@ -460,6 +474,26 @@ void SetOutputVolume(int volume_percent) {
 
 int GetOutputVolume() {
     return s_output_volume.load();
+}
+
+void SetInputGainDb(int gain_db) {
+    s_input_gain_db.store(std::clamp(gain_db, -6, 6));
+}
+
+int GetInputGainDb() {
+    return s_input_gain_db.load();
+}
+
+esp_err_t SaveInputGainDb(int gain_db) {
+    if (gain_db < -6 || gain_db > 6) return ESP_ERR_INVALID_ARG;
+    nvs_handle_t handle;
+    esp_err_t result = nvs_open("chatai_cfg", NVS_READWRITE, &handle);
+    if (result != ESP_OK) return result;
+    result = nvs_set_i32(handle, "mic_gain_db", gain_db);
+    if (result == ESP_OK) result = nvs_commit(handle);
+    nvs_close(handle);
+    if (result == ESP_OK) SetInputGainDb(gain_db);
+    return result;
 }
 
 esp_err_t SaveOutputVolume(int volume_percent) {

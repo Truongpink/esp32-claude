@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <cmath>
 #include <climits>
+#include <cmath>
 
 namespace chatai::audio {
 
@@ -89,13 +90,15 @@ void ChatAIAudioCodecBridge::SetOutputVolume(int volume_percent) {
 }
 
 esp_err_t ChatAIAudioCodecBridge::SetInputGain(float gain) {
-    if (!std::isfinite(gain) || gain < 0.0f) {
+    if (!std::isfinite(gain) ||
+        (gain != 0.0f && (gain < 0.5012f || gain > 1.9953f))) {
         last_error_.store(ESP_ERR_INVALID_ARG);
         return ESP_ERR_INVALID_ARG;
     }
-    const esp_err_t result = (gain == 0.0f) ? ESP_OK : ESP_ERR_NOT_SUPPORTED;
-    last_error_.store(result);
-    return result;
+    const int gain_db = gain == 0.0f ? 0 : static_cast<int>(std::lround(20.0f * std::log10(gain)));
+    chatai::audio::SetInputGainDb(gain_db);
+    last_error_.store(ESP_OK);
+    return ESP_OK;
 }
 
 bool ChatAIAudioCodecBridge::InputData(std::vector<int16_t>& pcm) {

@@ -23,6 +23,9 @@ esp_err_t WriteSpeakerPcm16(const int16_t* samples, size_t sample_count,
 void SetOutputVolume(int volume_percent);
 int GetOutputVolume();
 esp_err_t SaveOutputVolume(int volume_percent);
+void SetInputGainDb(int gain_db);
+int GetInputGainDb();
+esp_err_t SaveInputGainDb(int gain_db);
 
 // Supplies the exact 24 kHz PCM sent to the speaker to a future AEC/reference adapter.
 // The callback runs synchronously in the caller's task context.

@@ -34,8 +34,7 @@ public:
     // Runtime volume only. Persistence remains owned by ChatAI settings/UI.
     void SetOutputVolume(int volume_percent) override;
 
-    // AudioManager currently exposes no microphone gain control.
-    // Zero is accepted; non-zero gain is explicitly unsupported.
+    // Runtime microphone gain uses a linear multiplier (0 means unity/default).
     esp_err_t SetInputGain(float gain) override;
 
     bool InputData(std::vector<int16_t>& pcm) override;

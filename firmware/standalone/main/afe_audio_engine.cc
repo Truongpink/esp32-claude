@@ -412,7 +412,7 @@ void AfeAudioEngine::HandleVoiceResult(const afe_fetch_result_t* result) {
         if (result->vad_state == VAD_SPEECH) {
             if (!is_speaking_.exchange(true)) {
                 char detail[96]{};
-                std::snprintf(detail, sizeof(detail), "state=SPEECH input_level_dbfs=%.1f",
+                std::snprintf(detail, sizeof(detail), "state=SPEECH afe_data_volume=%.3f",
                               static_cast<double>(result->data_volume));
                 chatai::diagnostics::Add("MIC_VAD", "SPEECH", detail);
                 vad_state_change_callback_(true);
@@ -420,7 +420,7 @@ void AfeAudioEngine::HandleVoiceResult(const afe_fetch_result_t* result) {
         } else if (result->vad_state == VAD_SILENCE) {
             if (is_speaking_.exchange(false)) {
                 char detail[96]{};
-                std::snprintf(detail, sizeof(detail), "state=SILENCE input_level_dbfs=%.1f",
+                std::snprintf(detail, sizeof(detail), "state=SILENCE afe_data_volume=%.3f",
                               static_cast<double>(result->data_volume));
                 chatai::diagnostics::Add("MIC_VAD", "SILENCE", detail);
                 vad_state_change_callback_(false);
