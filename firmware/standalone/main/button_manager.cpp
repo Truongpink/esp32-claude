@@ -133,19 +133,20 @@ void ButtonTask(void*) {
                     chatai::display::Notify("WI-FI", "Cấu hình qua Web Admin");
                     ESP_LOGI(kTag, "BOOT clicked while Wi-Fi provisioning is active");
                 } else {
-                    const bool enabled = !chatai::xiaozhi::IsChatEnabled();
-                    chatai::xiaozhi::SetChatEnabled(enabled);
+                    if (!chatai::xiaozhi::IsChatEnabled()) {
+                        chatai::xiaozhi::SetChatEnabled(true);
+                    }
                     const bool chat_enabled = chatai::xiaozhi::IsChatEnabled();
                     const bool ready = chatai::xiaozhi::IsReady();
-                    const char* message = chat_enabled
-                        ? (ready ? "Đang nghe liên tục" : "Đã bật nghe - chờ kết nối")
-                        : "Đã ngừng nghe";
-                    chatai::display::Notify("XIAOZHI", message);
-                    ESP_LOGI(kTag, "BOOT chat toggle %s (ready=%d)",
-                             chat_enabled ? "enabled" : "disabled", ready ? 1 : 0);
+                    const char* message = ready
+                        ? "BOOT started continuous conversation"
+                        : "Continuous conversation queued until server is ready";
+                    chatai::display::Notify("CHATAI", message);
+                    ESP_LOGI(kTag, "BOOT continuous chat %s (ready=%d)",
+                             chat_enabled ? "active" : "request_failed", ready ? 1 : 0);
                     char boot_detail[160]{};
                     std::snprintf(boot_detail, sizeof(boot_detail),
-                        "uptime_ms=%llu action=TOGGLE_CHAT enabled=%d xiaozhi_ready=%d listening=%d",
+                        "uptime_ms=%llu action=START_CONTINUOUS_CHAT enabled=%d xiaozhi_ready=%d listening=%d",
                         static_cast<unsigned long long>(esp_timer_get_time() / 1000),
                         chat_enabled ? 1 : 0,
                         ready ? 1 : 0,
