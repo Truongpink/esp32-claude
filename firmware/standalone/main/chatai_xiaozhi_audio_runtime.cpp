@@ -38,6 +38,16 @@ esp_err_t XiaozhiAudioRuntime::Initialize() {
     }
 
     AudioServiceCallbacks callbacks;
+    callbacks.on_playback_progress = [this](uint32_t id, uint32_t position) {
+        PlaybackProgressCallback callback;
+        { std::lock_guard<std::mutex> lock(playback_callback_mutex_); callback = playback_progress_callback_; }
+        if (callback) callback(id, position);
+    };
+    callbacks.on_playback_drained = [this]() {
+        PlaybackDrainedCallback callback;
+        { std::lock_guard<std::mutex> lock(playback_callback_mutex_); callback = playback_drained_callback_; }
+        if (callback) callback();
+    };
     callbacks.on_send_queue_available = [this]() {
         {
             std::lock_guard<std::mutex> queue_lock(send_mutex_);
@@ -185,6 +195,34 @@ esp_err_t XiaozhiAudioRuntime::SubmitDownlinkFrame(const uint8_t* payload,
     return service_.PushPacketToDecodeQueue(std::move(packet), false)
                ? ESP_OK
                : ESP_ERR_NO_MEM;
+}
+
+void XiaozhiAudioRuntime::SetPlaybackCallbacks(PlaybackProgressCallback progress,
+                                               PlaybackDrainedCallback drained) {
+    std::lock_guard<std::mutex> lock(playback_callback_mutex_);
+    playback_progress_callback_ = std::move(progress);
+    playback_drained_callback_ = std::move(drained);
+}
+
+esp_err_t XiaozhiAudioRuntime::SubmitNotificationFrame(
+    const uint8_t* payload, size_t payload_size, uint32_t sample_rate,
+    uint32_t frame_duration_ms, uint32_t playback_id, uint32_t media_position_ms) {
+    if (!running_) return ESP_ERR_INVALID_STATE;
+    if (payload == nullptr || payload_size == 0 || payload_size > kMaxOpusPacketBytes ||
+        playback_id == 0 || !SupportedRate(sample_rate) ||
+        !SupportedDuration(frame_duration_ms)) return ESP_ERR_INVALID_ARG;
+    auto packet = std::make_unique<AudioStreamPacket>();
+    packet->sample_rate = static_cast<int>(sample_rate);
+    packet->frame_duration = static_cast<int>(frame_duration_ms);
+    packet->playback_id = playback_id;
+    packet->media_position_ms = media_position_ms;
+    packet->payload.assign(payload, payload + payload_size);
+    return service_.PushPacketToDecodeQueue(std::move(packet), true)
+        ? ESP_OK : ESP_ERR_INVALID_STATE;
+}
+
+void XiaozhiAudioRuntime::ResetNotificationPlayback() {
+    if (running_) service_.ResetDecoder();
 }
 
 }  // namespace chatai::audio
