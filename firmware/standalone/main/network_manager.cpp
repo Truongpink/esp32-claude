@@ -156,7 +156,7 @@ void InternetCheckTask(void*) {
             continue;
         }
 
-        const bool available = ProbeGeminiInternet();
+        const bool available = ProbeXiaozhiServer();
         const bool previous = g_internet_available.exchange(available);
         if (available != previous) {
             if (available) {
