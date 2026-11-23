@@ -474,12 +474,14 @@ private:
                     const int64_t now_us = esp_timer_get_time();
                     const int64_t listen_us = listen_started_us_.load();
                     const int64_t speech_end_us = speech_ended_us_.load();
+                    const int64_t first_uplink_us = first_uplink_sent_us_.load();
                     const int64_t last_uplink_us = last_uplink_sent_us_.load();
-                    char detail[192]{};
+                    char detail[224]{};
                     std::snprintf(detail, sizeof(detail),
-                        "listen_start_to_tts_start_ms=%lld speech_end_to_tts_start_ms=%lld last_uplink_to_tts_start_ms=%lld",
+                        "listen_start_to_tts_start_ms=%lld speech_end_to_tts_start_ms=%lld first_uplink_to_tts_start_ms=%lld last_uplink_to_tts_start_ms=%lld",
                         static_cast<long long>(listen_us > 0 ? (now_us - listen_us) / 1000 : -1),
                         static_cast<long long>(speech_end_us > 0 ? (now_us - speech_end_us) / 1000 : -1),
+                        static_cast<long long>(first_uplink_us > 0 ? (now_us - first_uplink_us) / 1000 : -1),
                         static_cast<long long>(last_uplink_us > 0 ? (now_us - last_uplink_us) / 1000 : -1));
                     chatai::diagnostics::Add("VOICE_LATENCY", "TTS_START", detail);
                     chatai::diagnostics::Add("XIAOZHI_TTS", "START",
@@ -580,9 +582,12 @@ private:
         }
         if (!vad_speaking_.exchange(false)) return;
         speech_ended_us_.store(now_us);
-        char detail[96]{};
-        std::snprintf(detail, sizeof(detail), "monotonic_us=%lld; local_vad_delay_ms=64",
-                      static_cast<long long>(now_us));
+        const int64_t speech_start_us = speech_started_us_.load();
+        char detail[128]{};
+        std::snprintf(detail, sizeof(detail),
+            "monotonic_us=%lld speech_duration_ms=%lld local_vad_delay_ms=64",
+            static_cast<long long>(now_us),
+            static_cast<long long>(speech_start_us > 0 ? (now_us - speech_start_us) / 1000 : -1));
         chatai::diagnostics::Add("VOICE_LATENCY", "SPEECH_ENDED", detail);
         chatai::diagnostics::Add("VOICE_LATENCY", "VAD_SILENCE_CONFIRMED", detail);
     }
