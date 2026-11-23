@@ -22,6 +22,7 @@
 #include "firmware_info.h"
 #include "diagnostic_manager.h"
 #include "audio_manager.h"
+#include "chatai_xiaozhi_client.h"
 
 namespace {
 constexpr char kTag[] = "ChatAI-Admin";
@@ -101,9 +102,9 @@ select,input[type=text]{width:100%;min-width:0;padding:13px;border:1px solid #ff
 <button type="button" role="tab" data-tab="logs" aria-selected="false"><span class="tab-icon">≋</span><span>Nhật ký</span></button>
 </nav>
 <section class="card tab-panel" data-panel="overview" role="tabpanel" aria-labelledby="connectionTitle">
-<div class="card-head"><div class="card-icon" aria-hidden="true">◉</div><div><h2 id="connectionTitle">Trạng thái kết nối</h2><p class="hint">Theo dõi Wi-Fi, Internet và Gemini Live</p></div></div>
+<div class="card-head"><div class="card-icon" aria-hidden="true">◉</div><div><h2 id="connectionTitle">Trạng thái kết nối</h2><p class="hint">Theo dõi Wi-Fi, Internet và máy chủ Xiaozhi</p></div></div>
 <p id="status">Đang kiểm tra trạng thái...</p>
-<p id="deviceStatus" role="status" aria-live="polite">Đang kiểm tra Wi-Fi, Internet và Gemini Live...</p>
+<p id="deviceStatus" role="status" aria-live="polite">Đang kiểm tra Wi-Fi, Internet và Xiaozhi...</p>
 <div class="metric-grid">
 <div class="metric"><span>Wi-Fi / SSID</span><strong id="dashSsid">Đang tải...</strong></div>
 <div class="metric"><span>Tín hiệu</span><strong id="dashRssi">—</strong></div>
@@ -113,7 +114,7 @@ select,input[type=text]{width:100%;min-width:0;padding:13px;border:1px solid #ff
 <div class="metric"><span>Kiểm tra DNS</span><strong id="dashDnsProbe">—</strong></div>
 <div class="metric"><span>TCP 443</span><strong id="dashTcpProbe">—</strong></div>
 <div class="metric"><span>SoftAP</span><strong id="dashAp">—</strong></div>
-<div class="metric"><span>Gemini Live</span><strong id="dashGemini">—</strong></div>
+<div class="metric"><span>Xiaozhi Server</span><strong id="dashXiaozhi">—</strong></div>
 <div class="metric"><span>API Key</span><strong id="dashKey">—</strong></div>
 <div class="metric"><span>Âm lượng loa</span><strong id="dashVolume">—</strong></div>
 <div class="metric"><span>Heap còn trống</span><strong id="dashHeap">—</strong></div>
@@ -122,7 +123,7 @@ select,input[type=text]{width:100%;min-width:0;padding:13px;border:1px solid #ff
 <div class="metric"><span>Firmware</span><strong id="dashBuild">—</strong></div>
 </div>
 <div class="actions"><button id="refreshDashboard" class="secondary">↻ Làm mới trạng thái</button></div>
-<div class="actions"><button id="retryGemini" class="secondary">Thử kết nối lại Gemini</button><button id="restartDevice" class="danger">↻ Khởi động lại ESP32</button></div>
+<div class="actions"><button id="retryGemini" class="secondary" hidden>Thử kết nối lại Gemini</button><button id="restartDevice" class="danger">↻ Khởi động lại ESP32</button></div>
 <p id="restartResult" class="hint" role="status" aria-live="polite"></p>
 </section>
 <section class="card tab-panel" data-panel="wifi" role="tabpanel" aria-labelledby="wifiTitle" hidden>
@@ -137,7 +138,7 @@ select,input[type=text]{width:100%;min-width:0;padding:13px;border:1px solid #ff
 <p class="hint">Thông tin Wi-Fi chỉ được lưu vào NVS sau khi thiết bị kết nối router, nhận IP và xác minh DNS/TCP 443 thành công. SoftAP cấu hình được giữ trong lúc thử kết nối.</p>
 </section>
 <section class="card tab-panel" data-panel="logs" role="tabpanel" aria-labelledby="diagnosticsTitle" hidden>
-<div class="card-head"><div class="card-icon" aria-hidden="true">≋</div><div><h2 id="diagnosticsTitle">Log chẩn đoán Gemini</h2><p class="hint">Tối đa 8 KB · Không lưu API Key hoặc dữ liệu âm thanh</p></div></div>
+<div class="card-head"><div class="card-icon" aria-hidden="true">≋</div><div><h2 id="diagnosticsTitle">Log chẩn đoán ChatAI / Xiaozhi</h2><p class="hint">Tối đa 8 KB · Không lưu API Key hoặc dữ liệu âm thanh</p></div></div>
 <pre id="diagnosticLog" style="white-space:pre-wrap;overflow-wrap:anywhere;max-height:260px;overflow:auto;background:#0d0c19;border:1px solid #ffffff18;border-radius:12px;padding:12px;color:#d9d2f0;font:11px/1.55 ui-monospace,monospace">Đang tải log...</pre>
 <textarea id="diagnosticCopyFallback" readonly hidden aria-label="Log chẩn đoán để sao chép" style="width:100%;min-height:150px;margin-top:10px;padding:12px;border:1px solid #a477ff;border-radius:12px;background:#0d0c19;color:#f5f1ff;font:11px/1.55 ui-monospace,monospace"></textarea>
 <div class="actions"><button id="copyDiagnostic" class="secondary">Sao chép log</button><button id="downloadDiagnostic" class="secondary">Tải log TXT</button><button id="clearDiagnostic" class="secondary">Xóa log</button></div>
@@ -172,7 +173,7 @@ select,input[type=text]{width:100%;min-width:0;padding:13px;border:1px solid #ff
 <p id="promptResult" class="hint" role="status" aria-live="polite"></p>
 </section>
 <section class="card tab-panel" data-panel="audio" role="tabpanel" aria-labelledby="audioTitle" hidden>
-<div class="card-head"><div class="card-icon" aria-hidden="true">♫</div><div><h2 id="audioTitle">Âm thanh</h2><p class="hint">Điều chỉnh âm lượng loa phát Gemini Live</p></div></div>
+<div class="card-head"><div class="card-icon" aria-hidden="true">♫</div><div><h2 id="audioTitle">Âm thanh</h2><p class="hint">Điều chỉnh âm lượng loa Xiaozhi</p></div></div>
 <label for="speakerVolume">Âm lượng loa: <output id="speakerVolumeValue">100%</output></label>
 <input id="speakerVolume" type="range" min="0" max="100" step="1" value="100" style="width:100%;accent-color:#9b5cff">
 <p class="hint">Thiết lập được lưu riêng vào NVS và tự áp dụng sau khi lưu. Mic Gain chưa được cung cấp vì firmware chưa có tầng điều chỉnh gain microphone.</p>
@@ -747,11 +748,10 @@ async function refreshDeviceStatus() {
   let state;
   if (!data.wifi_connected) state = "Wi-Fi: Chưa kết nối";
   else if (!data.internet_available) state = "Wi-Fi: Đã kết nối · Internet: Chưa xác nhận";
-  else if (!data.key_configured) state = "Internet: Đã thông · Gemini: Chưa cấu hình API Key";
-  else if (data.gemini_ready) state = "Gemini Live: Đã sẵn sàng (đã nhận setupComplete)";
-  else if (data.gemini_tls_fatal) state = "Gemini Live: Lỗi xác thực chứng chỉ TLS; đã tạm dừng tự kết nối lại. Hãy kiểm tra mạng/giờ hệ thống rồi thử lại.";
-  else if (data.gemini_error) state = "Gemini Live: Lỗi kết nối hoặc xác thực; hãy dùng nút Thử kết nối lại hoặc cập nhật API Key";
-  else state = "Gemini Live: Đang kết nối, chờ setupComplete";
+  else if (data.xiaozhi_ready) state = data.xiaozhi_listening
+    ? "Xiaozhi: Đã kết nối · Đang nghe"
+    : "Xiaozhi: Đã kết nối server · Chưa bật nghe";
+  else state = "Xiaozhi: Đang tìm server hoặc chờ ghép nối thiết bị";
   speakerVolumeInput.value = String(Number(data.speaker_volume ?? 100));
   speakerVolumeValue.textContent = speakerVolumeInput.value + "%";
   deviceStatus.textContent = state +
@@ -766,7 +766,9 @@ async function refreshDeviceStatus() {
    document.getElementById("dashDnsProbe").textContent = data.dns_probe_state === 1 ? "Thành công" : data.dns_probe_state === 0 ? "Thất bại" : "Đang chờ";
    document.getElementById("dashTcpProbe").textContent = data.tcp443_probe_state === 1 ? "Thông TCP 443" : data.tcp443_probe_state === 0 ? "Không thông" : "Đang chờ";
    document.getElementById("dashAp").textContent = data.softap_ip || "Không hoạt động";
-   document.getElementById("dashGemini").textContent = data.gemini_ready ? "Sẵn sàng" : data.gemini_tls_fatal ? "Lỗi TLS" : data.gemini_error ? "Có lỗi" : "Đang kết nối";
+   document.getElementById("dashXiaozhi").textContent = data.xiaozhi_ready
+     ? (data.xiaozhi_listening ? "Đã kết nối · Đang nghe" : "Đã kết nối")
+     : "Đang kết nối";
    document.getElementById("dashKey").textContent = data.key_configured ? "Đã lưu" : "Chưa cấu hình";
    document.getElementById("dashVolume").textContent = data.speaker_volume + "%";
    document.getElementById("dashHeap").textContent = data.free_heap + " byte";
@@ -1006,6 +1008,9 @@ esp_err_t DeviceStatusHandler(httpd_req_t* request) {
     cJSON_AddBoolToObject(root, "wifi_connected", wifi);
     cJSON_AddBoolToObject(root, "internet_available", chatai::network::NetworkManager::IsInternetAvailable());
     cJSON_AddBoolToObject(root, "key_configured", chatai::settings::HasGeminiApiKey());
+    cJSON_AddBoolToObject(root, "xiaozhi_ready", chatai::xiaozhi::IsReady());
+    cJSON_AddBoolToObject(root, "xiaozhi_chat_enabled", chatai::xiaozhi::IsChatEnabled());
+    cJSON_AddBoolToObject(root, "xiaozhi_listening", chatai::xiaozhi::IsListening());
     cJSON_AddBoolToObject(root, "gemini_enabled", false);
     cJSON_AddBoolToObject(root, "gemini_ready", false);
     cJSON_AddBoolToObject(root, "gemini_error", false);
