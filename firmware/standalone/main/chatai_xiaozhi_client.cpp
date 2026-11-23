@@ -40,6 +40,8 @@ namespace {
 constexpr char kTag[] = "XiaozhiClient";
 constexpr uint32_t kRetryDelayMs = 15000;
 constexpr uint32_t kHelloTimeoutMs = 12000;
+constexpr uint32_t kOneShotSilenceMs = 650;
+constexpr uint32_t kListenStopRetryMs = 300;
 constexpr size_t kUdpHeaderSize = 16;
 constexpr size_t kMaxUdpPacketSize = 1500;
 constexpr EventBits_t kHelloReceived = 1 << 0;
@@ -113,6 +115,8 @@ public:
         audio_.SetPlaybackCallbacks(
             [this](uint32_t id, uint32_t position) { notify_player_.OnPlaybackProgress(id, position); },
             [this]() { notify_player_.OnPlaybackDrained(); });
+        audio_.SetVadCallback([this](bool speaking) { HandleVadState(speaking); });
+        audio_.SetPlaybackStartedCallback([this]() { HandlePlaybackStarted(); });
         if (initialized_.load()) return ESP_OK;
         events_ = xEventGroupCreate();
         if (events_ == nullptr) return ESP_ERR_NO_MEM;
@@ -150,15 +154,28 @@ public:
                 "reason=previous_turn_or_tts_active");
             return false;
         }
+        speech_started_us_.store(0);
+        speech_ended_us_.store(0);
+        vad_speaking_.store(false);
+        first_uplink_sent_us_.store(0);
+        last_uplink_sent_us_.store(0);
+        tts_started_us_.store(0);
+        tts_first_packet_reported_.store(false);
+        tts_playback_reported_.store(false);
+        uplink_packet_reported_.store(false);
+        last_listen_stop_attempt_us_.store(0);
+        listen_started_us_.store(esp_timer_get_time());
+        one_shot_local_vad_.store(true);
         chat_enabled_.store(true);
         if (!UpdateListeningState() || !last_listening_.load()) {
             chat_enabled_.store(false);
+            one_shot_local_vad_.store(false);
             chatai::diagnostics::Add("XIAOZHI_PTT", "START_FAILED",
                 "listen_start_control_not_confirmed");
             return false;
         }
         chatai::diagnostics::Add("XIAOZHI_PTT", "LISTEN_START",
-            "mode=auto; one_shot=true; server_vad_controls_end_of_speech");
+            "mode=manual; one_shot=true; local_vad_end_silence_ms=650");
         return true;
     }
 
@@ -172,6 +189,7 @@ public:
 
     void SetPushToTalk(bool pressed) {
         if (pressed && notify_player_.IsBusy()) return;
+        one_shot_local_vad_.store(false);
         push_to_talk_.store(pressed);
         UpdateListeningState();
     }
@@ -437,10 +455,15 @@ private:
                         return;
                     }
                     if (state == "start") {
+                        tts_started_us_.store(esp_timer_get_time());
+                        tts_first_packet_reported_.store(false);
+                        tts_playback_reported_.store(false);
+                        one_shot_local_vad_.store(false);
                         tts_active_.store(true);
                         audio_.SetCaptureEnabled(false);
                     } else if (state == "stop") {
                         tts_active_.store(false);
+                        one_shot_local_vad_.store(false);
                         finish_one_shot = chat_enabled_.exchange(false);
                         if (!finish_one_shot && IsListening()) {
                             audio_.SetCaptureEnabled(true);
@@ -448,6 +471,17 @@ private:
                     }
                 }
                 if (state == "start") {
+                    const int64_t now_us = esp_timer_get_time();
+                    const int64_t listen_us = listen_started_us_.load();
+                    const int64_t speech_end_us = speech_ended_us_.load();
+                    const int64_t last_uplink_us = last_uplink_sent_us_.load();
+                    char detail[192]{};
+                    std::snprintf(detail, sizeof(detail),
+                        "listen_start_to_tts_start_ms=%lld speech_end_to_tts_start_ms=%lld last_uplink_to_tts_start_ms=%lld",
+                        static_cast<long long>(listen_us > 0 ? (now_us - listen_us) / 1000 : -1),
+                        static_cast<long long>(speech_end_us > 0 ? (now_us - speech_end_us) / 1000 : -1),
+                        static_cast<long long>(last_uplink_us > 0 ? (now_us - last_uplink_us) / 1000 : -1));
+                    chatai::diagnostics::Add("VOICE_LATENCY", "TTS_START", detail);
                     chatai::diagnostics::Add("XIAOZHI_TTS", "START",
                         "server_started_voice_response");
                 } else if (state == "stop") {
@@ -530,6 +564,118 @@ private:
             chatai::diagnostics::Add("XIAOZHI_NOTIFY", "REJECTED",
                 "invalid_url_or_worker_unavailable");
         }
+    }
+
+    void HandleVadState(bool speaking) {
+        const int64_t now_us = esp_timer_get_time();
+        if (speaking) {
+            speech_started_us_.store(now_us);
+            speech_ended_us_.store(0);
+            vad_speaking_.store(true);
+            char detail[64]{};
+            std::snprintf(detail, sizeof(detail), "monotonic_us=%lld",
+                          static_cast<long long>(now_us));
+            chatai::diagnostics::Add("VOICE_LATENCY", "SPEECH_STARTED", detail);
+            return;
+        }
+        if (!vad_speaking_.exchange(false)) return;
+        speech_ended_us_.store(now_us);
+        char detail[96]{};
+        std::snprintf(detail, sizeof(detail), "monotonic_us=%lld; local_vad_delay_ms=64",
+                      static_cast<long long>(now_us));
+        chatai::diagnostics::Add("VOICE_LATENCY", "SPEECH_ENDED", detail);
+        chatai::diagnostics::Add("VOICE_LATENCY", "VAD_SILENCE_CONFIRMED", detail);
+    }
+
+    void HandlePlaybackStarted() {
+        const int64_t started_us = tts_started_us_.load();
+        if (started_us <= 0 || tts_playback_reported_.exchange(true)) return;
+        const int64_t now_us = esp_timer_get_time();
+        char detail[96]{};
+        std::snprintf(detail, sizeof(detail),
+            "tts_start_to_speaker_output_ms=%lld monotonic_us=%lld",
+            static_cast<long long>((now_us - started_us) / 1000),
+            static_cast<long long>(now_us));
+        chatai::diagnostics::Add("VOICE_LATENCY", "TTS_PLAYBACK_STARTED", detail);
+    }
+
+    void RecordTtsFirstPacket() {
+        const int64_t started_us = tts_started_us_.load();
+        if (started_us <= 0 || tts_first_packet_reported_.exchange(true)) return;
+        const int64_t now_us = esp_timer_get_time();
+        char detail[96]{};
+        std::snprintf(detail, sizeof(detail),
+            "tts_start_to_first_audio_packet_ms=%lld monotonic_us=%lld",
+            static_cast<long long>((now_us - started_us) / 1000),
+            static_cast<long long>(now_us));
+        chatai::diagnostics::Add("VOICE_LATENCY", "TTS_FIRST_PACKET", detail);
+    }
+
+    void RecordUplinkPacketSent(const char* transport,
+                               const chatai::audio::XiaozhiUplinkFrame& frame) {
+        const int64_t now_us = esp_timer_get_time();
+        last_uplink_sent_us_.store(now_us);
+        if (uplink_packet_reported_.exchange(true)) return;
+        first_uplink_sent_us_.store(now_us);
+        char detail[128]{};
+        std::snprintf(detail, sizeof(detail),
+            "transport=%s sample_rate=%lu frame_ms=%lu opus_bytes=%lu monotonic_us=%lld",
+            transport, static_cast<unsigned long>(frame.sample_rate),
+            static_cast<unsigned long>(frame.frame_duration_ms),
+            static_cast<unsigned long>(frame.payload.size()),
+            static_cast<long long>(now_us));
+        chatai::diagnostics::Add("VOICE_LATENCY", "UPLINK_STARTED", detail);
+    }
+
+    void MaybeStopOneShotAfterSilence() {
+        if (!one_shot_local_vad_.load() || !chat_enabled_.load() ||
+            !last_listening_.load() || tts_active_.load()) return;
+        const int64_t silence_started_us = speech_ended_us_.load();
+        if (silence_started_us <= 0) return;
+        const int64_t now_us = esp_timer_get_time();
+        if (now_us - silence_started_us < static_cast<int64_t>(kOneShotSilenceMs) * 1000) return;
+        const int64_t last_attempt_us = last_listen_stop_attempt_us_.load();
+        if (now_us - last_attempt_us < static_cast<int64_t>(kListenStopRetryMs) * 1000) return;
+        last_listen_stop_attempt_us_.store(now_us);
+
+        std::lock_guard<std::mutex> state_lock(listening_mutex_);
+        if (!session_ready_.load() || !one_shot_local_vad_.load() ||
+            !chat_enabled_.load() || !last_listening_.load() || tts_active_.load()) return;
+
+        std::string session_id;
+        {
+            std::lock_guard<std::mutex> lock(channel_mutex_);
+            session_id = session_id_;
+        }
+        cJSON* root = cJSON_CreateObject();
+        if (root == nullptr) return;
+        cJSON_AddStringToObject(root, "session_id", session_id.c_str());
+        cJSON_AddStringToObject(root, "type", "listen");
+        cJSON_AddStringToObject(root, "state", "stop");
+        char* json = cJSON_PrintUnformatted(root);
+        cJSON_Delete(root);
+        if (json == nullptr) return;
+        const esp_err_t result = PublishControl(json);
+        cJSON_free(json);
+        if (result != ESP_OK) {
+            chatai::diagnostics::Add("XIAOZHI_LISTEN", "LOCAL_STOP_RETRY",
+                esp_err_to_name(result));
+            return;
+        }
+
+        last_listening_.store(false);
+        one_shot_local_vad_.store(false);
+        audio_.SetCaptureEnabled(false);
+        const int64_t last_uplink_us = last_uplink_sent_us_.load();
+        char detail[144]{};
+        std::snprintf(detail, sizeof(detail),
+            "silence_threshold_ms=%lu speech_end_to_stop_ms=%lld last_uplink_to_stop_ms=%lld",
+            static_cast<unsigned long>(kOneShotSilenceMs),
+            static_cast<long long>((now_us - silence_started_us) / 1000),
+            static_cast<long long>(last_uplink_us > 0 ? (now_us - last_uplink_us) / 1000 : -1));
+        chatai::diagnostics::Add("VOICE_LATENCY", "UPLINK_FINISHED", detail);
+        chatai::diagnostics::Add("XIAOZHI_LISTEN", "LOCAL_VAD_STOP",
+            "manual one-shot listen stop sent after stable local silence");
     }
 
     bool WaitForAudioIdle() {
@@ -820,6 +966,8 @@ private:
             if (result != ESP_OK && result != ESP_ERR_INVALID_STATE) {
                 ESP_LOGW(kTag, "Dropped downlink Opus frame: %s",
                          esp_err_to_name(result));
+            } else if (result == ESP_OK) {
+                RecordTtsFirstPacket();
             }
             (void)timestamp;
         }
@@ -828,7 +976,10 @@ private:
     void UdpTransmitTask() {
         while (udp_running_.load()) {
             chatai::audio::XiaozhiUplinkFrame frame;
-            if (!audio_.WaitPopUplinkFrame(frame, 100)) continue;
+            if (!audio_.WaitPopUplinkFrame(frame, 50)) {
+                MaybeStopOneShotAfterSilence();
+                continue;
+            }
             if (!udp_running_.load() || !IsListening()) continue;
 
             if (active_transport_ == Transport::kWebSocket) {
@@ -868,14 +1019,8 @@ private:
                              esp_err_to_name(sent));
                     chatai::diagnostics::Add("XIAOZHI_AUDIO", "SEND_FAILED",
                         "transport=websocket");
-                } else if (!uplink_packet_reported_.exchange(true)) {
-                    char detail[112]{};
-                    std::snprintf(detail, sizeof(detail),
-                        "transport=websocket sample_rate=%lu frame_ms=%lu opus_bytes=%lu",
-                        static_cast<unsigned long>(frame.sample_rate),
-                        static_cast<unsigned long>(frame.frame_duration_ms),
-                        static_cast<unsigned long>(frame.payload.size()));
-                    chatai::diagnostics::Add("XIAOZHI_AUDIO", "UPLINK_FIRST_PACKET", detail);
+                } else {
+                    RecordUplinkPacketSent("websocket", frame);
                 }
                 continue;
             }
@@ -910,14 +1055,8 @@ private:
                 ESP_LOGW(kTag, "UDP audio send failed");
                 chatai::diagnostics::Add("XIAOZHI_AUDIO", "SEND_FAILED",
                     "transport=udp");
-            } else if (!uplink_packet_reported_.exchange(true)) {
-                char detail[112]{};
-                std::snprintf(detail, sizeof(detail),
-                    "transport=udp sample_rate=%lu frame_ms=%lu opus_bytes=%lu",
-                    static_cast<unsigned long>(frame.sample_rate),
-                    static_cast<unsigned long>(frame.frame_duration_ms),
-                    static_cast<unsigned long>(frame.payload.size()));
-                chatai::diagnostics::Add("XIAOZHI_AUDIO", "UPLINK_FIRST_PACKET", detail);
+            } else {
+                RecordUplinkPacketSent("udp", frame);
             }
         }
     }
@@ -958,6 +1097,8 @@ private:
         if (result != ESP_OK && result != ESP_ERR_INVALID_STATE) {
             ESP_LOGW(kTag, "Dropped WebSocket downlink Opus frame: %s",
                      esp_err_to_name(result));
+        } else if (result == ESP_OK) {
+            RecordTtsFirstPacket();
         }
         if (payload_size == 0) return;
         (void)timestamp;
@@ -998,7 +1139,8 @@ private:
         cJSON_AddStringToObject(root, "session_id", session_id.c_str());
         cJSON_AddStringToObject(root, "type", "listen");
         cJSON_AddStringToObject(root, "state", listening ? "start" : "stop");
-        const char* mode = chat_enabled_.load() ? "auto" : "manual";
+        const char* mode = (chat_enabled_.load() && !one_shot_local_vad_.load())
+            ? "auto" : "manual";
         if (listening) cJSON_AddStringToObject(root, "mode", mode);
         char* json = cJSON_PrintUnformatted(root);
         cJSON_Delete(root);
@@ -1053,6 +1195,10 @@ private:
 
     void StopAudioChannel() {
         notify_player_.Stop();
+        one_shot_local_vad_.store(false);
+        speech_started_us_.store(0);
+        speech_ended_us_.store(0);
+        tts_started_us_.store(0);
         SendGoodbye();
         {
             std::lock_guard<std::mutex> state_lock(listening_mutex_);
@@ -1119,6 +1265,17 @@ private:
     std::atomic<bool> last_listening_{false};
     std::atomic<bool> tts_active_{false};
     std::atomic<bool> uplink_packet_reported_{false};
+    std::atomic<bool> one_shot_local_vad_{false};
+    std::atomic<bool> vad_speaking_{false};
+    std::atomic<bool> tts_first_packet_reported_{false};
+    std::atomic<bool> tts_playback_reported_{false};
+    std::atomic<int64_t> listen_started_us_{0};
+    std::atomic<int64_t> speech_started_us_{0};
+    std::atomic<int64_t> speech_ended_us_{0};
+    std::atomic<int64_t> first_uplink_sent_us_{0};
+    std::atomic<int64_t> last_uplink_sent_us_{0};
+    std::atomic<int64_t> tts_started_us_{0};
+    std::atomic<int64_t> last_listen_stop_attempt_us_{0};
     std::mutex channel_mutex_;
     std::mutex listening_mutex_;
     std::mutex hello_mutex_;
