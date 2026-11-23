@@ -188,11 +188,48 @@ void UpdateClockSync() {
     }
 }
 
+void LogClockSnapshot(const char* stage, std::time_t now) {
+    char utc_text[24] = "INVALID";
+    char local_text[24] = "INVALID";
+    if (now >= 1700000000) {
+        std::tm utc_time{};
+        std::tm local_time{};
+        if (gmtime_r(&now, &utc_time) != nullptr) {
+            std::strftime(utc_text, sizeof(utc_text), "%Y-%m-%d %H:%M:%S", &utc_time);
+        }
+        if (localtime_r(&now, &local_time) != nullptr) {
+            std::strftime(local_text, sizeof(local_text), "%Y-%m-%d %H:%M:%S", &local_time);
+        }
+    }
+    const char* timezone = std::getenv("TZ");
+    ESP_LOGI(kTag,
+             "CLOCK_CHECK stage=%s epoch=%lld utc=%s local=%s tz=%s sntp_status=%d synced=%d",
+             stage,
+             static_cast<long long>(now),
+             utc_text,
+             local_text,
+             timezone != nullptr ? timezone : "(unset)",
+             static_cast<int>(esp_sntp_get_sync_status()),
+             g_time_synced ? 1 : 0);
+}
+
+bool g_clock_first_snapshot_logged = false;
+bool g_clock_sync_snapshot_logged = false;
+
 void DrawClock() {
     UpdateClockSync();
 
-    char clock_text[9] = "--:--:--";
     const std::time_t now = std::time(nullptr);
+    if (!g_clock_first_snapshot_logged) {
+        LogClockSnapshot("first_display", now);
+        g_clock_first_snapshot_logged = true;
+    }
+    if (g_time_synced && !g_clock_sync_snapshot_logged) {
+        LogClockSnapshot("ntp_completed", now);
+        g_clock_sync_snapshot_logged = true;
+    }
+
+    char clock_text[9] = "--:--:--";
     if (g_time_synced && now >= 1700000000) {
         std::tm local_time{};
         if (localtime_r(&now, &local_time) != nullptr) {
