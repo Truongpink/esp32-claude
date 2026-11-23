@@ -38,6 +38,16 @@ esp_err_t XiaozhiAudioRuntime::Initialize() {
     }
 
     AudioServiceCallbacks callbacks;
+    callbacks.on_playback_started = [this]() {
+        PlaybackStartedCallback callback;
+        { std::lock_guard<std::mutex> lock(playback_callback_mutex_); callback = playback_started_callback_; }
+        if (callback) callback();
+    };
+    callbacks.on_vad_change = [this](bool speaking) {
+        VadCallback callback;
+        { std::lock_guard<std::mutex> lock(playback_callback_mutex_); callback = vad_callback_; }
+        if (callback) callback(speaking);
+    };
     callbacks.on_playback_progress = [this](uint32_t id, uint32_t position) {
         PlaybackProgressCallback callback;
         { std::lock_guard<std::mutex> lock(playback_callback_mutex_); callback = playback_progress_callback_; }
@@ -202,6 +212,16 @@ void XiaozhiAudioRuntime::SetPlaybackCallbacks(PlaybackProgressCallback progress
     std::lock_guard<std::mutex> lock(playback_callback_mutex_);
     playback_progress_callback_ = std::move(progress);
     playback_drained_callback_ = std::move(drained);
+}
+
+void XiaozhiAudioRuntime::SetPlaybackStartedCallback(PlaybackStartedCallback started) {
+    std::lock_guard<std::mutex> lock(playback_callback_mutex_);
+    playback_started_callback_ = std::move(started);
+}
+
+void XiaozhiAudioRuntime::SetVadCallback(VadCallback callback) {
+    std::lock_guard<std::mutex> lock(playback_callback_mutex_);
+    vad_callback_ = std::move(callback);
 }
 
 esp_err_t XiaozhiAudioRuntime::SubmitNotificationFrame(
