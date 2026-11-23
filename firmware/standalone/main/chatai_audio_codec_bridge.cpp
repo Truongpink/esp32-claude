@@ -3,7 +3,6 @@
 #include "audio_manager.h"
 
 #include <algorithm>
-#include <cmath>
 #include <climits>
 #include <cmath>
 
