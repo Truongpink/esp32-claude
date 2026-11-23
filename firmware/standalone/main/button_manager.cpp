@@ -204,7 +204,7 @@ esp_err_t Initialize() {
         return ESP_FAIL;
     }
 
-    if (xTaskCreate(ButtonTask, "chatai_buttons", 3072, nullptr, 4, nullptr) != pdPASS) {
+    if (xTaskCreate(ButtonTask, "chatai_buttons", 6144, nullptr, 4, nullptr) != pdPASS) {
         g_initialized.store(false);
         return ESP_ERR_NO_MEM;
     }
