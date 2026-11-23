@@ -1,5 +1,8 @@
 #include "audio_service.h"
+#include "diagnostic_manager.h"
+
 #include <esp_log.h>
+#include <freertos/semphr.h>
 #include <cstring>
 
 #define RATE_CVT_CFG(_src_rate, _dest_rate, _channel)                                        \
@@ -903,17 +906,75 @@ bool AudioService::IsAfeWakeWord() {
 }
 
 bool AudioService::InitializeAudioEngine() {
+    // ESP-SR AFE construction is synchronous and can use substantial stack.
+    // BOOT handling reaches this method from the 3072-byte button task, so run
+    // the vendor initialization on a temporary task with a dedicated stack.
+    constexpr uint32_t kAfeInitTaskStackSize = 8192;
+
+    std::lock_guard<std::mutex> init_lock(audio_engine_init_mutex_);
     if (!audio_engine_) {
         return false;
     }
     if (audio_engine_initialized_) {
         return true;
     }
-    if (!audio_engine_->Initialize(codec_, OPUS_FRAME_DURATION_MS, models_list_)) {
-        ESP_LOGE(TAG, "Failed to initialize audio engine");
+
+    SemaphoreHandle_t completed = xSemaphoreCreateBinary();
+    if (completed == nullptr) {
+        ESP_LOGE(TAG, "Could not allocate AFE initialization semaphore");
+        chatai::diagnostics::SetCrashContext("AFE_INIT_NO_SEMAPHORE", nullptr);
         return false;
     }
+
+    struct InitContext {
+        AudioService* service;
+        SemaphoreHandle_t completed;
+        bool success;
+    } context{this, completed, false};
+
+    chatai::diagnostics::SetCrashContext(
+        "AFE_INIT_BEGIN", "task=audio_afe_init stack=8192");
+    chatai::diagnostics::Add("AFE_INIT", "INFO",
+                             "starting ESP-SR initialization on dedicated 8192-byte task");
+
+    const BaseType_t task_result = xTaskCreate(
+        [](void* arg) {
+            auto* init = static_cast<InitContext*>(arg);
+            init->success = init->service->audio_engine_->Initialize(
+                init->service->codec_, OPUS_FRAME_DURATION_MS,
+                init->service->models_list_);
+            ESP_LOGI(TAG, "AFE init task finished: success=%d stack_high_water=%u",
+                     init->success ? 1 : 0,
+                     static_cast<unsigned>(uxTaskGetStackHighWaterMark(nullptr)));
+            xSemaphoreGive(init->completed);
+            vTaskDelete(nullptr);
+        },
+        "audio_afe_init", kAfeInitTaskStackSize, &context, 3, nullptr);
+
+    if (task_result != pdPASS) {
+        vSemaphoreDelete(completed);
+        ESP_LOGE(TAG, "Could not create dedicated AFE initialization task");
+        chatai::diagnostics::SetCrashContext("AFE_INIT_TASK_CREATE_FAIL", nullptr);
+        chatai::diagnostics::Add("AFE_INIT", "FAIL",
+                                 "could not create dedicated initialization task");
+        return false;
+    }
+
+    xSemaphoreTake(completed, portMAX_DELAY);
+    vSemaphoreDelete(completed);
+
+    if (!context.success) {
+        ESP_LOGE(TAG, "Failed to initialize audio engine");
+        chatai::diagnostics::SetCrashContext("AFE_INIT_FAILED", nullptr);
+        chatai::diagnostics::Add("AFE_INIT", "FAIL",
+                                 "ESP-SR audio engine initialization returned false");
+        return false;
+    }
+
     audio_engine_initialized_ = true;
     audio_engine_->EnableDeviceAec(device_aec_enabled_);
+    chatai::diagnostics::SetCrashContext("AFE_INIT_DONE", nullptr);
+    chatai::diagnostics::Add("AFE_INIT", "OK",
+                             "ESP-SR audio engine initialized on dedicated task");
     return true;
 }
