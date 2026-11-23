@@ -518,7 +518,7 @@ private:
             remote_sequence_ = 0;
         }
 
-        if (!WaitForGeminiAudioRelease()) return ESP_ERR_TIMEOUT;
+        if (!WaitForAudioIdle()) return ESP_ERR_TIMEOUT;
 
         esp_err_t result = audio_.Start();
         if (result != ESP_OK) {
@@ -574,8 +574,7 @@ private:
             frame_duration_ms_ = frame_duration;
         }
 
-        SuspendGeminiAudio();
-        if (!WaitForGeminiAudioRelease()) return ESP_ERR_TIMEOUT;
+        if (!WaitForAudioIdle()) return ESP_ERR_TIMEOUT;
 
         const esp_err_t result = audio_.Start();
         if (result != ESP_OK) return result;
