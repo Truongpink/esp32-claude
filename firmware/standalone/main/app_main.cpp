@@ -16,6 +16,7 @@
 #include "gemini_settings.h"
 #include "firmware_info.h"
 #include "button_manager.h"
+#include "chatai_xiaozhi_client.h"
 #include "diagnostic_manager.h"
 #include "status_led_manager.h"
 
@@ -198,11 +199,17 @@ extern "C" void app_main(void) {
         ESP_LOGW(kTag, "Hardware button initialization failed: %s", esp_err_to_name(buttons_result));
     }
 
-    // Voice isolation test: do not initialize Gemini or Xiaozhi.
-    // No voice worker, WebSocket, reconnect loop, or voice audio ownership starts.
-    chatai::diagnostics::Add("VOICE_CLIENT", "DISABLED",
-                             "Gemini Live and Xiaozhi voice clients disabled");
+    // Xiaozhi is the sole voice client. Gemini Live remains fully disabled.
+    const esp_err_t xiaozhi_result = chatai::xiaozhi::Initialize();
+    if (xiaozhi_result != ESP_OK) {
+        ESP_LOGE(kTag, "Xiaozhi client initialization failed: %s",
+                 esp_err_to_name(xiaozhi_result));
+        chatai::diagnostics::Add("XIAOZHI", "INIT_FAILED",
+                                 esp_err_to_name(xiaozhi_result));
+    } else {
+        chatai::diagnostics::Add("VOICE_CLIENT", "XIAOZHI_ONLY",
+                                 "Gemini Live disabled; Xiaozhi session manager started");
+    }
 
-    ESP_LOGI(kTag, "ESP-IDF platform, native Wi-Fi and OLED startup completed");
-    ESP_LOGW(kTag, "All voice clients disabled for hardware isolation test");
+    ESP_LOGI(kTag, "ESP-IDF platform, native Wi-Fi, OLED and Xiaozhi startup completed");
 }
