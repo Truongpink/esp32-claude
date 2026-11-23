@@ -166,6 +166,7 @@ void ButtonTask(void*) {
                     chat_before ? 1 : 0, chatai::gemini::IsChatEnabled() ? 1 : 0,
                     gemini_ready ? 1 : 0);
                 chatai::diagnostics::SetBootContext("BOOT_ACTION", boot_detail);
+                chatai::diagnostics::SetCrashContext("BOOT_ACTION_DONE", boot_detail);
                 chatai::diagnostics::Add("BOOT_ACTION", "INFO", boot_detail);
             }
         }
