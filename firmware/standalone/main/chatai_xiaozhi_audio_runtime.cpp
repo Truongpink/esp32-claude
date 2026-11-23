@@ -113,7 +113,7 @@ esp_err_t XiaozhiAudioRuntime::Start() {
 
     const esp_err_t result = service_.Start();
     if (result == ESP_OK) {
-        capture_enabled_ = false;
+        capture_enabled_.store(false);
         running_ = true;
         chatai::diagnostics::Add("AUDIO_RUNTIME", "STARTED",
                                  "audio codec and AudioService running");
@@ -134,7 +134,7 @@ esp_err_t XiaozhiAudioRuntime::Stop() {
 
     service_.EnableVoiceProcessing(false);
     service_.RequestInputStop();
-    capture_enabled_ = false;
+    capture_enabled_.store(false);
     service_.Stop();
 
     const esp_err_t codec_result = codec_.Stop();
@@ -144,7 +144,7 @@ esp_err_t XiaozhiAudioRuntime::Stop() {
 
 void XiaozhiAudioRuntime::SetCaptureEnabled(bool enabled) {
     std::lock_guard<std::mutex> lock(lifecycle_mutex_);
-    if (!running_ || enabled == capture_enabled_) {
+    if (!running_ || enabled == capture_enabled_.load()) {
         return;
     }
 
@@ -155,13 +155,13 @@ void XiaozhiAudioRuntime::SetCaptureEnabled(bool enabled) {
                 "AudioService EnableVoiceProcessing(true) returned false");
             return;
         }
-        capture_enabled_ = true;
+        capture_enabled_.store(true);
         chatai::diagnostics::Add("AFE_CAPTURE", "STARTED",
             "microphone capture and voice processing enabled");
     } else {
         service_.EnableVoiceProcessing(false);
         service_.RequestInputStop();
-        capture_enabled_ = false;
+        capture_enabled_.store(false);
         chatai::diagnostics::Add("AFE_CAPTURE", "STOPPED",
             "microphone capture disabled");
     }
