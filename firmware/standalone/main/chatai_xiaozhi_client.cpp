@@ -482,7 +482,7 @@ private:
 
     void HandleNotify(const cJSON* root) {
         if (!session_ready_.load() || tts_active_.load() || IsListening() ||
-            notify_player_.IsBusy()) {
+            !audio_.IsPlaybackIdle() || notify_player_.IsBusy()) {
             chatai::diagnostics::Add("XIAOZHI_NOTIFY", "IGNORED", "device_not_idle_or_busy");
             return;
         }
