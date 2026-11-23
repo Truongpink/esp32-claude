@@ -16,7 +16,7 @@ idf_component_register(
          "chatai_xiaozhi_mqtt.cpp" "chatai_xiaozhi_websocket.cpp"
          "chatai_xiaozhi_client.cpp"
          "button_manager.cpp" "gemini_settings.cpp"
-         "gemini_live_client.cpp" "web_admin.cpp" "diagnostic_manager.cpp"
+         "web_admin.cpp" "diagnostic_manager.cpp"
          "status_led_manager.cpp"
     INCLUDE_DIRS "."
     REQUIRES app_update spi_flash nvs_flash esp_event esp_netif esp_wifi lwip esp_http_server
