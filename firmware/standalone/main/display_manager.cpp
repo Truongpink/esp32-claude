@@ -190,10 +190,14 @@ void DrawClock() {
 
 void UpdateFooter() {
     const bool wifi_ready = chatai::network::NetworkManager::IsConnected();
+    const std::string ip_address = wifi_ready
+        ? chatai::network::NetworkManager::GetIpAddress()
+        : std::string{};
+    const bool has_ip = !ip_address.empty() && ip_address != "0.0.0.0";
     const bool server_ready = chatai::xiaozhi::IsReady();
     char next[sizeof(g_footer)]{};
-    std::snprintf(next, sizeof(next), "CHATAI TPIOS - WIFI %s - SERVER %s",
-                  wifi_ready ? "OK" : "WAIT",
+    std::snprintf(next, sizeof(next), "CHATAI TPIOS - IP: %s - SERVER %s",
+                  has_ip ? ip_address.c_str() : "WAIT",
                   server_ready ? "READY" : "WAIT");
     if (std::strcmp(next, g_footer) == 0) return;
     std::snprintf(g_footer, sizeof(g_footer), "%s", next);
