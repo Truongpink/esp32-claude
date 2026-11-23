@@ -99,10 +99,28 @@ esp_err_t XiaozhiAudioRuntime::Start() {
         send_queue_notified_ = false;
     }
 
+    // AudioService::Stop() is paired with codec_.Stop() below. Re-arm the
+    // ChatAI I2S bridge before restarting the service for a new Xiaozhi session.
+    codec_.Start();
+    const esp_err_t codec_error = codec_.last_error();
+    if (codec_error != ESP_OK) {
+        ESP_LOGE(kTag, "Audio codec restart failed: %s",
+                 esp_err_to_name(codec_error));
+        chatai::diagnostics::Add("AUDIO_RUNTIME", "CODEC_RESTART_FAILED",
+                                 esp_err_to_name(codec_error));
+        return codec_error;
+    }
+
     const esp_err_t result = service_.Start();
     if (result == ESP_OK) {
         capture_enabled_ = false;
         running_ = true;
+        chatai::diagnostics::Add("AUDIO_RUNTIME", "STARTED",
+                                 "audio codec and AudioService running");
+    } else {
+        codec_.Stop();
+        chatai::diagnostics::Add("AUDIO_RUNTIME", "SERVICE_START_FAILED",
+                                 esp_err_to_name(result));
     }
     return result;
 }
