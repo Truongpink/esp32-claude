@@ -1,6 +1,7 @@
 #include "afe_audio_engine.h"
 
 #include <cassert>
+#include <cstdio>
 #include <cstring>
 #include <string_view>
 #include <vector>
@@ -12,6 +13,7 @@
 #include <esp_vadn_models.h>
 
 #include "audio_service.h"
+#include "diagnostic_manager.h"
 
 #define TAG "AfeAudioEngine"
 
@@ -105,8 +107,15 @@ bool AfeAudioEngine::Initialize(AudioCodec* codec, int frame_duration_ms,
     afe_config->aec_nlp_level = AEC_NLP_LEVEL_VERYAGGR;
     afe_config->ns_init = false;
     afe_config->vad_init = kUseAfeForVoiceProcessing;
-    afe_config->vad_mode = VAD_MODE_0;
+    // ESP-SR documents higher VAD modes as more likely to trigger on speech.
+    afe_config->vad_mode = VAD_MODE_1;
+    afe_config->vad_min_speech_ms = 64;
     afe_config->vad_min_noise_ms = 100;
+    // WebRTC AGC lifts quiet speech while compressing louder input.
+    afe_config->agc_init = kUseAfeForVoiceProcessing;
+    afe_config->agc_mode = AFE_AGC_MODE_WEBRTC;
+    afe_config->agc_compression_gain_db = 9;
+    afe_config->agc_target_level_dbfs = 3;
     if (vad_model_name != nullptr) {
         afe_config->vad_model_name = vad_model_name;
     }
@@ -398,10 +407,18 @@ void AfeAudioEngine::HandleVoiceResult(const afe_fetch_result_t* result) {
     if (vad_state_change_callback_) {
         if (result->vad_state == VAD_SPEECH) {
             if (!is_speaking_.exchange(true)) {
+                char detail[96]{};
+                std::snprintf(detail, sizeof(detail), "state=SPEECH input_level_dbfs=%.1f",
+                              static_cast<double>(result->data_volume));
+                chatai::diagnostics::Add("MIC_VAD", "SPEECH", detail);
                 vad_state_change_callback_(true);
             }
         } else if (result->vad_state == VAD_SILENCE) {
             if (is_speaking_.exchange(false)) {
+                char detail[96]{};
+                std::snprintf(detail, sizeof(detail), "state=SILENCE input_level_dbfs=%.1f",
+                              static_cast<double>(result->data_volume));
+                chatai::diagnostics::Add("MIC_VAD", "SILENCE", detail);
                 vad_state_change_callback_(false);
             }
         }

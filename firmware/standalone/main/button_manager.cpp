@@ -114,11 +114,12 @@ void ButtonTask(void*) {
 
         if (UpdateButton(g_boot, now)) {
             ReportButtonTransition("BOOT", g_boot);
-            if (!g_boot.stable_pressed) {
-                const bool provisioning = chatai::network::NetworkManager::IsProvisioningActive();
+            if (g_boot.stable_pressed) {
+                const bool provisioning =
+                    chatai::network::NetworkManager::IsProvisioningActive();
                 char boot_start_detail[160]{};
                 std::snprintf(boot_start_detail, sizeof(boot_start_detail),
-                    "uptime_ms=%llu phase=before_dispatch provisioning=%d voice_clients=disabled button_stack_watermark=%u",
+                    "uptime_ms=%llu phase=before_one_shot_start provisioning=%d button_stack_watermark=%u",
                     static_cast<unsigned long long>(esp_timer_get_time() / 1000),
                     provisioning ? 1 : 0,
                     static_cast<unsigned>(uxTaskGetStackHighWaterMark(nullptr)));
@@ -126,32 +127,28 @@ void ButtonTask(void*) {
                 chatai::diagnostics::SetBootContext("BOOT_ACTION_BEGIN", boot_start_detail);
                 chatai::diagnostics::Add("BOOT_ACTION", "BEGIN", boot_start_detail);
 
-                const bool chat_enabled = !provisioning &&
-                    !chatai::xiaozhi::IsChatEnabled();
                 if (provisioning) {
                     chatai::display::Notify("WI-FI", "Cấu hình qua Web Admin");
-                    ESP_LOGI(kTag, "BOOT clicked while Wi-Fi provisioning is active");
+                    ESP_LOGI(kTag, "BOOT pressed while Wi-Fi provisioning is active");
                 } else {
-                    chatai::xiaozhi::SetChatEnabled(chat_enabled);
+                    const bool started = chatai::xiaozhi::StartConversation();
                     const char* message = !chatai::xiaozhi::IsReady()
                         ? "Đang kết nối Xiaozhi"
-                        : (chat_enabled ? "Đã bật nghe liên tục" : "Đã tắt nghe");
+                        : (started ? "Đang nghe - hãy nói" : "Đang xử lý lượt trước");
                     chatai::display::Notify("XIAOZHI", message);
-                    ESP_LOGI(kTag, "Xiaozhi continuous listening %s",
-                             chat_enabled ? "enabled" : "disabled");
+                    ESP_LOGI(kTag, "BOOT one-shot conversation %s",
+                             started ? "started" : "not started");
+                    char boot_detail[160]{};
+                    std::snprintf(boot_detail, sizeof(boot_detail),
+                        "uptime_ms=%llu action=START_ONE_SHOT_LISTEN started=%d xiaozhi_ready=%d listening=%d",
+                        static_cast<unsigned long long>(esp_timer_get_time() / 1000),
+                        started ? 1 : 0,
+                        chatai::xiaozhi::IsReady() ? 1 : 0,
+                        chatai::xiaozhi::IsListening() ? 1 : 0);
+                    chatai::diagnostics::SetBootContext("BOOT_ACTION", boot_detail);
+                    chatai::diagnostics::SetCrashContext("BOOT_ACTION_DONE", boot_detail);
+                    chatai::diagnostics::Add("BOOT_ACTION", "INFO", boot_detail);
                 }
-                const char* action = provisioning ? "PROVISIONING_NOTICE" :
-                    (chat_enabled ? "ENABLE_XIAOZHI_LISTENING" : "DISABLE_XIAOZHI_LISTENING");
-                char boot_detail[160]{};
-                std::snprintf(boot_detail, sizeof(boot_detail),
-                    "uptime_ms=%llu action=%s provisioning=%d xiaozhi_ready=%d chat_enabled=%d",
-                    static_cast<unsigned long long>(esp_timer_get_time() / 1000),
-                    action, provisioning ? 1 : 0,
-                    chatai::xiaozhi::IsReady() ? 1 : 0,
-                    chatai::xiaozhi::IsChatEnabled() ? 1 : 0);
-                chatai::diagnostics::SetBootContext("BOOT_ACTION", boot_detail);
-                chatai::diagnostics::SetCrashContext("BOOT_ACTION_DONE", boot_detail);
-                chatai::diagnostics::Add("BOOT_ACTION", "INFO", boot_detail);
             }
         }
 

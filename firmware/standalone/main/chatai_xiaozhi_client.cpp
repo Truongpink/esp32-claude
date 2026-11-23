@@ -133,6 +133,23 @@ public:
 
     bool IsReady() const { return session_ready_.load(); }
 
+    bool StartConversation() {
+        if (!session_ready_.load() || tts_active_.load() || IsListening()) {
+            chatai::diagnostics::Add("XIAOZHI_PTT", "REJECTED",
+                "session_not_ready_or_previous_turn_active");
+            return false;
+        }
+        chat_enabled_.store(true);
+        UpdateListeningState();
+        if (!last_listening_.load()) {
+            chat_enabled_.store(false);
+            return false;
+        }
+        chatai::diagnostics::Add("XIAOZHI_PTT", "LISTEN_START",
+            "mode=auto; one_shot=true; server_vad_controls_end_of_speech");
+        return true;
+    }
+
     void SetChatEnabled(bool enabled) {
         chat_enabled_.store(enabled);
         UpdateListeningState();
@@ -371,17 +388,33 @@ private:
         } else if (type == "tts") {
             std::string state;
             if (ReadString(root, "state", &state)) {
-                std::lock_guard<std::mutex> state_lock(listening_mutex_);
-                if (!session_ready_.load()) {
-                    cJSON_Delete(root);
-                    return;
+                bool finish_one_shot = false;
+                {
+                    std::lock_guard<std::mutex> state_lock(listening_mutex_);
+                    if (!session_ready_.load()) {
+                        cJSON_Delete(root);
+                        return;
+                    }
+                    if (state == "start") {
+                        tts_active_.store(true);
+                        audio_.SetCaptureEnabled(false);
+                    } else if (state == "stop") {
+                        tts_active_.store(false);
+                        finish_one_shot = chat_enabled_.exchange(false);
+                        if (!finish_one_shot && IsListening()) {
+                            audio_.SetCaptureEnabled(true);
+                        }
+                    }
                 }
                 if (state == "start") {
-                    tts_active_.store(true);
-                    audio_.SetCaptureEnabled(false);
+                    chatai::diagnostics::Add("XIAOZHI_TTS", "START",
+                        "server_started_voice_response");
                 } else if (state == "stop") {
-                    tts_active_.store(false);
-                    if (IsListening()) audio_.SetCaptureEnabled(true);
+                    chatai::diagnostics::Add("XIAOZHI_TTS", "STOP",
+                        finish_one_shot
+                            ? "response_finished; one_shot_session_closed"
+                            : "response_finished");
+                    if (finish_one_shot) UpdateListeningState();
                 }
             }
         } else if (type == "error") {
@@ -973,6 +1006,7 @@ XiaozhiClient g_client;
 
 esp_err_t Initialize() { return g_client.Initialize(); }
 bool IsReady() { return g_client.IsReady(); }
+bool StartConversation() { return g_client.StartConversation(); }
 void SetChatEnabled(bool enabled) { g_client.SetChatEnabled(enabled); }
 bool IsChatEnabled() { return g_client.IsChatEnabled(); }
 void SetPushToTalk(bool pressed) { g_client.SetPushToTalk(pressed); }
