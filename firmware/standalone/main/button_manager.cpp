@@ -13,7 +13,6 @@
 
 #include "audio_manager.h"
 #include "display_manager.h"
-#include "gemini_live_client.h"
 #include "network_manager.h"
 #include "diagnostic_manager.h"
 
@@ -116,45 +115,29 @@ void ButtonTask(void*) {
             ReportButtonTransition("BOOT", g_boot);
             if (!g_boot.stable_pressed) {
                 const bool provisioning = chatai::network::NetworkManager::IsProvisioningActive();
-                const bool speaking_before = chatai::gemini::IsSpeaking();
-                const bool chat_before = chatai::gemini::IsChatEnabled();
-                const bool gemini_ready = chatai::gemini::IsReady();
                 char boot_start_detail[160]{};
                 std::snprintf(boot_start_detail, sizeof(boot_start_detail),
-                    "uptime_ms=%llu phase=before_dispatch provisioning=%d speaking=%d chat_enabled=%d gemini_ready=%d button_stack_watermark=%u",
+                    "uptime_ms=%llu phase=before_dispatch provisioning=%d voice_clients=disabled button_stack_watermark=%u",
                     static_cast<unsigned long long>(esp_timer_get_time() / 1000),
-                    provisioning ? 1 : 0, speaking_before ? 1 : 0,
-                    chat_before ? 1 : 0, gemini_ready ? 1 : 0,
+                    provisioning ? 1 : 0,
                     static_cast<unsigned>(uxTaskGetStackHighWaterMark(nullptr)));
                 chatai::diagnostics::SetCrashContext("BOOT_ACTION_BEGIN", boot_start_detail);
                 chatai::diagnostics::SetBootContext("BOOT_ACTION_BEGIN", boot_start_detail);
                 chatai::diagnostics::Add("BOOT_ACTION", "BEGIN", boot_start_detail);
 
-                const char* action = "NONE";
+                const char* action = provisioning ? "PROVISIONING_NOTICE" : "VOICE_DISABLED_NOTICE";
                 if (provisioning) {
-                    action = "PROVISIONING_NOTICE";
                     chatai::display::Notify("WI-FI", "Cấu hình qua Web Admin");
                     ESP_LOGI(kTag, "BOOT clicked while Wi-Fi provisioning is active");
-                } else if (speaking_before) {
-                    action = "ABORT_PLAYBACK";
-                    chatai::gemini::AbortSpeaking();
-                    chatai::display::Notify("CHAT AI", "Đã dừng phát");
-                    ESP_LOGI(kTag, "BOOT stopped current Gemini playback");
                 } else {
-                    action = chat_before ? "DISABLE_LISTENING" : "ENABLE_LISTENING";
-                    chatai::gemini::SetChatEnabled(!chat_before);
-                    chatai::display::Notify("CHAT AI",
-                        !chat_before ? "Bật nghe liên tục" : "Đã tắt nghe");
-                    ESP_LOGI(kTag, "Chat listening %s",
-                             !chat_before ? "enabled" : "disabled");
+                    chatai::display::Notify("CHAT AI", "Voice đang tắt");
+                    ESP_LOGI(kTag, "BOOT ignored: all voice clients are disabled");
                 }
                 char boot_detail[160]{};
                 std::snprintf(boot_detail, sizeof(boot_detail),
-                    "uptime_ms=%llu action=%s provisioning=%d speaking_before=%d chat_before=%d chat_after=%d gemini_ready=%d",
+                    "uptime_ms=%llu action=%s provisioning=%d voice_clients=disabled",
                     static_cast<unsigned long long>(esp_timer_get_time() / 1000),
-                    action, provisioning ? 1 : 0, speaking_before ? 1 : 0,
-                    chat_before ? 1 : 0, chatai::gemini::IsChatEnabled() ? 1 : 0,
-                    gemini_ready ? 1 : 0);
+                    action, provisioning ? 1 : 0);
                 chatai::diagnostics::SetBootContext("BOOT_ACTION", boot_detail);
                 chatai::diagnostics::SetCrashContext("BOOT_ACTION_DONE", boot_detail);
                 chatai::diagnostics::Add("BOOT_ACTION", "INFO", boot_detail);
@@ -163,10 +146,8 @@ void ButtonTask(void*) {
 
         if (UpdateButton(g_touch, now)) {
             ReportButtonTransition("PTT", g_touch);
-            chatai::gemini::SetPushToTalk(g_touch.stable_pressed);
             chatai::display::Notify("CHAT AI",
-                g_touch.stable_pressed ? "Đang nghe" :
-                (chatai::gemini::IsChatEnabled() ? "Nghe liên tục" : "Đã ngừng nghe"));
+                g_touch.stable_pressed ? "Voice đang tắt" : "Voice đã tắt");
         }
 
         if (UpdateButton(g_volume_up, now)) {
