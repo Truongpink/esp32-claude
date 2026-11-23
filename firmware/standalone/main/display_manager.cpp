@@ -217,13 +217,14 @@ bool g_clock_first_snapshot_logged = false;
 bool g_clock_sync_snapshot_logged = false;
 
 void DrawClock() {
+    if (!g_clock_first_snapshot_logged) {
+        LogClockSnapshot("first_display", std::time(nullptr));
+        g_clock_first_snapshot_logged = true;
+    }
+
     UpdateClockSync();
 
     const std::time_t now = std::time(nullptr);
-    if (!g_clock_first_snapshot_logged) {
-        LogClockSnapshot("first_display", now);
-        g_clock_first_snapshot_logged = true;
-    }
     if (g_time_synced && !g_clock_sync_snapshot_logged) {
         LogClockSnapshot("ntp_completed", now);
         g_clock_sync_snapshot_logged = true;
