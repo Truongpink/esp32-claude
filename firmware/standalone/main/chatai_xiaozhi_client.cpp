@@ -166,10 +166,12 @@ public:
         last_listen_stop_attempt_us_.store(0);
         listen_started_us_.store(esp_timer_get_time());
         one_shot_local_vad_.store(true);
+        one_shot_conversation_.store(true);
         chat_enabled_.store(true);
         if (!UpdateListeningState() || !last_listening_.load()) {
             chat_enabled_.store(false);
             one_shot_local_vad_.store(false);
+            one_shot_conversation_.store(false);
             chatai::diagnostics::Add("XIAOZHI_PTT", "START_FAILED",
                 "listen_start_control_not_confirmed");
             return false;
@@ -180,8 +182,14 @@ public:
     }
 
     void SetChatEnabled(bool enabled) {
-        if (enabled && notify_player_.IsBusy()) return;
+        if (enabled && notify_player_.IsBusy()) {
+            notify_player_.Stop();
+            audio_.ResetNotificationPlayback();
+        }
+        one_shot_local_vad_.store(false);
+        one_shot_conversation_.store(false);
         chat_enabled_.store(enabled);
+        if (enabled) listen_started_us_.store(esp_timer_get_time());
         UpdateListeningState();
     }
 
@@ -366,6 +374,8 @@ private:
             push_to_talk_.store(false);
             last_listening_.store(false);
             tts_active_.store(false);
+            one_shot_local_vad_.store(false);
+            one_shot_conversation_.store(false);
             chatai::diagnostics::Add("XIAOZHI_SESSION", "RETRY",
                 "next OTA/session attempt scheduled after 15000 ms");
             vTaskDelay(pdMS_TO_TICKS(kRetryDelayMs));
@@ -464,8 +474,11 @@ private:
                     } else if (state == "stop") {
                         tts_active_.store(false);
                         one_shot_local_vad_.store(false);
-                        finish_one_shot = chat_enabled_.exchange(false);
-                        if (!finish_one_shot && IsListening()) {
+                        finish_one_shot = one_shot_conversation_.exchange(false);
+                        if (finish_one_shot) {
+                            chat_enabled_.store(false);
+                        }
+                        if (IsListening()) {
                             audio_.SetCaptureEnabled(true);
                         }
                     }
@@ -1271,6 +1284,7 @@ private:
     std::atomic<bool> tts_active_{false};
     std::atomic<bool> uplink_packet_reported_{false};
     std::atomic<bool> one_shot_local_vad_{false};
+    std::atomic<bool> one_shot_conversation_{false};
     std::atomic<bool> vad_speaking_{false};
     std::atomic<bool> tts_first_packet_reported_{false};
     std::atomic<bool> tts_playback_reported_{false};
