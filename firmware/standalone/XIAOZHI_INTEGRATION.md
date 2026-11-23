@@ -18,7 +18,7 @@ The existing ChatAI standalone firmware remains the application and hardware own
 - `main/network_manager.*` owns Wi-Fi, provisioning, and the HTTP server lifecycle.
 - `main/web_admin.*` owns the existing Web Admin routes and embedded page.
 - `main/display_manager.*`, `main/button_manager.*`, and `main/diagnostic_manager.*` remain in place.
-- `main/gemini_live_client.*` and Gemini settings remain in the tree for a later phase; this phase does not remove or rewrite them.
+- `main/gemini_live_client.*` and Gemini settings remain in the tree for a later phase; Gemini is not initialized, compiled, or used by the Xiaozhi voice path.
 - The existing 16 MB partition table and PSRAM defaults are unchanged.
 
 ## Integration findings from upstream v2.6.0
@@ -37,7 +37,7 @@ The upstream application also assumes its own Board, NetworkInterface, Settings,
 - Added `XiaozhiAudioRuntime` with separate FreeRTOS microphone-capture and speaker-playback tasks. It reuses the existing AudioManager I2S channels; it does not create another I2S driver.
 - The runtime exposes a bounded uplink Opus queue for the future network task and accepts complete downlink Opus packets from that task. Both queues are limited to four packets; the oldest packet is dropped when full to bound real-time latency.
 - The current runtime accepts 24 kHz mono / 60 ms downlink only, matching the standard Xiaozhi server hello and ChatAI speaker rate. Other negotiated formats are rejected until a resampler is integrated; they are not played at the wrong speed.
-- `app_main` now initializes the Xiaozhi session manager after the existing Gemini client; the manager waits for Wi-Fi and performs OTA discovery in its own worker task.
+- `app_main` initializes the Xiaozhi session manager after ChatAI Wi-Fi, display and I2S setup; Gemini Live remains disabled. The manager waits for Wi-Fi and performs OTA discovery in its own worker task.
 - Runtime lifecycle waits for both worker tasks to exit before stopping the codec or disabling I2S. Keep the runtime object alive for the full duration of any active session.
 - Added `ChatAI Xiaozhi OTA config discovery` against the pinned upstream default endpoint `https://api.tenclass.net/xiaozhi/ota/`. It sends a version-2 device report over HTTPS with certificate-bundle verification, a hardware MAC, and a stable UUID v4 persisted in the dedicated `chatai_xiaozhi` NVS namespace.
 - The OTA report includes the running app/chip/partition metadata and explicitly advertises MCP, AEC, UDP probe and glyph push as unavailable; it does not claim unsupported features.
@@ -47,7 +47,7 @@ The upstream application also assumes its own Board, NetworkInterface, Settings,
 - Added the MQTT hello exchange and UDP audio session manager. It validates the negotiated server format (24 kHz mono / 60 ms), opens a connected UDP socket, imports the AES-128 key into PSA Crypto, encrypts/decrypts the 16-byte Xiaozhi audio header and Opus payload with AES-CTR, and enforces monotonically increasing receive sequence numbers.
 - Before HTTPS OTA/activation, the client synchronizes system time through ESP-NETIF SNTP when the clock is invalid, then applies the OTA `server_time` value for subsequent TLS sessions. The activation-v1 poll requires a non-empty server challenge but sends the documented empty JSON body and the same Device-Id/Client-Id headers.
 - The session manager starts the existing Xiaozhi audio runtime only after a valid hello response. The microphone peripheral stays disabled while idle and is enabled only after a listen-start command; server TTS start/stop pauses and resumes capture. BOOT toggles continuous listening and the existing PTT touch input controls manual listening while a Xiaozhi session is ready.
-- When Xiaozhi takes the audio session, Gemini continuous listening and PTT are suspended and any active Gemini playback is aborted. The previous Gemini continuous-listening setting is restored after the Xiaozhi session ends; Gemini source/settings and the Web Admin baseline remain intact.
+- Xiaozhi is the only enabled voice client. Its audio runtime owns microphone capture and speaker playback for the duration of a session; no Gemini worker or Gemini audio arbitration is started.
 - The manager honors OTA transport precedence: MQTT+UDP is used when supplied; otherwise the WebSocket adapter uses the OTA URL/token and Device-Id/Client-Id/Protocol-Version handshake headers. It supports raw Opus WebSocket frames (version 1) and the version 2/3 binary headers. Both transports share the same bounded audio runtime and listen-state controls.
 
 The board-neutral header must remain definition-compatible with the pinned upstream declaration. Do not compile upstream `audio_codec.cc`, which reads Xiaozhi `Settings` and is not part of ChatAI's settings ownership.
