@@ -192,6 +192,7 @@ esp_err_t BeginScan() {
         char detail[64]{};
         std::snprintf(detail, sizeof(detail), "ble_hs_id_infer_auto rc=%d", rc);
         chatai::diagnostics::Add("BLE_SCAN", "FAIL", detail);
+        chatai::diagnostics::ClearCrashContext();
         chatai::display::SetBluetoothStatus(
             chatai::display::BluetoothStatus::kError, GetDeviceCount(), rc);
         return ESP_FAIL;
@@ -311,6 +312,7 @@ void InitializeNimbleTask(void*) {
         chatai::display::SetBluetoothStatus(
             chatai::display::BluetoothStatus::kError, GetDeviceCount(), result);
         chatai::diagnostics::Add("BLE_INIT", "FAIL", esp_err_to_name(result));
+        chatai::diagnostics::ClearCrashContext();
         ESP_LOGE(kTag, "NimBLE initialization failed: %s",
                  esp_err_to_name(result));
         vTaskDelete(nullptr);
