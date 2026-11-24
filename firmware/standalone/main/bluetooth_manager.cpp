@@ -1,5 +1,6 @@
 #include "bluetooth_manager.h"
 #include "display_manager.h"
+#include "diagnostic_manager.h"
 
 #include <algorithm>
 #include <array>
@@ -181,6 +182,9 @@ esp_err_t BeginScan() {
     if (rc != 0) {
         g_scan_requested.store(false);
         g_last_error.store(rc);
+        char detail[64]{};
+        std::snprintf(detail, sizeof(detail), "ble_hs_id_infer_auto rc=%d", rc);
+        chatai::diagnostics::Add("BLE_SCAN", "FAIL", detail);
         chatai::display::SetBluetoothStatus(
             chatai::display::BluetoothStatus::kError, GetDeviceCount(), rc);
         return ESP_FAIL;
@@ -190,7 +194,6 @@ esp_err_t BeginScan() {
     parameters.passive = 1;
     parameters.filter_duplicates = 0;
 
-    g_scanning.store(true);
     rc = ble_gap_disc(own_address_type, kScanDurationMs, &parameters,
                       [](ble_gap_event* event, void*) -> int {
         switch (event->type) {
@@ -208,6 +211,7 @@ esp_err_t BeginScan() {
                 g_scan_requested.store(false);
                 chatai::display::SetBluetoothStatus(
                     chatai::display::BluetoothStatus::kComplete, GetDeviceCount(), 0);
+                chatai::diagnostics::Add("BLE_SCAN", "COMPLETE", "BLE discovery completed");
                 break;
             default:
                 break;
@@ -219,13 +223,18 @@ esp_err_t BeginScan() {
         g_scanning.store(false);
         g_scan_requested.store(false);
         g_last_error.store(rc);
+        char detail[64]{};
+        std::snprintf(detail, sizeof(detail), "ble_gap_disc rc=%d", rc);
+        chatai::diagnostics::Add("BLE_SCAN", "FAIL", detail);
         chatai::display::SetBluetoothStatus(
             chatai::display::BluetoothStatus::kError, GetDeviceCount(), rc);
         ESP_LOGW(kTag, "Could not start BLE discovery: rc=%d", rc);
         return ESP_FAIL;
     }
+    g_scanning.store(true);
     g_scan_requested.store(false);
     g_last_error.store(0);
+    chatai::diagnostics::Add("BLE_SCAN", "STARTED", "passive=1 duration_ms=10000");
     chatai::display::SetBluetoothStatus(
         chatai::display::BluetoothStatus::kScanning, GetDeviceCount(), 0);
     ESP_LOGI(kTag, "Passive BLE scan started for %ld ms",
@@ -235,6 +244,7 @@ esp_err_t BeginScan() {
 
 void OnSync() {
     g_host_synced.store(true);
+    chatai::diagnostics::Add("BLE_HOST", "SYNCED", "NimBLE host synchronized");
     ESP_LOGI(kTag, "NimBLE host synchronized");
     if (g_scan_requested.load()) {
         const esp_err_t result = BeginScan();
@@ -257,6 +267,9 @@ void OnReset(int reason) {
     g_scanning.store(false);
     g_scan_requested.store(false);
     g_last_error.store(reason);
+    char detail[64]{};
+    std::snprintf(detail, sizeof(detail), "NimBLE reset reason=%d", reason);
+    chatai::diagnostics::Add("BLE_HOST", "RESET", detail);
     chatai::display::SetBluetoothStatus(
         chatai::display::BluetoothStatus::kError, GetDeviceCount(), reason);
     ESP_LOGW(kTag, "NimBLE host reset: reason=%d", reason);
@@ -268,6 +281,7 @@ void HostTask(void*) {
 }
 
 void InitializeNimbleTask(void*) {
+    chatai::diagnostics::Add("BLE_INIT", "START", "nimble_port_init");
     const esp_err_t result = nimble_port_init();
     if (result != ESP_OK) {
         g_scan_requested.store(false);
@@ -275,6 +289,7 @@ void InitializeNimbleTask(void*) {
         g_last_error.store(result);
         chatai::display::SetBluetoothStatus(
             chatai::display::BluetoothStatus::kError, GetDeviceCount(), result);
+        chatai::diagnostics::Add("BLE_INIT", "FAIL", esp_err_to_name(result));
         ESP_LOGE(kTag, "NimBLE initialization failed: %s",
                  esp_err_to_name(result));
         vTaskDelete(nullptr);
@@ -284,6 +299,7 @@ void InitializeNimbleTask(void*) {
     ble_hs_cfg.reset_cb = OnReset;
     ble_hs_cfg.sync_cb = OnSync;
     g_initialized.store(true);
+    chatai::diagnostics::Add("BLE_INIT", "OK", "NimBLE initialized; starting host task");
     ESP_LOGI(kTag, "NimBLE initialized in BLE worker task");
     nimble_port_freertos_init(HostTask);
     g_initializing.store(false);
@@ -304,6 +320,7 @@ esp_err_t StartScan() {
         }
         g_last_error.store(0);
         g_scan_requested.store(true);
+        chatai::diagnostics::Add("BLE_SCAN", "REQUESTED", "StartScan accepted for initialization/scan");
         chatai::display::SetBluetoothStatus(
             chatai::display::BluetoothStatus::kInitializing, 0, 0);
 
@@ -319,6 +336,7 @@ esp_err_t StartScan() {
                     chatai::display::SetBluetoothStatus(
                         chatai::display::BluetoothStatus::kError, 0,
                         ESP_ERR_NO_MEM);
+                    chatai::diagnostics::Add("BLE_INIT", "FAIL", "xTaskCreate returned no memory");
                     ESP_LOGE(kTag, "Could not create BLE initialization task");
                     return ESP_ERR_NO_MEM;
                 }
