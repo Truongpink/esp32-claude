@@ -91,6 +91,34 @@ void ClearBootContextLocked() {
     g_retained_boot_context.magic = 0;
     g_retained_boot_context.checksum = 0;
 }
+
+bool ShouldKeepDiagnostic(const char* stage, const char* result) {
+    if (result != nullptr &&
+        (std::strstr(result, "FAIL") != nullptr ||
+         std::strstr(result, "ERROR") != nullptr ||
+         std::strcmp(result, "WARN") == 0 ||
+         std::strcmp(result, "RESET") == 0 ||
+         std::strcmp(result, "DISCONNECTED") == 0)) {
+        return true;
+    }
+    if (stage == nullptr) return false;
+    if (std::strncmp(stage, "BLE_", 4) == 0 ||
+        std::strcmp(stage, "PREVIOUS_BOOT") == 0 ||
+        std::strcmp(stage, "PREVIOUS_BOOT_EVENT") == 0) {
+        return true;
+    }
+    if (std::strcmp(stage, "BOOT") == 0 && result != nullptr &&
+        std::strcmp(result, "INFO") == 0) return true;
+    if (std::strcmp(stage, "WIFI") == 0 && result != nullptr &&
+        std::strcmp(result, "OK") == 0) return true;
+    if (std::strcmp(stage, "HTTP_SERVER") == 0 && result != nullptr &&
+        (std::strcmp(result, "STARTED") == 0 ||
+         std::strcmp(result, "ROUTES_READY") == 0)) return true;
+    if (std::strcmp(stage, "XIAOZHI") == 0 && result != nullptr &&
+        (std::strcmp(result, "STARTING") == 0 ||
+         std::strcmp(result, "READY") == 0)) return true;
+    return false;
+}
 }
 
 namespace chatai::diagnostics {
@@ -101,20 +129,17 @@ void SetTimeSyncStatus(bool synchronized, const char* source) {
 }
 
 void Add(const char* stage, const char* result, const char* detail) {
+    if (!ShouldKeepDiagnostic(stage, result)) return;
     constexpr std::time_t kMinimumValidTime = 1700000000;
     constexpr std::time_t kVietnamOffsetSeconds = 7 * 60 * 60;
     const std::time_t now = std::time(nullptr);
     const bool epoch_valid = now >= kMinimumValidTime;
     const bool synchronized = epoch_valid && g_time_synchronized.load();
-    char utc_timestamp[24]{};
     char ict_timestamp[24]{};
     if (epoch_valid) {
-        std::tm utc_info{};
         std::tm ict_info{};
-        gmtime_r(&now, &utc_info);
         const std::time_t ict_epoch = now + kVietnamOffsetSeconds;
         gmtime_r(&ict_epoch, &ict_info);
-        std::strftime(utc_timestamp, sizeof(utc_timestamp), "%Y-%m-%d %H:%M:%S", &utc_info);
         std::strftime(ict_timestamp, sizeof(ict_timestamp), "%Y-%m-%d %H:%M:%S", &ict_info);
     }
 
@@ -122,17 +147,16 @@ void Add(const char* stage, const char* result, const char* detail) {
     if (epoch_valid) {
         line = "[";
         line += ict_timestamp;
-        line += " ICT][";
-        line += utc_timestamp;
-        line += " UTC][UNIX=";
-        line += std::to_string(static_cast<long long>(now));
-        line += "][TIME_SYNC=";
+        line += " ICT]";
+    } else {
+        line = "[UPTIME_MS=";
+        line += std::to_string(static_cast<long long>(esp_timer_get_time() / 1000));
+        line += "]";
+    }
+    if (stage != nullptr && std::strcmp(stage, "BOOT") == 0) {
+        line += "[TIME_SYNC=";
         line += synchronized ? g_time_source.load() : "UNVERIFIED";
         line += "]";
-    } else {
-        line = "[TIME_UNSYNCED][UPTIME_MS=";
-        line += std::to_string(static_cast<long long>(esp_timer_get_time() / 1000));
-        line += "][TIME_SYNC=NO]";
     }
     line += "[";
     line += stage != nullptr ? stage : "SYSTEM";
