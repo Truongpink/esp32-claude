@@ -55,3 +55,20 @@ The application image is generated at:
 - [Local Web Admin](docs/WEB_ADMIN.md)
 
 GitHub Actions remains manual-only. Never add automatic push/PR triggers, and do not run builds or flash hardware without explicit authorization.
+
+
+## ECC Shin engineering workflow
+
+This repository includes **ECC Shin**, its project-specific engineering governance and documentation workflows.
+
+- [ECC Shin Core](ECC-SHIN/CORE/ECC-SHIN-CORE.md)
+- [12 specialist roles](ECC-SHIN/CORE/AGENT-ROLES.md)
+- [10-skill catalog](ECC-SHIN/CORE/SKILL-CATALOG.md)
+- [Security policy](ECC-SHIN/CORE/SECURITY-POLICY.md)
+- [Project memory](ECC-SHIN/PROJECT/PROJECT.md)
+- [Architecture memory](ECC-SHIN/PROJECT/ARCHITECTURE.md)
+- [Technical decisions](ECC-SHIN/PROJECT/TECHNICAL-DECISIONS.md)
+- [Progress](ECC-SHIN/PROJECT/PROGRESS.md)
+- [Issues and handoff](ECC-SHIN/PROJECT/ISSUES-HANDOFF.md)
+
+Start with `AGENTS.md` and `ECC-SHIN/CORE/ECC-SHIN-CORE.md` before performing project work. ECC Shin is a documented set of specialist workflows coordinated by the assistant; it does not claim to run independent autonomous agents. All existing repository safety rules remain in force. Changes require explicit approval; Actions/build/flash/OTA/deployment require separate authorization.
