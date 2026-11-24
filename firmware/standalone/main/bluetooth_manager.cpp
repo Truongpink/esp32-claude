@@ -43,7 +43,6 @@ std::atomic<int> g_last_error{0};
 
 void RecordCrashStage(const char* stage, const char* detail = nullptr) {
     chatai::diagnostics::SetCrashContext(stage, detail);
-    chatai::diagnostics::SetBootContext(stage, detail);
 }
 
 void CopyText(char* destination, size_t capacity, const char* source, size_t length) {
