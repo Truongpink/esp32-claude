@@ -1,4 +1,5 @@
 #include "bluetooth_manager.h"
+#include "display_manager.h"
 
 #include <algorithm>
 #include <array>
@@ -173,6 +174,8 @@ esp_err_t BeginScan() {
     int rc = ble_hs_id_infer_auto(0, &own_address_type);
     if (rc != 0) {
         g_last_error.store(rc);
+        chatai::display::SetBluetoothStatus(
+            chatai::display::BluetoothStatus::kError, GetDeviceCount(), rc);
         return ESP_FAIL;
     }
 
@@ -189,11 +192,15 @@ esp_err_t BeginScan() {
                 const int parse_result = ble_hs_adv_parse_fields(
                     &fields, event->disc.data, event->disc.length_data);
                 UpdateDevice(event->disc, parse_result == 0 ? &fields : nullptr);
+                chatai::display::SetBluetoothStatus(
+                    chatai::display::BluetoothStatus::kScanning, GetDeviceCount(), 0);
                 break;
             }
             case BLE_GAP_EVENT_DISC_COMPLETE:
                 g_scanning.store(false);
                 g_scan_requested.store(false);
+                chatai::display::SetBluetoothStatus(
+                    chatai::display::BluetoothStatus::kComplete, GetDeviceCount(), 0);
                 break;
             default:
                 break;
@@ -204,10 +211,14 @@ esp_err_t BeginScan() {
     if (rc != 0) {
         g_scanning.store(false);
         g_last_error.store(rc);
+        chatai::display::SetBluetoothStatus(
+            chatai::display::BluetoothStatus::kError, GetDeviceCount(), rc);
         ESP_LOGW(kTag, "Could not start BLE discovery: rc=%d", rc);
         return ESP_FAIL;
     }
     g_last_error.store(0);
+    chatai::display::SetBluetoothStatus(
+        chatai::display::BluetoothStatus::kScanning, GetDeviceCount(), 0);
     ESP_LOGI(kTag, "Passive BLE scan started for %ld ms",
              static_cast<long>(kScanDurationMs));
     return ESP_OK;
@@ -220,9 +231,15 @@ void OnSync() {
         const esp_err_t result = BeginScan();
         if (result != ESP_OK) {
             g_scan_requested.store(false);
+            chatai::display::SetBluetoothStatus(
+                chatai::display::BluetoothStatus::kError, GetDeviceCount(),
+                g_last_error.load());
             ESP_LOGW(kTag, "Deferred BLE scan could not start: %s",
                      esp_err_to_name(result));
         }
+    } else {
+        chatai::display::SetBluetoothStatus(
+            chatai::display::BluetoothStatus::kReady, GetDeviceCount(), 0);
     }
 }
 
@@ -230,6 +247,8 @@ void OnReset(int reason) {
     g_host_synced.store(false);
     g_scanning.store(false);
     g_last_error.store(reason);
+    chatai::display::SetBluetoothStatus(
+        chatai::display::BluetoothStatus::kError, GetDeviceCount(), reason);
     ESP_LOGW(kTag, "NimBLE host reset: reason=%d", reason);
 }
 
@@ -252,12 +271,16 @@ esp_err_t StartScan() {
         }
         g_last_error.store(0);
         g_scan_requested.store(true);
+        chatai::display::SetBluetoothStatus(
+            chatai::display::BluetoothStatus::kInitializing, 0, 0);
 
         if (!g_initialized.load()) {
             const esp_err_t result = nimble_port_init();
             if (result != ESP_OK) {
                 g_scan_requested.store(false);
                 g_last_error.store(result);
+                chatai::display::SetBluetoothStatus(
+                    chatai::display::BluetoothStatus::kError, 0, result);
                 ESP_LOGE(kTag, "NimBLE initialization failed: %s",
                          esp_err_to_name(result));
                 return result;
@@ -282,6 +305,8 @@ esp_err_t StopScan() {
         return ESP_FAIL;
     }
     g_scanning.store(false);
+    chatai::display::SetBluetoothStatus(
+        chatai::display::BluetoothStatus::kComplete, GetDeviceCount(), 0);
     return ESP_OK;
 }
 
