@@ -313,6 +313,7 @@ esp_err_t StopScan() {
 bool IsInitialized() { return g_initialized.load(); }
 bool IsReady() { return g_host_synced.load(); }
 bool IsScanning() { return g_scanning.load(); }
+bool IsScanRequested() { return g_scan_requested.load(); }
 int GetLastError() { return g_last_error.load(); }
 
 size_t GetDeviceCount() {
