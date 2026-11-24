@@ -8,6 +8,9 @@
 #include <cstring>
 #include <mutex>
 
+#include <freertos/FreeRTOS.h>
+#include <freertos/task.h>
+
 #include <esp_log.h>
 #include <esp_timer.h>
 #include <nimble/nimble_port.h>
@@ -22,6 +25,8 @@ constexpr char kTag[] = "ChatAI-BLE";
 constexpr int32_t kScanDurationMs = 10000;
 constexpr size_t kManufacturerBytes = 16;
 constexpr size_t kAdvertisingBytes = 31;
+constexpr uint32_t kInitTaskStackBytes = 6144;
+constexpr UBaseType_t kInitTaskPriority = 5;
 
 std::array<Device, kMaxDevices> g_devices{};
 size_t g_device_count = 0;
@@ -29,6 +34,7 @@ std::mutex g_devices_mutex;
 std::mutex g_init_mutex;
 std::mutex g_scan_mutex;
 std::atomic<bool> g_initialized{false};
+std::atomic<bool> g_initializing{false};
 std::atomic<bool> g_host_synced{false};
 std::atomic<bool> g_scan_requested{false};
 std::atomic<bool> g_scanning{false};
@@ -173,6 +179,7 @@ esp_err_t BeginScan() {
     uint8_t own_address_type = 0;
     int rc = ble_hs_id_infer_auto(0, &own_address_type);
     if (rc != 0) {
+        g_scan_requested.store(false);
         g_last_error.store(rc);
         chatai::display::SetBluetoothStatus(
             chatai::display::BluetoothStatus::kError, GetDeviceCount(), rc);
@@ -210,12 +217,14 @@ esp_err_t BeginScan() {
 
     if (rc != 0) {
         g_scanning.store(false);
+        g_scan_requested.store(false);
         g_last_error.store(rc);
         chatai::display::SetBluetoothStatus(
             chatai::display::BluetoothStatus::kError, GetDeviceCount(), rc);
         ESP_LOGW(kTag, "Could not start BLE discovery: rc=%d", rc);
         return ESP_FAIL;
     }
+    g_scan_requested.store(false);
     g_last_error.store(0);
     chatai::display::SetBluetoothStatus(
         chatai::display::BluetoothStatus::kScanning, GetDeviceCount(), 0);
@@ -246,6 +255,7 @@ void OnSync() {
 void OnReset(int reason) {
     g_host_synced.store(false);
     g_scanning.store(false);
+    g_scan_requested.store(false);
     g_last_error.store(reason);
     chatai::display::SetBluetoothStatus(
         chatai::display::BluetoothStatus::kError, GetDeviceCount(), reason);
@@ -257,13 +267,36 @@ void HostTask(void*) {
     nimble_port_freertos_deinit();
 }
 
+void InitializeNimbleTask(void*) {
+    const esp_err_t result = nimble_port_init();
+    if (result != ESP_OK) {
+        g_scan_requested.store(false);
+        g_initializing.store(false);
+        g_last_error.store(result);
+        chatai::display::SetBluetoothStatus(
+            chatai::display::BluetoothStatus::kError, GetDeviceCount(), result);
+        ESP_LOGE(kTag, "NimBLE initialization failed: %s",
+                 esp_err_to_name(result));
+        vTaskDelete(nullptr);
+        return;
+    }
+
+    ble_hs_cfg.reset_cb = OnReset;
+    ble_hs_cfg.sync_cb = OnSync;
+    g_initialized.store(true);
+    ESP_LOGI(kTag, "NimBLE initialized in BLE worker task");
+    nimble_port_freertos_init(HostTask);
+    g_initializing.store(false);
+    vTaskDelete(nullptr);
+}
+
 }  // namespace
 
 esp_err_t StartScan() {
     bool start_now = false;
     {
         std::lock_guard<std::mutex> lock(g_init_mutex);
-        if (g_scanning.load()) return ESP_OK;
+        if (g_scanning.load() || g_scan_requested.load()) return ESP_OK;
         {
             std::lock_guard<std::mutex> devices_lock(g_devices_mutex);
             g_devices = {};
@@ -275,20 +308,21 @@ esp_err_t StartScan() {
             chatai::display::BluetoothStatus::kInitializing, 0, 0);
 
         if (!g_initialized.load()) {
-            const esp_err_t result = nimble_port_init();
-            if (result != ESP_OK) {
-                g_scan_requested.store(false);
-                g_last_error.store(result);
-                chatai::display::SetBluetoothStatus(
-                    chatai::display::BluetoothStatus::kError, 0, result);
-                ESP_LOGE(kTag, "NimBLE initialization failed: %s",
-                         esp_err_to_name(result));
-                return result;
+            if (!g_initializing.exchange(true)) {
+                const BaseType_t created = xTaskCreate(
+                    InitializeNimbleTask, "chatai_ble_init",
+                    kInitTaskStackBytes, nullptr, kInitTaskPriority, nullptr);
+                if (created != pdPASS) {
+                    g_initializing.store(false);
+                    g_scan_requested.store(false);
+                    g_last_error.store(ESP_ERR_NO_MEM);
+                    chatai::display::SetBluetoothStatus(
+                        chatai::display::BluetoothStatus::kError, 0,
+                        ESP_ERR_NO_MEM);
+                    ESP_LOGE(kTag, "Could not create BLE initialization task");
+                    return ESP_ERR_NO_MEM;
+                }
             }
-            ble_hs_cfg.reset_cb = OnReset;
-            ble_hs_cfg.sync_cb = OnSync;
-            g_initialized.store(true);
-            nimble_port_freertos_init(HostTask);
             return ESP_OK;
         }
         start_now = g_host_synced.load();
