@@ -15,6 +15,7 @@
 #include <driver/gpio.h>
 #include <driver/i2c_master.h>
 #include <esp_log.h>
+#include <esp_timer.h>
 #include <esp_sntp.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
@@ -41,6 +42,11 @@ bool g_initialized = false;
 bool g_sntp_started = false;
 bool g_time_synced = false;
 std::atomic<bool> g_audio_ready{false};
+std::atomic<uint8_t> g_bluetooth_status{
+    static_cast<uint8_t>(chatai::display::BluetoothStatus::kIdle)};
+std::atomic<size_t> g_bluetooth_device_count{0};
+std::atomic<int> g_bluetooth_error{0};
+std::atomic<int64_t> g_bluetooth_status_until_us{0};
 std::array<uint8_t, kWidth * kPages> g_frame{};
 char g_footer[96] = "CHATAI TPIOS - WIFI WAIT - SERVER WAIT";
 int g_footer_x = -static_cast<int>(sizeof("CHATAI TPIOS - WIFI WAIT - SERVER WAIT") - 1) * kGlyphWidth;
@@ -295,14 +301,56 @@ void RenderStatus() {
     DrawClock();
     DrawBatteryIcon();
 
-    const char* status = !g_audio_ready.load()
-        ? "LOI AM THANH"
-        : StatusText(chatai::xiaozhi::GetRuntimeState());
-    DrawText((kWidth - TextWidth(status)) / 2, 23, status);
+    const auto bluetooth_status = static_cast<chatai::display::BluetoothStatus>(
+        g_bluetooth_status.load());
+    const int64_t bluetooth_until = g_bluetooth_status_until_us.load();
+    const bool show_bluetooth =
+        bluetooth_status == chatai::display::BluetoothStatus::kScanning ||
+        (bluetooth_until > 0 && esp_timer_get_time() < bluetooth_until);
 
-    for (int x = 0; x < kWidth; x += 2) {
-        const int y = 46;
-        g_frame[(y / 8) * kWidth + x] |= static_cast<uint8_t>(1U << (y % 8));
+    if (show_bluetooth) {
+        const char* state_text = "BLE READY";
+        switch (bluetooth_status) {
+            case chatai::display::BluetoothStatus::kInitializing:
+                state_text = "BLE INIT";
+                break;
+            case chatai::display::BluetoothStatus::kReady:
+                state_text = "BLE READY";
+                break;
+            case chatai::display::BluetoothStatus::kScanning:
+                state_text = "BLE SCANNING";
+                break;
+            case chatai::display::BluetoothStatus::kComplete:
+                state_text = "SCAN COMPLETE";
+                break;
+            case chatai::display::BluetoothStatus::kError:
+                state_text = "BLE ERROR";
+                break;
+            case chatai::display::BluetoothStatus::kIdle:
+                break;
+        }
+        DrawText((kWidth - TextWidth("BLUETOOTH")) / 2, 17, "BLUETOOTH");
+        DrawText((kWidth - TextWidth(state_text)) / 2, 29, state_text);
+        char device_text[24]{};
+        std::snprintf(device_text, sizeof(device_text), "DEVICES: %u",
+                      static_cast<unsigned>(g_bluetooth_device_count.load()));
+        DrawText((kWidth - TextWidth(device_text)) / 2, 41, device_text);
+        if (bluetooth_status == chatai::display::BluetoothStatus::kError) {
+            char error_text[20]{};
+            std::snprintf(error_text, sizeof(error_text), "CODE: %d",
+                          g_bluetooth_error.load());
+            DrawText((kWidth - TextWidth(error_text)) / 2, 41, error_text);
+        }
+    } else {
+        const char* status = !g_audio_ready.load()
+            ? "LOI AM THANH"
+            : StatusText(chatai::xiaozhi::GetRuntimeState());
+        DrawText((kWidth - TextWidth(status)) / 2, 23, status);
+
+        for (int x = 0; x < kWidth; x += 2) {
+            const int y = 46;
+            g_frame[(y / 8) * kWidth + x] |= static_cast<uint8_t>(1U << (y % 8));
+        }
     }
 
     const TickType_t now = xTaskGetTickCount();
@@ -371,6 +419,30 @@ esp_err_t Initialize() {
 
 void SetAudioReady(bool ready) {
     g_audio_ready.store(ready);
+}
+
+void SetBluetoothStatus(BluetoothStatus status, size_t device_count, int error_code) {
+    g_bluetooth_device_count.store(device_count);
+    g_bluetooth_error.store(error_code);
+    g_bluetooth_status.store(static_cast<uint8_t>(status));
+    int64_t duration_us = 0;
+    switch (status) {
+        case BluetoothStatus::kInitializing:
+        case BluetoothStatus::kReady:
+            duration_us = 3000000;
+            break;
+        case BluetoothStatus::kComplete:
+        case BluetoothStatus::kError:
+            duration_us = 5000000;
+            break;
+        case BluetoothStatus::kScanning:
+            duration_us = 0;
+            break;
+        case BluetoothStatus::kIdle:
+            break;
+    }
+    g_bluetooth_status_until_us.store(
+        duration_us > 0 ? esp_timer_get_time() + duration_us : 0);
 }
 
 // Notifications no longer replace the real-time device-state screen.
