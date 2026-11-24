@@ -543,7 +543,9 @@ async function refreshBluetooth() {
     const statusResponse = await fetch("/api/bluetooth/status", {cache:"no-store"});
     const state = await statusResponse.json().catch(() => ({}));
     if (!statusResponse.ok) throw new Error(state.error || ("Không đọc được trạng thái Bluetooth (HTTP " + statusResponse.status + ")"));
-    bleState.textContent = state.scanning ? "Đang quét" : state.ready ? "Sẵn sàng" : state.initialized ? "Đang khởi tạo" : state.error_code ? "Lỗi" : "Chưa khởi tạo";
+    bleState.textContent = state.error_code ? ("Lỗi (" + state.error_code + ")") :
+      state.scanning ? "Đang quét" : state.scan_requested ? "Đang chờ khởi tạo" :
+      state.ready ? "Sẵn sàng" : state.initialized ? "Đang khởi tạo" : "Chưa khởi tạo";
     bleCount.textContent = String(state.device_count || 0);
     bluetoothStatus.textContent = state.message || "Trạng thái Bluetooth đã cập nhật.";
     bleStartButton.disabled = Boolean(state.scanning);
@@ -553,7 +555,7 @@ async function refreshBluetooth() {
     if (!devicesResponse.ok) throw new Error(data.error || ("Không đọc được danh sách BLE (HTTP " + devicesResponse.status + ")"));
     bleCachedDevices = Array.isArray(data.devices) ? data.devices : [];
     renderBluetoothDevices();
-    if (state.scanning || (state.initialized && !state.ready)) scheduleBluetoothPoll();
+    if (state.scanning || state.scan_requested || (state.initialized && !state.ready)) scheduleBluetoothPoll();
   } catch (error) {
     bluetoothStatus.textContent = error.message;
   }
@@ -571,7 +573,7 @@ async function sendBluetoothCommand(path, button, fallbackMessage) {
     bluetoothStatus.textContent = data.message || fallbackMessage;
     await refreshBluetooth();
   } catch (error) {
-    bluetoothStatus.textContent = error.message;
+    bluetoothStatus.textContent = "Không gửi được lệnh đến ESP32 (" + path + "): " + error.message;
     button.disabled = false;
   }
 }
@@ -1365,12 +1367,15 @@ esp_err_t BluetoothStatusHandler(httpd_req_t* request) {
     const bool scanning = chatai::bluetooth::IsScanning();
     cJSON_AddBoolToObject(root, "initialized", initialized);
     cJSON_AddBoolToObject(root, "ready", ready);
+    const int error_code = chatai::bluetooth::GetLastError();
     cJSON_AddBoolToObject(root, "scanning", scanning);
+    cJSON_AddBoolToObject(root, "scan_requested", initialized && !scanning && !ready);
     cJSON_AddNumberToObject(root, "device_count", chatai::bluetooth::GetDeviceCount());
-    cJSON_AddNumberToObject(root, "error_code", chatai::bluetooth::GetLastError());
-    const char* message = scanning ? "Đang quét BLE thụ động (tối đa 10 giây)." :
+    cJSON_AddNumberToObject(root, "error_code", error_code);
+    const char* message = error_code != 0 ? "BLE Scanner gặp lỗi; xem mã lỗi." :
+        scanning ? "Đang quét BLE thụ động (tối đa 10 giây)." :
+        initialized && !ready ? "Đang chờ NimBLE host khởi tạo." :
         ready ? "BLE Scanner sẵn sàng." :
-        initialized ? "Bluetooth đang khởi tạo." :
         "Bluetooth chưa được khởi tạo.";
     cJSON_AddStringToObject(root, "message", message);
     char* json = cJSON_PrintUnformatted(root);
