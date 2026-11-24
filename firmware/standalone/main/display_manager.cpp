@@ -305,6 +305,7 @@ void RenderStatus() {
         g_bluetooth_status.load());
     const int64_t bluetooth_until = g_bluetooth_status_until_us.load();
     const bool show_bluetooth =
+        bluetooth_status == chatai::display::BluetoothStatus::kInitializing ||
         bluetooth_status == chatai::display::BluetoothStatus::kScanning ||
         (bluetooth_until > 0 && esp_timer_get_time() < bluetooth_until);
 
