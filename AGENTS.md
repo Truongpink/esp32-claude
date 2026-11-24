@@ -55,3 +55,15 @@ Không thay đổi một pipeline hoặc giao thức chỉ để làm cho một 
 ## 6. Ưu tiên khi có xung đột
 
 Yêu cầu và xác nhận mới nhất của người dùng được ưu tiên, nhưng không được diễn giải một yêu cầu chung là quyền sửa Web Admin. Với mọi thay đổi giao diện, phải có sự đồng ý rõ ràng, cụ thể trước khi thực hiện.
+
+
+## 7. ECC Shin — quy trình điều phối dự án
+
+- Bộ quy tắc ECC Shin của repository nằm trong `ECC-SHIN/`; bắt đầu từ `ECC-SHIN/CORE/ECC-SHIN-CORE.md`.
+- Trước mỗi nhiệm vụ, đọc ECC Core và 5 tài liệu trong `ECC-SHIN/PROJECT/` có liên quan.
+- Chọn vai trò chuyên gia theo `ECC-SHIN/CORE/AGENT-ROLES.md`; đây là các vai trò chuyên môn được điều phối, không phải 12 AI độc lập.
+- Chọn quy trình trong `ECC-SHIN/CORE/SKILL-CATALOG.md` và các hướng dẫn tại `ECC-SHIN/SKILLS/`.
+- Phân loại bằng chứng bằng VERIFIED, USER-REPORTED, ASSUMED, BLOCKED và NOT TESTED; không biến giả thuyết thành sự thật.
+- Chế độ ASK: phải xin phép trước mỗi thao tác sửa/tạo/xóa file, commit/push, thay đổi cấu hình hoặc dữ liệu. Sự chấp thuận chỉ áp dụng đúng phạm vi được nêu.
+- Build, GitHub Actions, Codemagic, flash, OTA và deploy luôn cần sự cho phép riêng, kể cả khi đã được duyệt sửa source.
+- ECC Shin bổ sung quy trình, không thay thế hoặc làm suy yếu các quy tắc bảo vệ Web Admin, firmware, secrets và branch ở các mục trên.
