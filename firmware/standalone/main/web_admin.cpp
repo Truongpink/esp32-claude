@@ -1336,7 +1336,7 @@ esp_err_t BluetoothScanStartHandler(httpd_req_t* request) {
         return SendError(request, "503 Service Unavailable", "Không thể khởi tạo BLE Scanner");
     }
     return SendJson(request, "200 OK",
-                    "{\\"message\\":\\"Đã nhận yêu cầu quét BLE. Thiết bị đang khởi tạo hoặc quét trong tối đa 10 giây.\\"}");
+                    "{\"message\":\"Đã nhận yêu cầu quét BLE. Thiết bị đang khởi tạo hoặc quét trong tối đa 10 giây.\"}");
 }
 
 esp_err_t BluetoothScanStopHandler(httpd_req_t* request) {
@@ -1347,7 +1347,7 @@ esp_err_t BluetoothScanStopHandler(httpd_req_t* request) {
     if (result != ESP_OK) {
         return SendError(request, "503 Service Unavailable", "Không thể dừng BLE Scanner");
     }
-    return SendJson(request, "200 OK", "{\\"message\\":\\"Đã yêu cầu dừng quét BLE.\\"}");
+    return SendJson(request, "200 OK", "{\"message\":\"Đã yêu cầu dừng quét BLE.\"}");
 }
 
 esp_err_t DiagnosticsHandler(httpd_req_t* request) {
