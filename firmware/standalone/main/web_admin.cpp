@@ -1419,27 +1419,54 @@ esp_err_t BluetoothDevicesHandler(httpd_req_t* request) {
 }
 
 esp_err_t BluetoothScanStartHandler(httpd_req_t* request) {
+    chatai::diagnostics::Add("BLE_HTTP_START", "RECEIVED", "POST /api/bluetooth/scan/start");
     if (!IsAuthorizedMutation(request)) {
+        chatai::diagnostics::Add("BLE_HTTP_START", "DENIED",
+                                 "Origin/Host or CSRF validation failed");
         return SendError(request, "403 Forbidden", "Yêu cầu không hợp lệ");
     }
+
     const esp_err_t result = chatai::bluetooth::StartScan();
     if (result != ESP_OK) {
+        char detail[80]{};
+        std::snprintf(detail, sizeof(detail), "StartScan=%s",
+                      esp_err_to_name(result));
+        chatai::diagnostics::Add("BLE_HTTP_START", "FAIL", detail);
         ESP_LOGW(kTag, "BLE scan start failed: %s", esp_err_to_name(result));
         return SendError(request, "503 Service Unavailable", "Không thể khởi tạo BLE Scanner");
     }
-    return SendJson(request, "200 OK",
-                    "{\"message\":\"Đã nhận yêu cầu quét BLE. Thiết bị đang khởi tạo hoặc quét trong tối đa 10 giây.\"}");
+
+    chatai::diagnostics::Add("BLE_HTTP_START", "ACCEPTED",
+                             "StartScan returned ESP_OK");
+    const esp_err_t response_result = SendJson(
+        request, "200 OK",
+        "{\"message\":\"Đã nhận yêu cầu quét BLE. Thiết bị đang khởi tạo hoặc quét trong tối đa 10 giây.\"}");
+    chatai::diagnostics::Add("BLE_HTTP_START",
+                             response_result == ESP_OK ? "RESPONSE_SENT" : "SEND_FAIL",
+                             esp_err_to_name(response_result));
+    return response_result;
 }
 
 esp_err_t BluetoothScanStopHandler(httpd_req_t* request) {
+    chatai::diagnostics::Add("BLE_HTTP_STOP", "RECEIVED", "POST /api/bluetooth/scan/stop");
     if (!IsAuthorizedMutation(request)) {
+        chatai::diagnostics::Add("BLE_HTTP_STOP", "DENIED",
+                                 "Origin/Host or CSRF validation failed");
         return SendError(request, "403 Forbidden", "Yêu cầu không hợp lệ");
     }
+
     const esp_err_t result = chatai::bluetooth::StopScan();
     if (result != ESP_OK) {
+        chatai::diagnostics::Add("BLE_HTTP_STOP", "FAIL", esp_err_to_name(result));
         return SendError(request, "503 Service Unavailable", "Không thể dừng BLE Scanner");
     }
-    return SendJson(request, "200 OK", "{\"message\":\"Đã yêu cầu dừng quét BLE.\"}");
+
+    const esp_err_t response_result = SendJson(
+        request, "200 OK", "{\"message\":\"Đã yêu cầu dừng quét BLE.\"}");
+    chatai::diagnostics::Add("BLE_HTTP_STOP",
+                             response_result == ESP_OK ? "RESPONSE_SENT" : "SEND_FAIL",
+                             esp_err_to_name(response_result));
+    return response_result;
 }
 
 esp_err_t DiagnosticsHandler(httpd_req_t* request) {
