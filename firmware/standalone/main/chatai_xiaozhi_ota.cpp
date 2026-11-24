@@ -472,13 +472,13 @@ esp_err_t FetchServerConfig(ServerConfig* config) {
             (timezone_offset == nullptr ||
              (cJSON_IsNumber(timezone_offset) && timezone_offset->valueint >= -840 &&
               timezone_offset->valueint <= 840))) {
+            // The server timestamp is a UTC Unix epoch. Keep the system clock
+            // in UTC; timezone_offset is metadata and must not be added here.
+            // display_manager applies Vietnam UTC+7 when formatting local time.
             const int64_t timestamp_ms = static_cast<int64_t>(timestamp->valuedouble);
-            const int64_t offset_ms = cJSON_IsNumber(timezone_offset)
-                ? static_cast<int64_t>(timezone_offset->valueint) * 60000 : 0;
-            const int64_t local_ms = timestamp_ms + offset_ms;
             timeval system_time{};
-            system_time.tv_sec = static_cast<time_t>(local_ms / 1000);
-            system_time.tv_usec = static_cast<suseconds_t>((local_ms % 1000) * 1000);
+            system_time.tv_sec = static_cast<time_t>(timestamp_ms / 1000);
+            system_time.tv_usec = static_cast<suseconds_t>((timestamp_ms % 1000) * 1000);
             if (settimeofday(&system_time, nullptr) != 0) {
                 ESP_LOGW(kTag, "Could not apply Xiaozhi server time");
             } else {
