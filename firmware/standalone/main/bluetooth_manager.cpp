@@ -41,6 +41,11 @@ std::atomic<bool> g_scan_requested{false};
 std::atomic<bool> g_scanning{false};
 std::atomic<int> g_last_error{0};
 
+void RecordCrashStage(const char* stage, const char* detail = nullptr) {
+    chatai::diagnostics::SetCrashContext(stage, detail);
+    chatai::diagnostics::SetBootContext(stage, detail);
+}
+
 void CopyText(char* destination, size_t capacity, const char* source, size_t length) {
     if (destination == nullptr || capacity == 0) return;
     const size_t count = std::min(length, capacity - 1);
@@ -177,7 +182,9 @@ esp_err_t BeginScan() {
     if (!g_host_synced.load()) return ESP_ERR_INVALID_STATE;
     if (g_scanning.load()) return ESP_OK;
 
+    RecordCrashStage("BLE_SCAN_PREPARE", "NimBLE host synced; preparing discovery");
     uint8_t own_address_type = 0;
+    RecordCrashStage("BLE_SCAN_ADDR_TYPE", "calling ble_hs_id_infer_auto");
     int rc = ble_hs_id_infer_auto(0, &own_address_type);
     if (rc != 0) {
         g_scan_requested.store(false);
@@ -194,6 +201,7 @@ esp_err_t BeginScan() {
     parameters.passive = 1;
     parameters.filter_duplicates = 0;
 
+    RecordCrashStage("BLE_GAP_DISC_CALL", "calling ble_gap_disc passive scan");
     rc = ble_gap_disc(own_address_type, kScanDurationMs, &parameters,
                       [](ble_gap_event* event, void*) -> int {
         switch (event->type) {
@@ -207,11 +215,13 @@ esp_err_t BeginScan() {
                 break;
             }
             case BLE_GAP_EVENT_DISC_COMPLETE:
+                RecordCrashStage("BLE_SCAN_COMPLETE", "BLE discovery complete callback");
                 g_scanning.store(false);
                 g_scan_requested.store(false);
                 chatai::display::SetBluetoothStatus(
                     chatai::display::BluetoothStatus::kComplete, GetDeviceCount(), 0);
                 chatai::diagnostics::Add("BLE_SCAN", "COMPLETE", "BLE discovery completed");
+                chatai::diagnostics::ClearCrashContext();
                 break;
             default:
                 break;
@@ -226,6 +236,7 @@ esp_err_t BeginScan() {
         char detail[64]{};
         std::snprintf(detail, sizeof(detail), "ble_gap_disc rc=%d", rc);
         chatai::diagnostics::Add("BLE_SCAN", "FAIL", detail);
+        chatai::diagnostics::ClearCrashContext();
         chatai::display::SetBluetoothStatus(
             chatai::display::BluetoothStatus::kError, GetDeviceCount(), rc);
         ESP_LOGW(kTag, "Could not start BLE discovery: rc=%d", rc);
@@ -233,6 +244,7 @@ esp_err_t BeginScan() {
     }
     g_scanning.store(true);
     g_scan_requested.store(false);
+    RecordCrashStage("BLE_SCAN_ACTIVE", "ble_gap_disc accepted; waiting for discovery callback");
     g_last_error.store(0);
     chatai::diagnostics::Add("BLE_SCAN", "STARTED", "passive=1 duration_ms=10000");
     chatai::display::SetBluetoothStatus(
@@ -243,6 +255,7 @@ esp_err_t BeginScan() {
 }
 
 void OnSync() {
+    RecordCrashStage("BLE_HOST_SYNCED", "NimBLE host sync callback");
     g_host_synced.store(true);
     chatai::diagnostics::Add("BLE_HOST", "SYNCED", "NimBLE host synchronized");
     ESP_LOGI(kTag, "NimBLE host synchronized");
@@ -263,6 +276,9 @@ void OnSync() {
 }
 
 void OnReset(int reason) {
+    char crash_detail[48]{};
+    std::snprintf(crash_detail, sizeof(crash_detail), "NimBLE host reset reason=%d", reason);
+    RecordCrashStage("BLE_HOST_RESET", crash_detail);
     g_host_synced.store(false);
     g_scanning.store(false);
     g_scan_requested.store(false);
@@ -276,12 +292,17 @@ void OnReset(int reason) {
 }
 
 void HostTask(void*) {
+    RecordCrashStage("BLE_HOST_TASK_ENTER", "NimBLE FreeRTOS host task entered");
+    RecordCrashStage("BLE_HOST_RUN", "calling nimble_port_run");
     nimble_port_run();
+    RecordCrashStage("BLE_HOST_EXIT", "nimble_port_run returned");
     nimble_port_freertos_deinit();
 }
 
 void InitializeNimbleTask(void*) {
+    RecordCrashStage("BLE_INIT_TASK_ENTER", "BLE initialization worker entered");
     chatai::diagnostics::Add("BLE_INIT", "START", "nimble_port_init");
+    RecordCrashStage("BLE_NIMBLE_PORT_INIT", "calling nimble_port_init");
     const esp_err_t result = nimble_port_init();
     if (result != ESP_OK) {
         g_scan_requested.store(false);
@@ -296,10 +317,12 @@ void InitializeNimbleTask(void*) {
         return;
     }
 
+    RecordCrashStage("BLE_NIMBLE_INIT_OK", "nimble_port_init returned ESP_OK");
     ble_hs_cfg.reset_cb = OnReset;
     ble_hs_cfg.sync_cb = OnSync;
     g_initialized.store(true);
     chatai::diagnostics::Add("BLE_INIT", "OK", "NimBLE initialized; starting host task");
+    RecordCrashStage("BLE_HOST_TASK_START", "calling nimble_port_freertos_init");
     ESP_LOGI(kTag, "NimBLE initialized in BLE worker task");
     nimble_port_freertos_init(HostTask);
     g_initializing.store(false);
@@ -319,6 +342,7 @@ esp_err_t StartScan() {
             g_device_count = 0;
         }
         g_last_error.store(0);
+        RecordCrashStage("BLE_START_REQUEST", "StartScan accepted by Web Admin");
         g_scan_requested.store(true);
         chatai::diagnostics::Add("BLE_SCAN", "REQUESTED", "StartScan accepted for initialization/scan");
         chatai::display::SetBluetoothStatus(
@@ -326,6 +350,7 @@ esp_err_t StartScan() {
 
         if (!g_initialized.load()) {
             if (!g_initializing.exchange(true)) {
+                RecordCrashStage("BLE_INIT_TASK_CREATE", "creating chatai_ble_init task");
                 const BaseType_t created = xTaskCreate(
                     InitializeNimbleTask, "chatai_ble_init",
                     kInitTaskStackBytes, nullptr, kInitTaskPriority, nullptr);
@@ -337,6 +362,7 @@ esp_err_t StartScan() {
                         chatai::display::BluetoothStatus::kError, 0,
                         ESP_ERR_NO_MEM);
                     chatai::diagnostics::Add("BLE_INIT", "FAIL", "xTaskCreate returned no memory");
+                    chatai::diagnostics::ClearCrashContext();
                     ESP_LOGE(kTag, "Could not create BLE initialization task");
                     return ESP_ERR_NO_MEM;
                 }
