@@ -714,7 +714,7 @@ esp_err_t WifiStatusHandler(httpd_req_t* request) {
 esp_err_t StartHttpServer() {
     if (g_http_server != nullptr) return ESP_OK;
     httpd_config_t config = HTTPD_DEFAULT_CONFIG();
-    config.max_uri_handlers = 24;
+    config.max_uri_handlers = 28;
     config.lru_purge_enable = true;
     config.uri_match_fn = httpd_uri_match_wildcard;
     esp_err_t result = httpd_start(&g_http_server, &config);

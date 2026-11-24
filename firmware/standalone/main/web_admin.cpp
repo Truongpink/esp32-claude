@@ -22,6 +22,7 @@
 #include "firmware_info.h"
 #include "diagnostic_manager.h"
 #include "audio_manager.h"
+#include "bluetooth_manager.h"
 #include "chatai_xiaozhi_client.h"
 
 namespace {
@@ -71,8 +72,8 @@ hr{border:0;border-top:1px solid #ffffff12;margin:18px 0}
 #otaFileInfo{margin:9px 0}
 .progress{height:8px;background:#ffffff12;border-radius:20px;overflow:hidden;margin-top:13px}
 #otaProgress{height:100%;width:0;background:linear-gradient(90deg,#9b5cff,#55d6c2);transition:width .12s}
-.tabbar{position:fixed;left:50%;bottom:0;transform:translateX(-50%);width:min(100%,760px);display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:4px;padding:8px 10px calc(8px + env(safe-area-inset-bottom));border:1px solid #ffffff18;border-bottom:0;border-radius:20px 20px 0 0;background:#111020ed;backdrop-filter:blur(20px);z-index:20;box-shadow:0 -10px 35px #0005}
-.tabbar button{min-width:0;min-height:54px;padding:5px 1px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;border-radius:12px;background:transparent;border:1px solid transparent;box-shadow:none;color:#aaa2c5;font-size:10px;line-height:1.15;white-space:nowrap}
+.tabbar{position:fixed;left:50%;bottom:0;transform:translateX(-50%);width:min(100%,760px);display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:4px;padding:8px 10px calc(8px + env(safe-area-inset-bottom));border:1px solid #ffffff18;border-bottom:0;border-radius:20px 20px 0 0;background:#111020ed;backdrop-filter:blur(20px);z-index:20;box-shadow:0 -10px 35px #0005}
+.tabbar button{min-width:0;min-height:54px;padding:5px 1px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;border-radius:12px;background:transparent;border:1px solid transparent;box-shadow:none;color:#aaa2c5;font-size:9px;line-height:1.15;white-space:normal;overflow-wrap:anywhere}
 .tabbar button .tab-icon{font-size:17px;line-height:1.1}
 .tabbar button[aria-selected="true"]{background:linear-gradient(145deg,#7043c9,#4b3291);border-color:#b89aff55;color:#fff}
 .metric-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;margin-top:14px}
@@ -83,6 +84,18 @@ textarea{width:100%;min-height:220px;resize:vertical;padding:13px;border:1px sol
 select,input[type=text]{width:100%;min-width:0;padding:13px;border:1px solid #ffffff20;border-radius:12px;background:#0d0c19;color:#f5f1ff;font:inherit}
 @media(min-width:700px){.tabbar{bottom:18px;border:1px solid #ffffff18;border-radius:18px;width:min(720px,calc(100% - 32px))}body{padding-bottom:110px}.metric-grid{grid-template-columns:repeat(3,minmax(0,1fr))}}
 .tab-panel[hidden]{display:none}
+.ble-filter-row{display:grid;grid-template-columns:minmax(0,1fr) 130px;gap:8px;margin-top:14px}
+.ble-device-list{display:grid;gap:10px;margin-top:14px}
+.ble-device{min-width:0;padding:13px;border:1px solid #ffffff14;border-radius:14px;background:#ffffff07}
+.ble-device-head{display:flex;align-items:flex-start;justify-content:space-between;gap:10px}
+.ble-device-name{font-size:13px;font-weight:700;overflow-wrap:anywhere}
+.ble-device-address{margin-top:4px;color:#aaa2c5;font:11px/1.4 ui-monospace,monospace;overflow-wrap:anywhere}
+.ble-rssi{flex:none;padding:5px 8px;border:1px solid #ffffff18;border-radius:999px;color:#d9d2f0;font-size:10px;white-space:nowrap}
+.ble-rssi-track{height:5px;margin-top:11px;background:#ffffff12;border-radius:99px;overflow:hidden}
+.ble-rssi-fill{height:100%;border-radius:99px;background:linear-gradient(90deg,#55d6c2,#9b5cff)}
+.ble-device-meta{display:grid;gap:5px;margin-top:10px;color:#aaa2c5;font-size:11px;line-height:1.45;overflow-wrap:anywhere}
+.ble-device-meta strong{color:#e9e3ff;font-weight:650}
+@media(max-width:390px){.ble-filter-row{grid-template-columns:minmax(0,1fr) 112px}.tabbar button{font-size:8px}}
 .foot{text-align:center;color:#77718f;font-size:11px;margin:20px 0 0}
 @media(min-width:600px){body{padding-top:44px}}
 </style>
@@ -96,6 +109,7 @@ select,input[type=text]{width:100%;min-width:0;padding:13px;border:1px solid #ff
 <nav class="tabbar" role="tablist" aria-label="Các mục quản trị">
 <button type="button" role="tab" data-tab="overview" aria-selected="true"><span class="tab-icon">⌂</span><span>Tổng quan</span></button>
 <button type="button" role="tab" data-tab="wifi" aria-selected="false"><span class="tab-icon">⌁</span><span>Wi-Fi</span></button>
+<button type="button" role="tab" data-tab="bluetooth" aria-selected="false"><span class="tab-icon">ᛒ</span><span>Bluetooth</span></button>
 <button type="button" role="tab" data-tab="gemini" aria-selected="false"><span class="tab-icon">✧</span><span>Gemini (đã tắt)</span></button>
 <button type="button" role="tab" data-tab="audio" aria-selected="false"><span class="tab-icon">♫</span><span>Âm thanh</span></button>
 <button type="button" role="tab" data-tab="ota" aria-selected="false"><span class="tab-icon">⇧</span><span>OTA</span></button>
@@ -136,6 +150,21 @@ select,input[type=text]{width:100%;min-width:0;padding:13px;border:1px solid #ff
 <div style="display:flex;gap:8px"><input id="wifiPassword" type="password" maxlength="64" autocomplete="current-password" placeholder="Nhập mật khẩu Wi-Fi" style="flex:1;min-width:0"><button type="button" id="toggleWifiPassword" class="secondary">Hiện</button></div>
 <div class="actions"><button type="button" id="connectAdminWifi">Lưu và kết nối</button></div>
 <p class="hint">Thông tin Wi-Fi chỉ được lưu vào NVS sau khi thiết bị kết nối router, nhận IP và xác minh DNS/TCP 443 thành công. SoftAP cấu hình được giữ trong lúc thử kết nối.</p>
+</section>
+<section class="card tab-panel" data-panel="bluetooth" role="tabpanel" aria-labelledby="bluetoothTitle" hidden>
+<div class="card-head"><div class="card-icon" aria-hidden="true">ᛒ</div><div><h2 id="bluetoothTitle">Bluetooth Tool · BLE Scanner</h2><p class="hint">Quét thụ động các thiết bị Bluetooth Low Energy xung quanh</p></div></div>
+<p id="bluetoothStatus" class="hint" role="status" aria-live="polite">Bluetooth chưa được khởi tạo. Bấm Bắt đầu quét để bật BLE Scanner.</p>
+<div class="metric-grid">
+<div class="metric"><span>Trạng thái BLE</span><strong id="bleState">Chưa khởi tạo</strong></div>
+<div class="metric"><span>Thiết bị phát hiện</span><strong id="bleCount">0</strong></div>
+</div>
+<div class="actions"><button type="button" id="bleStart">▶ Bắt đầu quét</button><button type="button" id="bleStop" class="secondary" disabled>■ Dừng quét</button><button type="button" id="bleRefresh" class="secondary">↻ Làm mới</button></div>
+<div class="ble-filter-row">
+<input id="bleSearch" type="text" maxlength="48" placeholder="Tìm tên hoặc địa chỉ BLE" aria-label="Tìm thiết bị BLE">
+<select id="bleSort" aria-label="Sắp xếp thiết bị"><option value="rssi">Tín hiệu mạnh</option><option value="name">Tên thiết bị</option><option value="recent">Mới phát hiện</option></select>
+</div>
+<div id="bleDevices" class="ble-device-list" aria-live="polite"><p class="hint">Chưa có dữ liệu quét.</p></div>
+<p class="hint">Scanner dùng chế độ passive trong tối đa 10 giây mỗi lượt. Địa chỉ BLE riêng tư có thể thay đổi; RSSI chỉ phản ánh cường độ tín hiệu, không phải khoảng cách chính xác. Khi đang quét, Wi-Fi và âm thanh có thể chịu ảnh hưởng do dùng chung radio 2.4 GHz.</p>
 </section>
 <section class="card tab-panel" data-panel="logs" role="tabpanel" aria-labelledby="diagnosticsTitle" hidden>
 <div class="card-head"><div class="card-icon" aria-hidden="true">≋</div><div><h2 id="diagnosticsTitle">Log chẩn đoán ChatAI / Xiaozhi</h2><p class="hint">Tối đa 8 KB · Không lưu API Key hoặc dữ liệu âm thanh</p></div></div>
@@ -250,6 +279,17 @@ const scanAdminWifiButton = document.getElementById("scanAdminWifi");
 const connectAdminWifiButton = document.getElementById("connectAdminWifi");
 const toggleWifiPasswordButton = document.getElementById("toggleWifiPassword");
 let wifiPollAttempts = 0;
+const bluetoothStatus = document.getElementById("bluetoothStatus");
+const bleState = document.getElementById("bleState");
+const bleCount = document.getElementById("bleCount");
+const bleStartButton = document.getElementById("bleStart");
+const bleStopButton = document.getElementById("bleStop");
+const bleRefreshButton = document.getElementById("bleRefresh");
+const bleSearchInput = document.getElementById("bleSearch");
+const bleSortSelect = document.getElementById("bleSort");
+const bleDevicesContainer = document.getElementById("bleDevices");
+let bleCachedDevices = [];
+let blePollTimer = null;
 let otaMaxBytes = 0;
 let currentBuildNumber = 0;
 
@@ -262,6 +302,7 @@ document.querySelectorAll("[data-tab]").forEach(button => {
     document.querySelectorAll("[data-panel]").forEach(panel => {
       panel.hidden = panel.dataset.panel !== selected;
     });
+    if (selected === "bluetooth") refreshBluetooth();
   });
 });
 
@@ -355,6 +396,130 @@ async function scanAdminWifi() {
   } finally { scanAdminWifiButton.disabled = false; }
 }
 scanAdminWifiButton.addEventListener("click", scanAdminWifi);
+function bleSignalLabel(rssi) {
+  if (rssi >= -55) return "Rất mạnh";
+  if (rssi >= -65) return "Mạnh";
+  if (rssi >= -75) return "Trung bình";
+  if (rssi >= -88) return "Yếu";
+  return "Rất yếu";
+}
+function renderBluetoothDevices() {
+  const query = bleSearchInput.value.trim().toLowerCase();
+  const devices = bleCachedDevices.filter(device =>
+    (device.name || "").toLowerCase().includes(query) ||
+    (device.address || "").toLowerCase().includes(query));
+  if (bleSortSelect.value === "name") {
+    devices.sort((a, b) => (a.name || "").localeCompare(b.name || ""));
+  } else if (bleSortSelect.value === "recent") {
+    devices.sort((a, b) => Number(a.last_seen_seconds || 0) - Number(b.last_seen_seconds || 0));
+  } else {
+    devices.sort((a, b) => Number(b.rssi) - Number(a.rssi));
+  }
+  bleDevicesContainer.replaceChildren();
+  if (!devices.length) {
+    const empty = document.createElement("p");
+    empty.className = "hint";
+    empty.textContent = query ? "Không tìm thấy thiết bị phù hợp." : "Chưa phát hiện thiết bị BLE. Hãy bắt đầu quét.";
+    bleDevicesContainer.appendChild(empty);
+    return;
+  }
+  devices.forEach(device => {
+    const card = document.createElement("article");
+    card.className = "ble-device";
+    const head = document.createElement("div");
+    head.className = "ble-device-head";
+    const identity = document.createElement("div");
+    identity.style.minWidth = "0";
+    const name = document.createElement("div");
+    name.className = "ble-device-name";
+    name.textContent = device.name || "Thiết bị không công bố tên";
+    const address = document.createElement("div");
+    address.className = "ble-device-address";
+    address.textContent = device.address || "Không có địa chỉ";
+    identity.append(name, address);
+    const rssi = Number(device.rssi);
+    const signal = document.createElement("span");
+    signal.className = "ble-rssi";
+    signal.textContent = rssi + " dBm";
+    head.append(identity, signal);
+    card.appendChild(head);
+    const track = document.createElement("div");
+    track.className = "ble-rssi-track";
+    const fill = document.createElement("div");
+    fill.className = "ble-rssi-fill";
+    fill.style.width = Math.max(0, Math.min(100, (rssi + 100) * 2)) + "%";
+    track.appendChild(fill);
+    card.appendChild(track);
+    const meta = document.createElement("div");
+    meta.className = "ble-device-meta";
+    const details = [
+      ["Tín hiệu", bleSignalLabel(rssi)],
+      ["Loại địa chỉ", device.address_type || "Không rõ"],
+      ["Phát hiện gần nhất", Number(device.last_seen_seconds || 0) + " giây trước"],
+      ["Manufacturer Data", device.manufacturer_data || "Không quảng bá"],
+      ["Service UUID", device.service_uuids || "Không quảng bá"],
+      ["Advertising Data", device.advertising_data || "Không có"]
+    ];
+    details.forEach(([label, value]) => {
+      const line = document.createElement("div");
+      const strong = document.createElement("strong");
+      strong.textContent = label + ": ";
+      line.append(strong, document.createTextNode(value));
+      meta.appendChild(line);
+    });
+    card.appendChild(meta);
+    bleDevicesContainer.appendChild(card);
+  });
+}
+function scheduleBluetoothPoll() {
+  if (blePollTimer !== null) return;
+  blePollTimer = setTimeout(async () => {
+    blePollTimer = null;
+    await refreshBluetooth();
+  }, 1500);
+}
+async function refreshBluetooth() {
+  try {
+    const statusResponse = await fetch("/api/bluetooth/status", {cache:"no-store"});
+    const state = await statusResponse.json().catch(() => ({}));
+    if (!statusResponse.ok) throw new Error(state.error || ("Không đọc được trạng thái Bluetooth (HTTP " + statusResponse.status + ")"));
+    bleState.textContent = state.scanning ? "Đang quét" : state.ready ? "Sẵn sàng" : state.initialized ? "Đang khởi tạo" : state.error_code ? "Lỗi" : "Chưa khởi tạo";
+    bleCount.textContent = String(state.device_count || 0);
+    bluetoothStatus.textContent = state.message || "Trạng thái Bluetooth đã cập nhật.";
+    bleStartButton.disabled = Boolean(state.scanning);
+    bleStopButton.disabled = !state.scanning;
+    const devicesResponse = await fetch("/api/bluetooth/devices", {cache:"no-store"});
+    const data = await devicesResponse.json().catch(() => ({}));
+    if (!devicesResponse.ok) throw new Error(data.error || ("Không đọc được danh sách BLE (HTTP " + devicesResponse.status + ")"));
+    bleCachedDevices = Array.isArray(data.devices) ? data.devices : [];
+    renderBluetoothDevices();
+    if (state.scanning || (state.initialized && !state.ready)) scheduleBluetoothPoll();
+  } catch (error) {
+    bluetoothStatus.textContent = error.message;
+  }
+}
+async function sendBluetoothCommand(path, button, fallbackMessage) {
+  button.disabled = true;
+  bluetoothStatus.textContent = "Đang gửi yêu cầu đến BLE Scanner...";
+  try {
+    const response = await fetch(path, {
+      method:"POST", cache:"no-store",
+      headers:{"X-ChatAI-CSRF":csrfToken}
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(data.error || ("Yêu cầu Bluetooth thất bại (HTTP " + response.status + ")"));
+    bluetoothStatus.textContent = data.message || fallbackMessage;
+    await refreshBluetooth();
+  } catch (error) {
+    bluetoothStatus.textContent = error.message;
+    button.disabled = false;
+  }
+}
+bleStartButton.addEventListener("click", () => sendBluetoothCommand("/api/bluetooth/scan/start", bleStartButton, "Đã yêu cầu bắt đầu quét BLE."));
+bleStopButton.addEventListener("click", () => sendBluetoothCommand("/api/bluetooth/scan/stop", bleStopButton, "Đã yêu cầu dừng quét BLE."));
+bleRefreshButton.addEventListener("click", refreshBluetooth);
+bleSearchInput.addEventListener("input", renderBluetoothDevices);
+bleSortSelect.addEventListener("change", renderBluetoothDevices);
 toggleWifiPasswordButton.addEventListener("click", () => {
   const visible = wifiPasswordInput.type === "password";
   wifiPasswordInput.type = visible ? "text" : "password";
@@ -1105,6 +1270,86 @@ esp_err_t DeviceStatusHandler(httpd_req_t* request) {
     return result;
 }
 
+esp_err_t BluetoothStatusHandler(httpd_req_t* request) {
+    cJSON* root = cJSON_CreateObject();
+    if (root == nullptr) return SendError(request, "500 Internal Server Error", "Không đủ bộ nhớ");
+    const bool initialized = chatai::bluetooth::IsInitialized();
+    const bool ready = chatai::bluetooth::IsReady();
+    const bool scanning = chatai::bluetooth::IsScanning();
+    cJSON_AddBoolToObject(root, "initialized", initialized);
+    cJSON_AddBoolToObject(root, "ready", ready);
+    cJSON_AddBoolToObject(root, "scanning", scanning);
+    cJSON_AddNumberToObject(root, "device_count", chatai::bluetooth::GetDeviceCount());
+    cJSON_AddNumberToObject(root, "error_code", chatai::bluetooth::GetLastError());
+    const char* message = scanning ? "Đang quét BLE thụ động (tối đa 10 giây)." :
+        ready ? "BLE Scanner sẵn sàng." :
+        initialized ? "Bluetooth đang khởi tạo." :
+        "Bluetooth chưa được khởi tạo.";
+    cJSON_AddStringToObject(root, "message", message);
+    char* json = cJSON_PrintUnformatted(root);
+    cJSON_Delete(root);
+    if (json == nullptr) return SendError(request, "500 Internal Server Error", "Không thể tạo trạng thái Bluetooth");
+    const esp_err_t result = SendJson(request, "200 OK", json);
+    cJSON_free(json);
+    return result;
+}
+
+esp_err_t BluetoothDevicesHandler(httpd_req_t* request) {
+    chatai::bluetooth::Device devices[chatai::bluetooth::kMaxDevices]{};
+    const size_t count = chatai::bluetooth::GetDevices(devices, chatai::bluetooth::kMaxDevices);
+    cJSON* root = cJSON_CreateObject();
+    cJSON* items = cJSON_CreateArray();
+    if (root == nullptr || items == nullptr) {
+        cJSON_Delete(root);
+        cJSON_Delete(items);
+        return SendError(request, "500 Internal Server Error", "Không đủ bộ nhớ");
+    }
+    for (size_t i = 0; i < count; ++i) {
+        cJSON* item = cJSON_CreateObject();
+        if (item == nullptr) continue;
+        cJSON_AddStringToObject(item, "name", devices[i].name);
+        cJSON_AddStringToObject(item, "address", devices[i].address);
+        cJSON_AddStringToObject(item, "address_type", devices[i].address_type);
+        cJSON_AddStringToObject(item, "manufacturer_data", devices[i].manufacturer_data);
+        cJSON_AddStringToObject(item, "service_uuids", devices[i].service_uuids);
+        cJSON_AddStringToObject(item, "advertising_data", devices[i].advertising_data);
+        cJSON_AddNumberToObject(item, "rssi", devices[i].rssi);
+        cJSON_AddNumberToObject(item, "last_seen_seconds", devices[i].last_seen_seconds);
+        cJSON_AddItemToArray(items, item);
+    }
+    cJSON_AddItemToObject(root, "devices", items);
+    char* json = cJSON_PrintUnformatted(root);
+    cJSON_Delete(root);
+    if (json == nullptr) return SendError(request, "500 Internal Server Error", "Không thể tạo danh sách Bluetooth");
+    const esp_err_t result = SendJson(request, "200 OK", json);
+    cJSON_free(json);
+    return result;
+}
+
+esp_err_t BluetoothScanStartHandler(httpd_req_t* request) {
+    if (!IsAuthorizedMutation(request)) {
+        return SendError(request, "403 Forbidden", "Yêu cầu không hợp lệ");
+    }
+    const esp_err_t result = chatai::bluetooth::StartScan();
+    if (result != ESP_OK) {
+        ESP_LOGW(kTag, "BLE scan start failed: %s", esp_err_to_name(result));
+        return SendError(request, "503 Service Unavailable", "Không thể khởi tạo BLE Scanner");
+    }
+    return SendJson(request, "200 OK",
+                    "{\\"message\\":\\"Đã nhận yêu cầu quét BLE. Thiết bị đang khởi tạo hoặc quét trong tối đa 10 giây.\\"}");
+}
+
+esp_err_t BluetoothScanStopHandler(httpd_req_t* request) {
+    if (!IsAuthorizedMutation(request)) {
+        return SendError(request, "403 Forbidden", "Yêu cầu không hợp lệ");
+    }
+    const esp_err_t result = chatai::bluetooth::StopScan();
+    if (result != ESP_OK) {
+        return SendError(request, "503 Service Unavailable", "Không thể dừng BLE Scanner");
+    }
+    return SendJson(request, "200 OK", "{\\"message\\":\\"Đã yêu cầu dừng quét BLE.\\"}");
+}
+
 esp_err_t DiagnosticsHandler(httpd_req_t* request) {
     const std::string log = chatai::diagnostics::Get();
     httpd_resp_set_type(request, "text/plain; charset=utf-8");
@@ -1602,6 +1847,26 @@ esp_err_t RegisterRoutes(httpd_handle_t server, const std::string& csrf_token) {
     diagnostics_clear_uri.method = HTTP_POST;
     diagnostics_clear_uri.handler = DiagnosticsClearHandler;
 
+    httpd_uri_t bluetooth_status_uri{};
+    bluetooth_status_uri.uri = "/api/bluetooth/status";
+    bluetooth_status_uri.method = HTTP_GET;
+    bluetooth_status_uri.handler = BluetoothStatusHandler;
+
+    httpd_uri_t bluetooth_devices_uri{};
+    bluetooth_devices_uri.uri = "/api/bluetooth/devices";
+    bluetooth_devices_uri.method = HTTP_GET;
+    bluetooth_devices_uri.handler = BluetoothDevicesHandler;
+
+    httpd_uri_t bluetooth_scan_start_uri{};
+    bluetooth_scan_start_uri.uri = "/api/bluetooth/scan/start";
+    bluetooth_scan_start_uri.method = HTTP_POST;
+    bluetooth_scan_start_uri.handler = BluetoothScanStartHandler;
+
+    httpd_uri_t bluetooth_scan_stop_uri{};
+    bluetooth_scan_stop_uri.uri = "/api/bluetooth/scan/stop";
+    bluetooth_scan_stop_uri.method = HTTP_POST;
+    bluetooth_scan_stop_uri.handler = BluetoothScanStopHandler;
+
     httpd_uri_t ota_uri{};
     ota_uri.uri = "/api/ota";
     ota_uri.method = HTTP_POST;
@@ -1624,6 +1889,10 @@ esp_err_t RegisterRoutes(httpd_handle_t server, const std::string& csrf_token) {
     if (result == ESP_OK) result = httpd_register_uri_handler(server, &diagnostics_uri);
     if (result == ESP_OK) result = httpd_register_uri_handler(server, &diagnostics_download_uri);
     if (result == ESP_OK) result = httpd_register_uri_handler(server, &diagnostics_clear_uri);
+    if (result == ESP_OK) result = httpd_register_uri_handler(server, &bluetooth_status_uri);
+    if (result == ESP_OK) result = httpd_register_uri_handler(server, &bluetooth_devices_uri);
+    if (result == ESP_OK) result = httpd_register_uri_handler(server, &bluetooth_scan_start_uri);
+    if (result == ESP_OK) result = httpd_register_uri_handler(server, &bluetooth_scan_stop_uri);
     if (result == ESP_OK) result = httpd_register_uri_handler(server, &ota_uri);
     if (result != ESP_OK) {
         ESP_LOGE(kTag, "Could not register Web Admin routes: %s", esp_err_to_name(result));
