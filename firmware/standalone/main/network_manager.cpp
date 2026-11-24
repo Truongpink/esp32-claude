@@ -717,8 +717,26 @@ esp_err_t StartHttpServer() {
     config.max_uri_handlers = 28;
     config.lru_purge_enable = true;
     config.uri_match_fn = httpd_uri_match_wildcard;
+
+    char config_detail[192]{};
+    std::snprintf(config_detail, sizeof(config_detail),
+                  "port=%u stack=%u priority=%u sockets=%u uri_limit=%u recv_timeout=%u send_timeout=%u",
+                  static_cast<unsigned>(config.server_port),
+                  static_cast<unsigned>(config.stack_size),
+                  static_cast<unsigned>(config.task_priority),
+                  static_cast<unsigned>(config.max_open_sockets),
+                  static_cast<unsigned>(config.max_uri_handlers),
+                  static_cast<unsigned>(config.recv_wait_timeout),
+                  static_cast<unsigned>(config.send_wait_timeout));
+    chatai::diagnostics::Add("HTTP_SERVER", "CONFIG", config_detail);
+
     esp_err_t result = httpd_start(&g_http_server, &config);
-    if (result != ESP_OK) return result;
+    if (result != ESP_OK) {
+        chatai::diagnostics::Add("HTTP_SERVER", "FAIL", esp_err_to_name(result));
+        ESP_LOGE(kTag, "HTTP server start failed: %s", esp_err_to_name(result));
+        return result;
+    }
+    chatai::diagnostics::Add("HTTP_SERVER", "STARTED", "HTTP server task is running");
 
     httpd_uri_t root_uri{};
     root_uri.uri = "/";
@@ -752,8 +770,13 @@ esp_err_t StartHttpServer() {
     if (result == ESP_OK) result = chatai::web_admin::RegisterRoutes(g_http_server, g_form_token);
     if (result == ESP_OK) result = httpd_register_uri_handler(g_http_server, &captive_uri);
     if (result != ESP_OK) {
+        chatai::diagnostics::Add("HTTP_SERVER", "ROUTE_FAIL", esp_err_to_name(result));
+        ESP_LOGE(kTag, "HTTP route registration failed: %s", esp_err_to_name(result));
         httpd_stop(g_http_server);
         g_http_server = nullptr;
+    } else {
+        chatai::diagnostics::Add("HTTP_SERVER", "ROUTES_READY",
+                                 "registered=27 uri_limit=28 (base=5 admin=22)");
     }
     return result;
 }
