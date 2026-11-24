@@ -64,6 +64,8 @@ Yêu cầu và xác nhận mới nhất của người dùng được ưu tiên,
 - Chọn vai trò chuyên gia theo `ECC-SHIN/CORE/AGENT-ROLES.md`; đây là các vai trò chuyên môn được điều phối, không phải 12 AI độc lập.
 - Chọn quy trình trong `ECC-SHIN/CORE/SKILL-CATALOG.md` và các hướng dẫn tại `ECC-SHIN/SKILLS/`.
 - Phân loại bằng chứng bằng VERIFIED, USER-REPORTED, ASSUMED, BLOCKED và NOT TESTED; không biến giả thuyết thành sự thật.
-- Chế độ ASK: phải xin phép trước mỗi thao tác sửa/tạo/xóa file, commit/push, thay đổi cấu hình hoặc dữ liệu. Sự chấp thuận chỉ áp dụng đúng phạm vi được nêu.
-- Build, GitHub Actions, Codemagic, flash, OTA và deploy luôn cần sự cho phép riêng, kể cả khi đã được duyệt sửa source.
+- Chế độ ASK vẫn áp dụng cho mọi thao tác tạo/sửa/xóa file và thay đổi cấu hình/dữ liệu: phải được người dùng duyệt đúng phạm vi trước khi thực hiện.
+- **Quyền commit thường trực:** người dùng đã cấp quyền cho trợ lý tự tạo commit trực tiếp trên branch `main` đối với các thay đổi source/tài liệu đã được người dùng phê duyệt. Sau khi phạm vi sửa đổi được duyệt, không cần hỏi lại riêng quyền commit. Trước commit phải rà soát diff; sau commit phải báo SHA và URL.
+- Quyền commit thường trực không cho phép tự ý sửa nội dung chưa được duyệt, tạo branch, force-push, reset lịch sử hoặc mở rộng phạm vi đã duyệt.
+- Build, GitHub Actions, Codemagic, flash, OTA và deploy luôn cần sự cho phép riêng, kể cả khi đã được duyệt sửa source hoặc commit.
 - ECC Shin bổ sung quy trình, không thay thế hoặc làm suy yếu các quy tắc bảo vệ Web Admin, firmware, secrets và branch ở các mục trên.
