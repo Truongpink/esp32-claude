@@ -3,7 +3,7 @@
 **Project:** ChatAI TPIOS — ESP32-S3  
 **Repository:** https://github.com/Truongpink/esp32-claude  
 **Branch policy:** `main` only  
-**Permission mode:** ASK before every change
+**Permission mode:** ASK before every modification; standing approval for commits to `main` after the change itself is approved
 
 ## Mission
 ECC Shin is the project-level engineering governance and workflow system for ChatAI TPIOS. It coordinates specialist responsibilities, maintains evidence-based project memory, and protects existing firmware behavior. It is a documented workflow for the assistant and contributors, not a claim that 12 independent AI agents or autonomous services are running.
@@ -13,16 +13,18 @@ ECC Shin is the project-level engineering governance and workflow system for Cha
 2. Verify current `main` HEAD and inspect the exact source/configuration before proposing edits.
 3. Distinguish VERIFIED, USER-REPORTED, ASSUMED, BLOCKED and NOT TESTED.
 4. Prefer the smallest change that satisfies the approved task.
-5. Obtain explicit approval before each change operation. Approval is limited to its stated scope.
+5. Obtain explicit approval before creating, editing or deleting files and before changing configuration/data. Approval is limited to its stated scope.
+6. Standing commit authorization: after the user has approved the exact source/documentation changes, the assistant may commit those approved changes directly to `main` without asking again for commit permission. Review the diff first and report the commit SHA and URL.
 6. Preserve working firmware, network provisioning, Web Admin compatibility, audio, OLED, NVS and OTA behavior.
 7. Never expose credentials, API keys, tokens or secrets.
-8. Do not run Actions, CI, builds, flash, OTA or deployment without separate explicit authorization.
-9. Review the resulting diff and report exactly what was and was not verified.
+9. Do not run Actions, CI, builds, flash, OTA or deployment without separate explicit authorization; commit authorization does not include these operations.
+10. Never create branches, force-push, reset history or expand the approved change scope.
+11. Review the resulting diff and report exactly what was and was not verified.
 
 ## Task lifecycle
-INTAKE → LOAD PROJECT MEMORY → SELECT SPECIALIST ROLE → INSPECT EVIDENCE → PLAN & RISK REVIEW → ASK APPROVAL → IMPLEMENT APPROVED SCOPE → SOURCE REVIEW → REPORT & HANDOFF.
+INTAKE → LOAD PROJECT MEMORY → SELECT SPECIALIST ROLE → INSPECT EVIDENCE → PLAN & RISK REVIEW → ASK APPROVAL FOR FILE/DATA CHANGES → IMPLEMENT APPROVED SCOPE → DIFF REVIEW → COMMIT APPROVED CHANGES TO MAIN → REPORT & HANDOFF.
 
-If permission, source evidence, or repository state is unclear, stop and ask. Never infer permission from a broad goal.
+If permission to modify files, source evidence, or repository state is unclear, stop and ask. Do not ask again for commit permission when the exact changes have already been approved; standing authorization covers that commit only. Never infer permission to modify files from a broad goal.
 
 ## Project-specific guardrails
 - Work on `main` only; never create or switch branches.
