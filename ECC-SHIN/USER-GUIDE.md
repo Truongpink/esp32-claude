@@ -109,18 +109,18 @@ ECC Shin áp dụng chế độ ASK. Mặc định, việc phân tích và đọ
 | Đọc source, cấu trúc, tài liệu | Được phép trong phạm vi truy cập |
 | Tra cứu tài liệu công khai | Được phép |
 | Tạo/sửa/xóa file | Phải xin phép trước |
-| Commit hoặc push | Phải được cho phép rõ ràng |
+| Commit trực tiếp lên `main` | Đã được cấp quyền thường trực sau khi nội dung thay đổi được anh duyệt; không cần hỏi lại riêng quyền commit |
 | Tạo branch | Không tạo; dự án chỉ làm trên `main` |
 | GitHub Actions, CI, Codemagic, build | Cần cho phép riêng |
 | Flash, OTA, deploy | Cần cho phép riêng |
 | Thay đổi secrets/quyền truy cập | Phải xin phép và xác định rõ phạm vi |
 
-Một lần duyệt chỉ áp dụng cho các thao tác, file và phạm vi được nêu. Duyệt sửa source không đồng nghĩa với duyệt build, chạy Actions, flash hay OTA. Không được suy diễn quyền từ câu “ok” nếu chưa rõ nó đang duyệt việc gì.
+Một lần duyệt chỉ áp dụng cho các file và phạm vi thay đổi được nêu. Sau khi nội dung thay đổi được duyệt, trợ lý được tự commit trực tiếp lên `main` mà không cần hỏi lại riêng bước commit. Quyền này không bao gồm tạo branch, force-push, reset lịch sử, build, chạy Actions, flash, OTA hay deploy. Không được suy diễn quyền sửa nội dung từ câu “ok” nếu chưa rõ nó đang duyệt việc gì.
 
 Khi duyệt một danh sách thay đổi, nên nêu rõ:
 - File được phép tạo hoặc sửa.
 - Nội dung/phạm vi thay đổi.
-- Có cho phép commit trực tiếp lên `main` hay không.
+- Các giới hạn thao tác khác nếu có; quyền commit lên `main` đã được cấp thường trực và không cần duyệt lại.
 - Các thao tác bị cấm hoặc chưa được duyệt.
 
 ## 6. Quy tắc riêng của ChatAI TPIOS
