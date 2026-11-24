@@ -26,6 +26,7 @@ esp_err_t StopScan();
 bool IsInitialized();
 bool IsReady();
 bool IsScanning();
+bool IsScanRequested();
 size_t GetDeviceCount();
 size_t GetDevices(Device* output, size_t capacity);
 int GetLastError();
