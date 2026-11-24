@@ -555,7 +555,7 @@ async function refreshBluetooth() {
     if (!devicesResponse.ok) throw new Error(data.error || ("Không đọc được danh sách BLE (HTTP " + devicesResponse.status + ")"));
     bleCachedDevices = Array.isArray(data.devices) ? data.devices : [];
     renderBluetoothDevices();
-    if (state.scanning || state.scan_requested || (state.initialized && !state.ready)) scheduleBluetoothPoll();
+    if (state.scanning || state.scan_requested) scheduleBluetoothPoll();
   } catch (error) {
     bluetoothStatus.textContent = error.message;
   }
@@ -1369,7 +1369,7 @@ esp_err_t BluetoothStatusHandler(httpd_req_t* request) {
     cJSON_AddBoolToObject(root, "ready", ready);
     const int error_code = chatai::bluetooth::GetLastError();
     cJSON_AddBoolToObject(root, "scanning", scanning);
-    cJSON_AddBoolToObject(root, "scan_requested", initialized && !scanning && !ready);
+    cJSON_AddBoolToObject(root, "scan_requested", chatai::bluetooth::IsScanRequested());
     cJSON_AddNumberToObject(root, "device_count", chatai::bluetooth::GetDeviceCount());
     cJSON_AddNumberToObject(root, "error_code", error_code);
     const char* message = error_code != 0 ? "BLE Scanner gặp lỗi; xem mã lỗi." :
