@@ -149,13 +149,14 @@ void XiaozhiAudioRuntime::SetCaptureEnabled(bool enabled) {
     }
 
     if (enabled) {
+        capture_enabled_.store(true);
         if (!service_.EnableVoiceProcessing(true)) {
+            capture_enabled_.store(false);
             ESP_LOGE(kTag, "AFE initialization failed");
             chatai::diagnostics::Add("AFE_CAPTURE", "START_FAILED",
                 "AudioService EnableVoiceProcessing(true) returned false");
             return;
         }
-        capture_enabled_.store(true);
         chatai::diagnostics::Add("AFE_CAPTURE", "STARTED",
             "microphone capture and voice processing enabled");
     } else {
