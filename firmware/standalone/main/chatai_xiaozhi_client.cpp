@@ -3,6 +3,7 @@
 #include "application.h"
 #include "device_state.h"
 #include "protocol.h"
+#include "network_manager.h"
 
 #include <atomic>
 #include <esp_log.h>
@@ -35,7 +36,9 @@ bool IsConversationState(DeviceState state) {
 }
 
 void SynchronizeContinuousChatState(Application& app) {
-    if (!g_stop_after_speech.load() && !IsConversationState(app.GetDeviceState())) {
+    if (!g_stop_after_speech.load() &&
+        (!chatai::network::NetworkManager::IsConnected() ||
+         !IsConversationState(app.GetDeviceState()))) {
         g_continuous_chat_enabled.store(false);
     }
 }
@@ -63,14 +66,15 @@ void Run() {
 }
 
 bool IsReady() {
-    if (!g_application_initialized.load()) return false;
+    if (!g_application_initialized.load() ||
+        !chatai::network::NetworkManager::IsConnected()) return false;
     const auto state = Application::GetInstance().GetDeviceState();
     return state == kDeviceStateIdle || state == kDeviceStateListening ||
            state == kDeviceStateSpeaking || state == kDeviceStateNotifying;
 }
 
 bool StartConversation() {
-    if (!g_application_initialized.load()) return false;
+    if (!IsReady()) return false;
     auto& app = Application::GetInstance();
     const auto state = app.GetDeviceState();
     if (state == kDeviceStateIdle) {
@@ -88,7 +92,7 @@ bool StartConversation() {
 }
 
 void SetChatEnabled(bool enabled) {
-    if (!g_application_initialized.load()) return;
+    if (!g_application_initialized.load() || (enabled && !IsReady())) return;
     auto& app = Application::GetInstance();
     const auto state = app.GetDeviceState();
 
@@ -125,6 +129,7 @@ void SetPushToTalk(bool pressed) {
     if (!g_application_initialized.load()) return;
     auto& app = Application::GetInstance();
     SynchronizeContinuousChatState(app);
+    if (pressed && !IsReady()) return;
     const bool previous = g_push_to_talk.exchange(pressed);
     if (previous == pressed || g_continuous_chat_enabled.load()) return;
 
@@ -152,8 +157,11 @@ RuntimeState GetRuntimeState() {
     auto& app = Application::GetInstance();
     FinishDeferredStop(app);
     SynchronizeContinuousChatState(app);
+    const auto device_state = app.GetDeviceState();
+    if (device_state == kDeviceStateFatalError) return RuntimeState::kError;
+    if (!chatai::network::NetworkManager::IsConnected()) return RuntimeState::kConnecting;
 
-    switch (app.GetDeviceState()) {
+    switch (device_state) {
         case kDeviceStateIdle:
             return RuntimeState::kWaiting;
         case kDeviceStateListening:
