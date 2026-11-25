@@ -421,10 +421,11 @@ void Application::HandleNetworkDisconnectedEvent() {
     if (state == kDeviceStateNotifying) {
         StopNotification();
     }
-    if (state == kDeviceStateConnecting || state == kDeviceStateListening ||
-        state == kDeviceStateSpeaking) {
+    if (protocol_ &&
+        (state == kDeviceStateIdle || state == kDeviceStateConnecting ||
+         state == kDeviceStateListening || state == kDeviceStateSpeaking)) {
         ESP_LOGI(TAG, "Closing audio channel due to network disconnection");
-        protocol_->CloseAudioChannel();
+        protocol_->CloseAudioChannel(false);
     }
 
     // Update the status bar immediately to show the network state
