@@ -415,14 +415,14 @@ void Application::HandleActivationDoneEvent() {
     ESP_LOGI(TAG, "Activation done");
 
     SystemInfo::PrintHeapStats();
-    SetDeviceState(kDeviceStateIdle);
 
     has_server_time_ = ota_->HasServerTime();
 
-    // Protocol start may have already raised MAIN_EVENT_ERROR. Do not replace
-    // that alert with the "ready" UI/sound — the main loop can process both
-    // events back-to-back because the activation task is lower priority.
+    // Protocol start may have failed. Do not expose Idle/ready state unless
+    // the protocol initialized successfully; WifiConfiguring keeps IsReady()
+    // false and allows a later network-connected event to retry activation.
     const bool has_error = !last_error_message_.empty();
+    SetDeviceState(has_error ? kDeviceStateWifiConfiguring : kDeviceStateIdle);
     if (!startup_completed_) {
         startup_completed_ = true;
         pending_startup_wake_word_hint_ = !has_error;
