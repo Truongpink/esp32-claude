@@ -1203,46 +1203,56 @@ esp_err_t SendError(httpd_req_t* request, const char* status, const char* messag
     return SendJson(request, status, body.c_str());
 }
 
-bool IsSameOrigin(httpd_req_t* request) {
+// Returns a non-sensitive reason code when a mutation request is rejected.
+// Header values and CSRF tokens are deliberately never written to Diagnostics.
+const char* MutationAuthorizationFailure(httpd_req_t* request) {
     const size_t host_length = httpd_req_get_hdr_value_len(request, "Host");
-    if (host_length == 0 || host_length >= 96) return false;
+    if (host_length == 0) return "AUTH_HOST_MISSING";
+    if (host_length >= 96) return "AUTH_HOST_TOO_LONG";
 
     char host[96]{};
     if (httpd_req_get_hdr_value_str(request, "Host", host, sizeof(host)) != ESP_OK) {
-        return false;
+        return "AUTH_HOST_READ_FAILED";
     }
 
     const size_t origin_length = httpd_req_get_hdr_value_len(request, "Origin");
     // Some mobile browser/webview requests omit Origin for same-origin fetches.
-    // IsAuthorizedMutation still requires the unpredictable per-boot CSRF token.
-    if (origin_length == 0) return true;
-    if (origin_length >= 160) return false;
+    // The unpredictable per-boot CSRF token remains mandatory below.
+    if (origin_length > 0) {
+        if (origin_length >= 160) return "AUTH_ORIGIN_TOO_LONG";
 
-    char origin[160]{};
-    if (httpd_req_get_hdr_value_str(request, "Origin", origin, sizeof(origin)) != ESP_OK) {
-        return false;
+        char origin[160]{};
+        if (httpd_req_get_hdr_value_str(request, "Origin", origin, sizeof(origin)) != ESP_OK) {
+            return "AUTH_ORIGIN_READ_FAILED";
+        }
+
+        const std::string expected = std::string("http://") + host;
+        bool same_origin = origin == expected;
+
+        // Normalize the optional explicit default HTTP port on either header.
+        if (!same_origin && expected.size() > 3 &&
+            expected.compare(expected.size() - 3, 3, ":80") == 0) {
+            same_origin = origin == expected.substr(0, expected.size() - 3);
+        } else if (!same_origin) {
+            same_origin = origin == expected + ":80";
+        }
+        if (!same_origin) return "AUTH_ORIGIN_MISMATCH";
     }
 
-    const std::string expected = std::string("http://") + host;
-    if (origin == expected) return true;
+    const size_t token_length = httpd_req_get_hdr_value_len(request, "X-ChatAI-CSRF");
+    if (token_length == 0) return "AUTH_CSRF_MISSING";
+    if (token_length >= 64) return "AUTH_CSRF_TOO_LONG";
 
-    // Normalize the optional explicit default HTTP port on either header.
-    if (expected.size() > 3 &&
-        expected.compare(expected.size() - 3, 3, ":80") == 0) {
-        return origin == expected.substr(0, expected.size() - 3);
+    char token[64]{};
+    if (httpd_req_get_hdr_value_str(request, "X-ChatAI-CSRF", token, sizeof(token)) != ESP_OK) {
+        return "AUTH_CSRF_READ_FAILED";
     }
-    return origin == expected + ":80";
+    if (g_csrf_token != token) return "AUTH_CSRF_MISMATCH";
+    return nullptr;
 }
 
 bool IsAuthorizedMutation(httpd_req_t* request) {
-    if (!IsSameOrigin(request)) return false;
-    const size_t token_length = httpd_req_get_hdr_value_len(request, "X-ChatAI-CSRF");
-    if (token_length == 0 || token_length >= 64) return false;
-    char token[64]{};
-    if (httpd_req_get_hdr_value_str(request, "X-ChatAI-CSRF", token, sizeof(token)) != ESP_OK) {
-        return false;
-    }
-    return g_csrf_token == token;
+    return MutationAuthorizationFailure(request) == nullptr;
 }
 
 bool ReadBody(httpd_req_t* request, std::string& body,
@@ -1420,9 +1430,11 @@ esp_err_t BluetoothDevicesHandler(httpd_req_t* request) {
 
 esp_err_t BluetoothScanStartHandler(httpd_req_t* request) {
     chatai::diagnostics::Add("BLE_HTTP_START", "RECEIVED", "POST /api/bluetooth/scan/start");
-    if (!IsAuthorizedMutation(request)) {
-        chatai::diagnostics::Add("BLE_HTTP_START", "DENIED",
-                                 "Origin/Host or CSRF validation failed");
+    const char* auth_failure = MutationAuthorizationFailure(request);
+    if (auth_failure != nullptr) {
+        chatai::diagnostics::Add("BLE_HTTP_START", auth_failure,
+                                 "Mutation rejected; header values omitted");
+        chatai::diagnostics::Add("BLE_HTTP_START", "DENIED", auth_failure);
         return SendError(request, "403 Forbidden", "Yêu cầu không hợp lệ");
     }
 
@@ -1449,9 +1461,11 @@ esp_err_t BluetoothScanStartHandler(httpd_req_t* request) {
 
 esp_err_t BluetoothScanStopHandler(httpd_req_t* request) {
     chatai::diagnostics::Add("BLE_HTTP_STOP", "RECEIVED", "POST /api/bluetooth/scan/stop");
-    if (!IsAuthorizedMutation(request)) {
-        chatai::diagnostics::Add("BLE_HTTP_STOP", "DENIED",
-                                 "Origin/Host or CSRF validation failed");
+    const char* auth_failure = MutationAuthorizationFailure(request);
+    if (auth_failure != nullptr) {
+        chatai::diagnostics::Add("BLE_HTTP_STOP", auth_failure,
+                                 "Mutation rejected; header values omitted");
+        chatai::diagnostics::Add("BLE_HTTP_STOP", "DENIED", auth_failure);
         return SendError(request, "403 Forbidden", "Yêu cầu không hợp lệ");
     }
 
