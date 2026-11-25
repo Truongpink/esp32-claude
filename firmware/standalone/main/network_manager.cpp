@@ -895,6 +895,15 @@ void EventHandler(void*, esp_event_base_t event_base, int32_t event_id, void* ev
             g_wifi_setup_state.store(4);
             chatai::diagnostics::Add("WIFI", "FAIL", "Wi-Fi credentials rejected or router unavailable");
             chatai::display::Notify("WI-FI", "Ket noi that bai");
+
+            // A previously connected device may have stopped its setup AP.
+            // Restore provisioning access so the user can correct credentials
+            // after a failed Wi-Fi change.
+            const esp_err_t ap_result = StartProvisioning();
+            if (ap_result != ESP_OK) {
+                ESP_LOGE(kTag, "Could not restore Wi-Fi setup AP after connection failure: %s",
+                         esp_err_to_name(ap_result));
+            }
             return;
         }
         g_wifi_disconnect_reason.store(reason);
