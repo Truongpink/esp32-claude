@@ -28,6 +28,17 @@ void FinishDeferredStop(Application& app) {
         app.ToggleChatState();
     }
 }
+
+bool IsConversationState(DeviceState state) {
+    return state == kDeviceStateConnecting || state == kDeviceStateListening ||
+           state == kDeviceStateSpeaking || state == kDeviceStateNotifying;
+}
+
+void SynchronizeContinuousChatState(Application& app) {
+    if (!g_stop_after_speech.load() && !IsConversationState(app.GetDeviceState())) {
+        g_continuous_chat_enabled.store(false);
+    }
+}
 }  // namespace
 
 esp_err_t Initialize() {
@@ -103,17 +114,20 @@ void SetChatEnabled(bool enabled) {
 
 bool IsChatEnabled() {
     if (g_application_initialized.load()) {
-        FinishDeferredStop(Application::GetInstance());
+        auto& app = Application::GetInstance();
+        FinishDeferredStop(app);
+        SynchronizeContinuousChatState(app);
     }
     return g_continuous_chat_enabled.load();
 }
 
 void SetPushToTalk(bool pressed) {
     if (!g_application_initialized.load()) return;
+    auto& app = Application::GetInstance();
+    SynchronizeContinuousChatState(app);
     const bool previous = g_push_to_talk.exchange(pressed);
     if (previous == pressed || g_continuous_chat_enabled.load()) return;
 
-    auto& app = Application::GetInstance();
     if (pressed) {
         app.StartListening();
     } else {
@@ -123,7 +137,9 @@ void SetPushToTalk(bool pressed) {
 
 bool IsListening() {
     if (g_application_initialized.load()) {
-        FinishDeferredStop(Application::GetInstance());
+        auto& app = Application::GetInstance();
+        FinishDeferredStop(app);
+        SynchronizeContinuousChatState(app);
     }
     return g_continuous_chat_enabled.load() || g_push_to_talk.load();
 }
@@ -135,6 +151,7 @@ RuntimeState GetRuntimeState() {
 
     auto& app = Application::GetInstance();
     FinishDeferredStop(app);
+    SynchronizeContinuousChatState(app);
 
     switch (app.GetDeviceState()) {
         case kDeviceStateIdle:
