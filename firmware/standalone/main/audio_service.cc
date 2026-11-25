@@ -32,17 +32,39 @@ AudioService::AudioService() { event_group_ = xEventGroupCreate(); }
 
 AudioService::~AudioService() {
     Stop();
+    ReleaseResources();
+    if (event_group_ != nullptr) {
+        vEventGroupDelete(event_group_);
+        event_group_ = nullptr;
+    }
+}
+
+void AudioService::ReleaseResources() {
     if (audio_power_timer_ != nullptr) {
         esp_timer_stop(audio_power_timer_);
         esp_timer_delete(audio_power_timer_);
         audio_power_timer_ = nullptr;
     }
     audio_engine_.reset();
-    if (opus_encoder_ != nullptr) { esp_opus_enc_close(opus_encoder_); opus_encoder_ = nullptr; }
-    if (opus_decoder_ != nullptr) { esp_opus_dec_close(opus_decoder_); opus_decoder_ = nullptr; }
-    if (input_resampler_ != nullptr) { esp_ae_rate_cvt_close(input_resampler_); input_resampler_ = nullptr; }
-    if (output_resampler_ != nullptr) { esp_ae_rate_cvt_close(output_resampler_); output_resampler_ = nullptr; }
-    if (event_group_ != nullptr) { vEventGroupDelete(event_group_); event_group_ = nullptr; }
+    audio_engine_initialized_ = false;
+    if (opus_encoder_ != nullptr) {
+        esp_opus_enc_close(opus_encoder_);
+        opus_encoder_ = nullptr;
+    }
+    if (opus_decoder_ != nullptr) {
+        esp_opus_dec_close(opus_decoder_);
+        opus_decoder_ = nullptr;
+    }
+    if (input_resampler_ != nullptr) {
+        esp_ae_rate_cvt_close(input_resampler_);
+        input_resampler_ = nullptr;
+    }
+    if (output_resampler_ != nullptr) {
+        esp_ae_rate_cvt_close(output_resampler_);
+        output_resampler_ = nullptr;
+    }
+    codec_ = nullptr;
+    initialized_ = false;
 }
 
 esp_err_t AudioService::Initialize(AudioCodec* codec) {
@@ -54,31 +76,7 @@ esp_err_t AudioService::Initialize(AudioCodec* codec) {
     // allocation below fails, release everything acquired so far so the
     // singleton Application can exit without retaining a half-built pipeline.
     const auto rollback_initialization = [this](esp_err_t error) {
-        if (audio_power_timer_ != nullptr) {
-            esp_timer_stop(audio_power_timer_);
-            esp_timer_delete(audio_power_timer_);
-            audio_power_timer_ = nullptr;
-        }
-        audio_engine_.reset();
-        audio_engine_initialized_ = false;
-        if (opus_encoder_ != nullptr) {
-            esp_opus_enc_close(opus_encoder_);
-            opus_encoder_ = nullptr;
-        }
-        if (opus_decoder_ != nullptr) {
-            esp_opus_dec_close(opus_decoder_);
-            opus_decoder_ = nullptr;
-        }
-        if (input_resampler_ != nullptr) {
-            esp_ae_rate_cvt_close(input_resampler_);
-            input_resampler_ = nullptr;
-        }
-        if (output_resampler_ != nullptr) {
-            esp_ae_rate_cvt_close(output_resampler_);
-            output_resampler_ = nullptr;
-        }
-        codec_ = nullptr;
-        initialized_ = false;
+        ReleaseResources();
         return error;
     };
 
@@ -180,6 +178,7 @@ esp_err_t AudioService::Start() {
         }
         audio_input_task_handle_ = nullptr; audio_output_task_handle_ = nullptr;
         opus_codec_task_handle_ = nullptr; started_task_exit_bits_ = 0;
+        ReleaseResources();
         return ESP_ERR_NO_MEM;
     };
 #if CONFIG_USE_AUDIO_PROCESSOR
@@ -215,7 +214,7 @@ esp_err_t AudioService::Start() {
     if(codec_result!=pdPASS)return abort_start();
     started_task_exit_bits_|=AS_EVENT_CODEC_TASK_EXITED;
     const esp_err_t timer_result=esp_timer_start_periodic(audio_power_timer_,1000000);
-    if(timer_result!=ESP_OK){Stop();return timer_result;}
+    if(timer_result!=ESP_OK){Stop();ReleaseResources();return timer_result;}
     return ESP_OK;
 }
 
