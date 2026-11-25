@@ -102,6 +102,12 @@ bool ShouldKeepDiagnostic(const char* stage, const char* result) {
         return true;
     }
     if (stage == nullptr) return false;
+    if (std::strcmp(stage, "VOICE_LATENCY") == 0 ||
+        std::strcmp(stage, "XIAOZHI_TTS") == 0 ||
+        std::strcmp(stage, "XIAOZHI_LISTEN") == 0 ||
+        std::strcmp(stage, "AFE_CAPTURE") == 0) {
+        return true;
+    }
     if (std::strncmp(stage, "BLE_", 4) == 0 ||
         std::strcmp(stage, "PREVIOUS_BOOT") == 0 ||
         std::strcmp(stage, "PREVIOUS_BOOT_EVENT") == 0) {
