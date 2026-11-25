@@ -350,19 +350,18 @@ private:
                         audio_.SetCaptureEnabled(IsListening() && !tts_active_.load());
                     }
 
-                    if (turn_pending_.load() && !vad_speaking_.load()) {
+                    if (turn_pending_.load()) {
                         int64_t expired_speech_end_us = speech_ended_us_.load();
                         const int64_t now_us = esp_timer_get_time();
                         if (expired_speech_end_us > 0 &&
                             now_us - expired_speech_end_us >=
                                 static_cast<int64_t>(kTurnPendingTimeoutMs) * 1000 &&
                             speech_ended_us_.compare_exchange_strong(
-                                expired_speech_end_us, 0) &&
-                            !vad_speaking_.load()) {
-                            turn_pending_.store(false);
-                            if (speech_ended_us_.load() > 0) {
-                                turn_pending_.store(true);
-                            } else {
+                                expired_speech_end_us, 0)) {
+                            const bool newer_speech_active =
+                                vad_speaking_.load() ||
+                                speech_started_us_.load() > expired_speech_end_us;
+                            if (!newer_speech_active && turn_pending_.exchange(false)) {
                                 chatai::diagnostics::Add("VOICE_LATENCY", "TURN_TIMEOUT",
                                     "pending turn cleared after 30000 ms without TTS start");
                             }
@@ -497,6 +496,11 @@ private:
                         tts_started_us_.store(esp_timer_get_time());
                         tts_first_packet_reported_.store(false);
                         tts_playback_reported_.store(false);
+                        downlink_packet_received_reported_.store(false);
+                        downlink_bad_packet_reported_.store(false);
+                        downlink_sequence_drop_reported_.store(false);
+                        downlink_decrypt_failed_reported_.store(false);
+                        downlink_queue_rejected_reported_.store(false);
                         one_shot_local_vad_.store(false);
                         turn_pending_.store(false);
                         speaker_playing_.store(false);
@@ -530,6 +534,11 @@ private:
                     chatai::diagnostics::Add("XIAOZHI_TTS", "START",
                         "server_started_voice_response");
                 } else if (state == "stop") {
+                    if (!downlink_packet_received_reported_.load()) {
+                        chatai::diagnostics::Add("XIAOZHI_AUDIO_RX",
+                            "NO_UDP_PACKET_BEFORE_TTS_STOP",
+                            "no UDP datagram reached the audio socket during this TTS response");
+                    }
                     chatai::diagnostics::Add("XIAOZHI_TTS", "STOP",
                         "response_finished; continuous_chat_remains_enabled");
                 }
@@ -611,13 +620,25 @@ private:
     void HandleVadState(bool speaking) {
         const int64_t now_us = esp_timer_get_time();
         if (speaking) {
+            if (!session_ready_.load() || !audio_.IsCaptureEnabled() ||
+                tts_active_.load()) return;
             speech_started_us_.store(now_us);
             speech_ended_us_.store(0);
+            first_uplink_sent_us_.store(0);
+            last_uplink_sent_us_.store(0);
+            uplink_packet_reported_.store(false);
+            turn_pending_.store(false);
             vad_speaking_.store(true);
             char detail[64]{};
             std::snprintf(detail, sizeof(detail), "monotonic_us=%lld",
                           static_cast<long long>(now_us));
             chatai::diagnostics::Add("VOICE_LATENCY", "SPEECH_STARTED", detail);
+            return;
+        }
+        if (!audio_.IsCaptureEnabled() || tts_active_.load() ||
+            !session_ready_.load()) {
+            vad_speaking_.store(false);
+            speech_started_us_.store(0);
             return;
         }
         if (!vad_speaking_.exchange(false)) return;
@@ -656,6 +677,13 @@ private:
         if (session_ready_.load() && IsListening() && !tts_active_.load() &&
             audio_.IsPlaybackIdle()) {
             audio_.SetCaptureEnabled(true);
+        }
+    }
+
+    void ReportDownlinkIssue(std::atomic<bool>& reported, const char* result,
+                             const char* detail) {
+        if (!reported.exchange(true)) {
+            chatai::diagnostics::Add("XIAOZHI_AUDIO_RX", result, detail);
         }
     }
 
@@ -991,7 +1019,14 @@ private:
             if (received < 0) {
                 continue;
             }
+            if (!downlink_packet_received_reported_.exchange(true)) {
+                char detail[64]{};
+                std::snprintf(detail, sizeof(detail), "first_udp_datagram_bytes=%d", received);
+                chatai::diagnostics::Add("XIAOZHI_AUDIO_RX", "UDP_PACKET_RECEIVED", detail);
+            }
             if (received < static_cast<int>(kUdpHeaderSize) || packet[0] != 0x01) {
+                ReportDownlinkIssue(downlink_bad_packet_reported_, "DROP_BAD_PACKET",
+                    "UDP datagram shorter than header or invalid packet marker");
                 continue;
             }
 
@@ -1005,16 +1040,28 @@ private:
             timestamp = ntohl(timestamp);
             sequence = ntohl(sequence);
             if (received != static_cast<int>(kUdpHeaderSize + payload_length) ||
-                payload_length == 0) continue;
+                payload_length == 0) {
+                ReportDownlinkIssue(downlink_bad_packet_reported_, "DROP_BAD_PACKET",
+                    "UDP payload length does not match datagram size");
+                continue;
+            }
 
             {
                 std::lock_guard<std::mutex> lock(channel_mutex_);
-                if (sequence <= remote_sequence_) continue;
+                if (sequence <= remote_sequence_) {
+                    ReportDownlinkIssue(downlink_sequence_drop_reported_, "DROP_SEQUENCE",
+                        "UDP sequence is not newer than the last accepted packet");
+                    continue;
+                }
             }
 
             std::vector<uint8_t> decoded(payload_length);
             if (!Crypt(packet.data() + kUdpHeaderSize, payload_length,
-                       packet.data(), decoded.data())) continue;
+                       packet.data(), decoded.data())) {
+                ReportDownlinkIssue(downlink_decrypt_failed_reported_, "DECRYPT_FAILED",
+                    "AES-CTR decryption failed for a received UDP audio packet");
+                continue;
+            }
 
             {
                 std::lock_guard<std::mutex> lock(channel_mutex_);
@@ -1024,6 +1071,8 @@ private:
             const esp_err_t result = audio_.SubmitDownlinkFrame(
                 decoded.data(), decoded.size(), sample_rate_, frame_duration_ms_);
             if (result != ESP_OK && result != ESP_ERR_INVALID_STATE) {
+                ReportDownlinkIssue(downlink_queue_rejected_reported_, "QUEUE_REJECTED",
+                    esp_err_to_name(result));
                 ESP_LOGW(kTag, "Dropped downlink Opus frame: %s",
                          esp_err_to_name(result));
             } else if (result == ESP_OK) {
@@ -1334,6 +1383,11 @@ private:
     std::atomic<bool> vad_speaking_{false};
     std::atomic<bool> tts_first_packet_reported_{false};
     std::atomic<bool> tts_playback_reported_{false};
+    std::atomic<bool> downlink_packet_received_reported_{false};
+    std::atomic<bool> downlink_bad_packet_reported_{false};
+    std::atomic<bool> downlink_sequence_drop_reported_{false};
+    std::atomic<bool> downlink_decrypt_failed_reported_{false};
+    std::atomic<bool> downlink_queue_rejected_reported_{false};
     std::atomic<int64_t> listen_started_us_{0};
     std::atomic<int64_t> speech_started_us_{0};
     std::atomic<int64_t> speech_ended_us_{0};
