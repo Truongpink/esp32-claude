@@ -277,8 +277,16 @@ bool AudioService::ReadAudioData(std::vector<int16_t>& data, int sample_rate, in
                                                    &output_samples);
             auto resampled = std::vector<int16_t>(output_samples * codec_->input_channels());
             uint32_t actual_output = output_samples;
-            esp_ae_rate_cvt_process(input_resampler_, (esp_ae_sample_t)data.data(), in_sample_num,
-                                    (esp_ae_sample_t)resampled.data(), &actual_output);
+            const esp_err_t convert_result =
+                esp_ae_rate_cvt_process(input_resampler_, (esp_ae_sample_t)data.data(),
+                                        in_sample_num, (esp_ae_sample_t)resampled.data(),
+                                        &actual_output);
+            if (convert_result != ESP_AE_ERR_OK || actual_output == 0 ||
+                actual_output > output_samples) {
+                ESP_LOGE(TAG, "Microphone resampling failed: err=%d output_samples=%lu",
+                         convert_result, static_cast<unsigned long>(actual_output));
+                return false;
+            }
             resampled.resize(actual_output * codec_->input_channels());
             data = std::move(resampled);
         }
@@ -497,11 +505,21 @@ void AudioService::OpusCodecTask() {
                                                                    &target_size);
                             std::vector<int16_t> resampled(target_size);
                             uint32_t actual_output = target_size;
-                            esp_ae_rate_cvt_process(output_resampler_, (esp_ae_sample_t)task.pcm.data(),
-                                                    task.pcm.size(), (esp_ae_sample_t)resampled.data(),
-                                                    &actual_output);
-                            resampled.resize(actual_output);
-                            task.pcm = std::move(resampled);
+                            const esp_err_t convert_result =
+                                esp_ae_rate_cvt_process(output_resampler_,
+                                                        (esp_ae_sample_t)task.pcm.data(),
+                                                        task.pcm.size(),
+                                                        (esp_ae_sample_t)resampled.data(),
+                                                        &actual_output);
+                            if (convert_result != ESP_AE_ERR_OK || actual_output == 0 ||
+                                actual_output > target_size) {
+                                ESP_LOGE(TAG, "Speaker resampling failed: err=%d output_samples=%lu",
+                                         convert_result, static_cast<unsigned long>(actual_output));
+                            } else {
+                                resampled.resize(actual_output);
+                                task.pcm = std::move(resampled);
+                                decoded = true;
+                            }
                         }
                     }
                     decoded = true;
