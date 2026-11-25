@@ -13,7 +13,6 @@
 
 #include "audio_manager.h"
 #include "display_manager.h"
-#include "network_manager.h"
 #include "chatai_xiaozhi_client.h"
 #include "diagnostic_manager.h"
 
@@ -114,52 +113,43 @@ void ButtonTask(void*) {
 
         if (UpdateButton(g_boot, now)) {
             ReportButtonTransition("BOOT", g_boot);
-            // Match Xiaozhi's BOOT OnClick behavior: act once after release,
-            // rather than starting a one-shot listen on the press edge.
+            // Xiaozhi BOOT is a click action: process once after the release edge.
+            // Wi-Fi provisioning is intentionally not controlled by this button.
             if (!g_boot.stable_pressed) {
-                const bool provisioning =
-                    chatai::network::NetworkManager::IsProvisioningActive();
-                char boot_start_detail[160]{};
-                std::snprintf(boot_start_detail, sizeof(boot_start_detail),
-                    "uptime_ms=%llu phase=click_release provisioning=%d button_stack_watermark=%u",
-                    static_cast<unsigned long long>(esp_timer_get_time() / 1000),
-                    provisioning ? 1 : 0,
-                    static_cast<unsigned>(uxTaskGetStackHighWaterMark(nullptr)));
-                chatai::diagnostics::SetCrashContext("BOOT_ACTION_BEGIN", boot_start_detail);
-                chatai::diagnostics::SetBootContext("BOOT_ACTION_BEGIN", boot_start_detail);
-                chatai::diagnostics::Add("BOOT_ACTION", "BEGIN", boot_start_detail);
-
-                if (provisioning) {
-                    chatai::display::Notify("WI-FI", "Cấu hình qua Web Admin");
-                    ESP_LOGI(kTag, "BOOT clicked while Wi-Fi provisioning is active");
-                } else {
-                    const bool was_enabled = chatai::xiaozhi::IsChatEnabled();
-                    if (was_enabled) {
-                        chatai::xiaozhi::SetChatEnabled(false);
-                    } else {
-                        chatai::xiaozhi::StartConversation();
-                    }
-                    const bool chat_enabled = chatai::xiaozhi::IsChatEnabled();
-                    const bool ready = chatai::xiaozhi::IsReady();
-                    const char* message = chat_enabled
-                        ? (ready ? "BOOT started continuous conversation"
-                                 : "Continuous conversation queued until server is ready")
-                        : "Continuous conversation stopped";
-                    chatai::display::Notify("CHATAI", message);
-                    ESP_LOGI(kTag, "BOOT continuous chat %s (ready=%d)",
-                             chat_enabled ? "active" : "stopped", ready ? 1 : 0);
-                    char boot_detail[160]{};
-                    std::snprintf(boot_detail, sizeof(boot_detail),
-                        "uptime_ms=%llu action=%s enabled=%d xiaozhi_ready=%d listening=%d",
-                        static_cast<unsigned long long>(esp_timer_get_time() / 1000),
-                        chat_enabled ? "START_CONTINUOUS_CHAT" : "STOP_CONTINUOUS_CHAT",
-                        chat_enabled ? 1 : 0,
-                        ready ? 1 : 0,
-                        chatai::xiaozhi::IsListening() ? 1 : 0);
-                    chatai::diagnostics::SetBootContext("BOOT_ACTION", boot_detail);
-                    chatai::diagnostics::SetCrashContext("BOOT_ACTION_DONE", boot_detail);
-                    chatai::diagnostics::Add("BOOT_ACTION", "INFO", boot_detail);
+                const auto action = chatai::xiaozhi::HandleBootToggle();
+                const char* action_name = "IGNORED";
+                const char* message = "BOOT không khả dụng ở trạng thái hiện tại";
+                switch (action) {
+                    case chatai::xiaozhi::BootAction::kStarted:
+                        action_name = "START_LISTENING";
+                        message = "Bắt đầu nghe liên tục";
+                        break;
+                    case chatai::xiaozhi::BootAction::kStopped:
+                        action_name = "STOP_LISTENING";
+                        message = "Đã dừng nghe";
+                        break;
+                    case chatai::xiaozhi::BootAction::kAborted:
+                        action_name = "ABORT_SPEAKING";
+                        message = "Đã ngắt phản hồi AI";
+                        break;
+                    case chatai::xiaozhi::BootAction::kFailed:
+                        action_name = "ACTION_FAILED";
+                        message = "Không thể thực hiện BOOT";
+                        break;
+                    case chatai::xiaozhi::BootAction::kIgnored:
+                    default:
+                        break;
                 }
+                chatai::display::Notify("XIAOZHI", message);
+                char detail[160]{};
+                std::snprintf(detail, sizeof(detail),
+                    "uptime_ms=%llu action=%s runtime_state=%d",
+                    static_cast<unsigned long long>(esp_timer_get_time() / 1000),
+                    action_name,
+                    static_cast<int>(chatai::xiaozhi::GetRuntimeState()));
+                chatai::diagnostics::SetBootContext("BOOT_ACTION", detail);
+                chatai::diagnostics::SetCrashContext("BOOT_ACTION_DONE", detail);
+                chatai::diagnostics::Add("BOOT_ACTION", "INFO", detail);
             }
         }
 
