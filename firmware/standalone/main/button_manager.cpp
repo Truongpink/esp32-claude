@@ -133,21 +133,26 @@ void ButtonTask(void*) {
                     chatai::display::Notify("WI-FI", "Cấu hình qua Web Admin");
                     ESP_LOGI(kTag, "BOOT clicked while Wi-Fi provisioning is active");
                 } else {
-                    if (!chatai::xiaozhi::IsChatEnabled()) {
-                        chatai::xiaozhi::SetChatEnabled(true);
+                    const bool was_enabled = chatai::xiaozhi::IsChatEnabled();
+                    if (was_enabled) {
+                        chatai::xiaozhi::SetChatEnabled(false);
+                    } else {
+                        chatai::xiaozhi::StartConversation();
                     }
                     const bool chat_enabled = chatai::xiaozhi::IsChatEnabled();
                     const bool ready = chatai::xiaozhi::IsReady();
-                    const char* message = ready
-                        ? "BOOT started continuous conversation"
-                        : "Continuous conversation queued until server is ready";
+                    const char* message = chat_enabled
+                        ? (ready ? "BOOT started continuous conversation"
+                                 : "Continuous conversation queued until server is ready")
+                        : "Continuous conversation stopped";
                     chatai::display::Notify("CHATAI", message);
                     ESP_LOGI(kTag, "BOOT continuous chat %s (ready=%d)",
-                             chat_enabled ? "active" : "request_failed", ready ? 1 : 0);
+                             chat_enabled ? "active" : "stopped", ready ? 1 : 0);
                     char boot_detail[160]{};
                     std::snprintf(boot_detail, sizeof(boot_detail),
-                        "uptime_ms=%llu action=START_CONTINUOUS_CHAT enabled=%d xiaozhi_ready=%d listening=%d",
+                        "uptime_ms=%llu action=%s enabled=%d xiaozhi_ready=%d listening=%d",
                         static_cast<unsigned long long>(esp_timer_get_time() / 1000),
+                        chat_enabled ? "START_CONTINUOUS_CHAT" : "STOP_CONTINUOUS_CHAT",
                         chat_enabled ? 1 : 0,
                         ready ? 1 : 0,
                         chatai::xiaozhi::IsListening() ? 1 : 0);

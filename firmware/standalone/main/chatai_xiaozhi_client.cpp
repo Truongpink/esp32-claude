@@ -43,7 +43,6 @@ constexpr uint32_t kHelloTimeoutMs = 12000;
 constexpr uint32_t kOneShotSilenceMs = 650;
 constexpr uint32_t kListenStopRetryMs = 300;
 constexpr uint32_t kTurnPendingTimeoutMs = 30000;
-constexpr uint32_t kContinuousListenSilenceTimeoutMs = 45000;
 constexpr uint32_t kMqttReconnectGraceMs = 6000;
 constexpr size_t kUdpHeaderSize = 16;
 constexpr size_t kMaxUdpPacketSize = 1500;
@@ -157,7 +156,6 @@ public:
     }
 
     void SetChatEnabled(bool enabled) {
-        if (enabled) standby_after_silence_.store(false);
         if (enabled && notify_player_.IsBusy()) {
             notify_player_.Stop();
             audio_.ResetNotificationPlayback();
@@ -222,12 +220,6 @@ private:
                 vTaskDelay(pdMS_TO_TICKS(1000));
                 continue;
             }
-            if (standby_after_silence_.load() &&
-                !conversation_requested_.load() && !push_to_talk_.load()) {
-                vTaskDelay(pdMS_TO_TICKS(250));
-                continue;
-            }
-
             ServerConfig config;
             const esp_err_t ota_result = FetchServerConfig(&config);
             if (ota_result == ESP_ERR_NOT_FINISHED && config.activation_required) {
@@ -375,8 +367,6 @@ private:
                             }
                         }
                     }
-
-                    MaybeStopContinuousListeningAfterSilence();
 
                     // Re-apply capture ownership while the transport is available.
                     if (transport_connected) UpdateListeningState();
@@ -775,37 +765,6 @@ private:
         uplink_sent_bytes_.store(0);
         uplink_send_failures_.store(0);
         uplink_skipped_frames_.store(0);
-    }
-
-    void MaybeStopContinuousListeningAfterSilence() {
-        if (!session_ready_.load() || !chat_enabled_.load() ||
-            !conversation_requested_.load() || push_to_talk_.load() ||
-            !last_listening_.load() || !audio_.IsCaptureEnabled() ||
-            tts_active_.load() || speaker_playing_.load() ||
-            turn_pending_.load() || vad_speaking_.load()) return;
-
-        const int64_t listen_started_us = listen_started_us_.load();
-        const int64_t speech_ended_us = speech_ended_us_.load();
-        const int64_t silence_started_us =
-            std::max(listen_started_us, speech_ended_us);
-        if (silence_started_us <= 0) return;
-
-        const int64_t now_us = esp_timer_get_time();
-        const int64_t silence_ms = (now_us - silence_started_us) / 1000;
-        if (silence_ms < static_cast<int64_t>(kContinuousListenSilenceTimeoutMs))
-            return;
-
-        // Latch standby before disabling continuous listening. A later BOOT press
-        // clears the latch; PTT temporarily permits a manual session.
-        standby_after_silence_.store(true);
-        SetChatEnabled(false);
-
-        char detail[128]{};
-        std::snprintf(detail, sizeof(detail),
-            "silence_threshold_ms=%lu actual_silence_ms=%lld action=listen_stop standby=1",
-            static_cast<unsigned long>(kContinuousListenSilenceTimeoutMs),
-            static_cast<long long>(silence_ms));
-        chatai::diagnostics::Add("XIAOZHI_LISTEN", "AUTO_STANDBY", detail);
     }
 
     void MaybeStopOneShotAfterSilence() {
@@ -1487,7 +1446,6 @@ private:
     std::atomic<bool> udp_running_{false};
     std::atomic<bool> chat_enabled_{false};
     std::atomic<bool> conversation_requested_{false};
-    std::atomic<bool> standby_after_silence_{false};
     std::atomic<bool> push_to_talk_{false};
     std::atomic<bool> last_listening_{false};
     std::atomic<bool> tts_active_{false};
