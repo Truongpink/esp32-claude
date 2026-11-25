@@ -185,16 +185,65 @@ public:
     RuntimeState GetRuntimeState() const {
         if (!chatai::network::NetworkManager::IsConnected() ||
             !session_ready_.load()) return RuntimeState::kConnecting;
-        if (speaker_playing_.load()) return RuntimeState::kSpeaking;
-        if (tts_active_.load() || turn_pending_.load())
-            return RuntimeState::kProcessing;
+        if (speaker_playing_.load() || tts_active_.load())
+            return RuntimeState::kSpeaking;
+        if (turn_pending_.load()) return RuntimeState::kProcessing;
         if (vad_speaking_.load() || audio_.IsCaptureEnabled())
             return RuntimeState::kListening;
         if (IsListening()) return RuntimeState::kError;
         return RuntimeState::kWaiting;
     }
 
+    BootAction HandleBootToggle() {
+        // PTT is an independent control; BOOT must not cancel a held PTT session.
+        if (push_to_talk_.load()) return BootAction::kIgnored;
+
+        switch (GetRuntimeState()) {
+            case RuntimeState::kWaiting:
+                return StartConversation() ? BootAction::kStarted : BootAction::kFailed;
+            case RuntimeState::kListening:
+                // Keep the MQTT/WebSocket control session alive. Stop the listening
+                // channel only; tearing down this combined transport would force a
+                // full session reconnect before the next BOOT press.
+                SetChatEnabled(false);
+                return BootAction::kStopped;
+            case RuntimeState::kSpeaking:
+                return SendAbortSpeaking() ? BootAction::kAborted : BootAction::kFailed;
+            case RuntimeState::kConnecting:
+            case RuntimeState::kProcessing:
+            case RuntimeState::kError:
+            default:
+                return BootAction::kIgnored;
+        }
+    }
+
 private:
+    bool SendAbortSpeaking() {
+        if (!session_ready_.load() || !IsTransportConnected()) return false;
+
+        std::string session_id;
+        {
+            std::lock_guard<std::mutex> lock(channel_mutex_);
+            session_id = session_id_;
+        }
+        if (session_id.empty()) return false;
+
+        cJSON* root = cJSON_CreateObject();
+        if (root == nullptr) return false;
+        cJSON_AddStringToObject(root, "session_id", session_id.c_str());
+        cJSON_AddStringToObject(root, "type", "abort");
+        char* json = cJSON_PrintUnformatted(root);
+        cJSON_Delete(root);
+        if (json == nullptr) return false;
+
+        const esp_err_t result = PublishControl(json);
+        cJSON_free(json);
+        chatai::diagnostics::Add("XIAOZHI_SPEAKING",
+            result == ESP_OK ? "ABORT_SENT" : "ABORT_FAILED",
+            result == ESP_OK ? "source=boot_button" : esp_err_to_name(result));
+        return result == ESP_OK;
+    }
+
     static void WorkerTaskEntry(void* context) {
         static_cast<XiaozhiClient*>(context)->WorkerTask();
         vTaskDelete(nullptr);
@@ -1501,5 +1550,6 @@ bool IsChatEnabled() { return g_client.IsChatEnabled(); }
 void SetPushToTalk(bool pressed) { g_client.SetPushToTalk(pressed); }
 bool IsListening() { return g_client.IsListening(); }
 RuntimeState GetRuntimeState() { return g_client.GetRuntimeState(); }
+BootAction HandleBootToggle() { return g_client.HandleBootToggle(); }
 
 }  // namespace chatai::xiaozhi
