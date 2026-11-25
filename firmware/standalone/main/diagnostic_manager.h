@@ -1,0 +1,14 @@
+#pragma once
+
+#include <string>
+
+namespace chatai::diagnostics {
+void SetTimeSyncStatus(bool synchronized, const char* source = nullptr);
+void Add(const char* stage, const char* result, const char* detail = nullptr);
+std::string Get();
+void Clear();
+void SetCrashContext(const char* stage, const char* detail = nullptr);
+void ClearCrashContext();
+void SetBootContext(const char* stage, const char* detail = nullptr);
+void RestorePreviousCrashContext();
+}
