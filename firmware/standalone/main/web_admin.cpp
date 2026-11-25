@@ -175,53 +175,11 @@ body[data-theme="light"]{background:radial-gradient(ellipse at 50% -12%,#d7f5ff 
   <button id="refreshDashboard" class="secondary overview-refresh" type="button" aria-label="Làm mới trạng thái">↻</button>
 </div>
 <div class="neural-banner"><div class="neural-copy"><span class="neural-eyebrow">CHATAI NEURAL CORE</span><strong>AI Energy Orb</strong><p>Giao diện điều khiển trung tâm · Xiaozhi Voice</p></div><div class="neural-orb" aria-hidden="true"></div></div>
-<div class="app-launcher-grid" aria-label="Ứng dụng ChatAI">
-  <button class="app-launcher" type="button" data-open-panel="chat"><span class="app-icon voice"><span>🎙️</span></span><span class="app-launcher-label">Voice AI</span></button>
-  <button class="app-launcher" type="button" data-open-panel="wifi"><span class="app-icon wifi"><span>📶</span></span><span class="app-launcher-label">Wi-Fi</span></button>
-  <button class="app-launcher" type="button" data-open-panel="bluetooth"><span class="app-icon bluetooth"><span>ᛒ</span></span><span class="app-launcher-label">Bluetooth</span></button>
-  <button class="app-launcher" type="button" data-open-panel="audio"><span class="app-icon audio"><span>🔊</span></span><span class="app-launcher-label">Âm thanh</span></button>
-  <button class="app-launcher" type="button" disabled aria-label="OLED chưa có API điều khiển"><span class="app-icon oled"><span>▣</span></span><span class="app-launcher-label">OLED</span><small>Chưa hỗ trợ</small></button>
-  <button class="app-launcher" type="button" disabled aria-label="RGB chưa có API điều khiển"><span class="app-icon rgb"><span>🌈</span></span><span class="app-launcher-label">RGB Light</span><small>Chưa hỗ trợ</small></button>
-  <button class="app-launcher" type="button" data-open-panel="overview"><span class="app-icon monitor"><span>📊</span></span><span class="app-launcher-label">System</span></button>
-  <button class="app-launcher" type="button" data-open-panel="ota"><span class="app-icon ota"><span>⬆️</span></span><span class="app-launcher-label">Firmware OTA</span></button>
-  <button class="app-launcher" type="button" data-open-panel="settings"><span class="app-icon settings"><span>⚙️</span></span><span class="app-launcher-label">Cài đặt</span></button>
-</div>
+
 <div class="overview-hero">
-  <div><span class="overview-eyebrow">TRẠNG THÁI THIẾT BỊ</span><strong id="overviewDeviceState">Đang kiểm tra...</strong><p id="deviceStatus" role="status" aria-live="polite">Đang kiểm tra Wi-Fi, Internet và Xiaozhi...</p></div>
-  <span class="overview-chip" id="overviewBuildChip">Firmware —</span>
+  <div><span class="overview-eyebrow">TRẠNG THÁI THIẾT BỊ</span><strong id="overviewDeviceState">Đang kiểm tra...</strong><p id="deviceStatus" role="status" aria-live="polite">Đang kiểm tra trạng thái thiết bị...</p></div>
 </div>
 <div class="overview-grid">
-  <section class="overview-group">
-    <div class="overview-group-title"><span class="overview-group-icon">⌁</span><h3>Kết nối mạng</h3></div>
-    <div class="overview-items">
-      <div class="overview-item"><span>Wi-Fi / SSID</span><strong id="dashSsid">Đang tải...</strong></div>
-      <div class="overview-item"><span>Tín hiệu</span><strong id="dashRssi">—</strong></div>
-      <div class="overview-item"><span>Địa chỉ IP</span><strong id="dashIp">—</strong></div>
-      <div class="overview-item"><span>Gateway / DNS</span><strong id="dashGateway">—</strong></div>
-      <div class="overview-item"><span>Internet</span><strong id="dashInternet">—</strong></div>
-      <div class="overview-item"><span>Kiểm tra DNS</span><strong id="dashDnsProbe">—</strong></div>
-      <div class="overview-item"><span>Kết nối TCP 443</span><strong id="dashTcpProbe">—</strong></div>
-      <div class="overview-item"><span>SoftAP</span><strong id="dashAp">—</strong></div>
-    </div>
-  </section>
-  <section class="overview-group">
-    <div class="overview-group-title"><span class="overview-group-icon">ᛒ</span><h3>Bluetooth LE</h3></div>
-    <div class="overview-items">
-      <div class="overview-item"><span>Trạng thái BLE</span><strong id="dashBleState">Đang kiểm tra...</strong></div>
-      <div class="overview-item"><span>Thiết bị phát hiện</span><strong id="dashBleCount">—</strong></div>
-    </div>
-    <p class="overview-note">Mở mục Bluetooth để quét và xem chi tiết thiết bị.</p>
-  </section>
-  <section class="overview-group">
-    <div class="overview-group-title"><span class="overview-group-icon">♫</span><h3>AI Voice · Xiaozhi</h3></div>
-    <div class="overview-items">
-      <div class="overview-item"><span>Máy chủ Xiaozhi</span><strong id="dashXiaozhi">—</strong></div>
-      <div class="overview-item"><span>Microphone</span><strong id="dashMicState">—</strong></div>
-      <div class="overview-item"><span>Loa</span><strong id="dashSpeakerState">—</strong></div>
-      <div class="overview-item"><span>Âm lượng</span><strong id="dashVolume">—</strong></div>
-    </div>
-    <p class="overview-note">Gemini Live hiện đang tạm đóng; backend đang sử dụng là Xiaozhi.</p>
-  </section>
   <section class="overview-group">
     <div class="overview-group-title"><span class="overview-group-icon">▦</span><h3>Tài nguyên & thiết bị</h3></div>
     <div class="overview-items">
@@ -232,13 +190,9 @@ body[data-theme="light"]{background:radial-gradient(ellipse at 50% -12%,#d7f5ff 
     </div>
   </section>
 </div>
-<div class="overview-footer">
-  <span id="overviewUpdated">Chưa cập nhật trạng thái</span>
-  <button id="restartDevice" class="danger" type="button">↻ Khởi động lại ESP32</button>
-</div>
+<div class="overview-footer"><span id="overviewUpdated">Chưa cập nhật trạng thái</span></div>
 <p id="status" hidden></p>
 <button id="retryGemini" hidden type="button">Thử kết nối lại Gemini</button>
-<p id="restartResult" class="hint" role="status" aria-live="polite"></p>
 </section>
 <section class="card tab-panel" data-panel="chat" role="tabpanel" aria-labelledby="chatTitle" hidden>
 <div class="card-head"><div class="card-icon" aria-hidden="true">◉</div><div><h2 id="chatTitle">Xiaozhi Voice Monitor</h2><p class="hint">Theo dõi trạng thái hội thoại từ dữ liệu firmware hiện có</p></div></div>
@@ -261,10 +215,25 @@ body[data-theme="light"]{background:radial-gradient(ellipse at 50% -12%,#d7f5ff 
 <button class="module-tile" type="button" data-open-panel="ota"><span class="module-icon">⇧</span><span><strong>Firmware OTA</strong><small>Kiểm tra và cập nhật firmware</small></span></button>
 <button class="module-tile" type="button" data-open-panel="logs"><span class="module-icon">≋</span><span><strong>Diagnostics</strong><small>Xem, sao chép và tải log</small></span></button>
 <button class="module-tile" type="button" data-open-panel="gemini"><span class="module-icon">✧</span><span><strong>Gemini Settings</strong><small>Backend Gemini hiện đang tắt</small></span></button>
-</div><p class="chat-note">Xiaozhi là voice backend hiện tại. Gemini Live tiếp tục được giữ ở trạng thái tắt.</p></section>
+</div><p class="chat-note">Xiaozhi là voice backend hiện tại. Gemini Live tiếp tục được giữ ở trạng thái tắt.</p>
+<div class="actions"><button id="restartDevice" class="danger" type="button">↻ Khởi động lại ESP32</button></div>
+<p id="restartResult" class="hint" role="status" aria-live="polite"></p></section>
 <section class="card tab-panel" data-panel="wifi" role="tabpanel" aria-labelledby="wifiTitle" hidden>
 <div class="card-head"><div class="card-icon" aria-hidden="true">⌁</div><div><h2 id="wifiTitle">Cấu hình Wi-Fi</h2><p class="hint">Quét mạng, đổi Wi-Fi và xác minh Internet trước khi lưu</p></div></div>
 <p id="wifiAdminStatus" class="hint" role="status" aria-live="polite">Đang đọc trạng thái Wi-Fi...</p>
+<div class="overview-group" style="margin:14px 0 18px">
+  <div class="overview-group-title"><span class="overview-group-icon">⌁</span><h3>Trạng thái kết nối</h3></div>
+  <div class="overview-items">
+    <div class="overview-item"><span>Wi-Fi / SSID</span><strong id="wifiSsidState">—</strong></div>
+    <div class="overview-item"><span>Tín hiệu</span><strong id="wifiRssiState">—</strong></div>
+    <div class="overview-item"><span>Địa chỉ IP</span><strong id="wifiIpState">—</strong></div>
+    <div class="overview-item"><span>Gateway / DNS</span><strong id="wifiGatewayState">—</strong></div>
+    <div class="overview-item"><span>Internet</span><strong id="wifiInternetState">—</strong></div>
+    <div class="overview-item"><span>Kiểm tra DNS</span><strong id="wifiDnsProbeState">—</strong></div>
+    <div class="overview-item"><span>Kết nối TCP 443</span><strong id="wifiTcpProbeState">—</strong></div>
+    <div class="overview-item"><span>SoftAP</span><strong id="wifiApState">—</strong></div>
+  </div>
+</div>
 <label for="wifiSsid">Tên mạng Wi-Fi (SSID)</label>
 <select id="wifiSsid" style="width:100%;padding:13px;border:1px solid #ffffff20;border-radius:12px;background:#0d0c19;color:#f5f1ff;font:inherit"><option value="">Chạm Quét Wi-Fi để tìm mạng</option></select>
 <div class="actions"><button type="button" id="scanAdminWifi" class="secondary">Quét Wi-Fi</button></div>
@@ -421,8 +390,13 @@ function showPanel(panelName) {
     ["control","wifi","bluetooth","audio"].includes(panelName) ? "control" : "settings";
   document.querySelectorAll("[data-tab]").forEach(button => button.setAttribute("aria-selected", String(button.dataset.tab === tab)));
   if (panelName === "bluetooth") refreshBluetooth();
-  if (panelName === "overview") { refreshDeviceStatus().catch(error => { deviceStatus.textContent = error.message; }); refreshBluetoothOverview(); }
-  if (panelName === "chat") refreshDeviceStatus().catch(error => { document.getElementById("chatVoiceState").textContent = error.message; });
+  if (["overview","chat","wifi","audio"].includes(panelName)) {
+    refreshDeviceStatus().catch(error => {
+      const target = panelName === "chat" ? document.getElementById("chatVoiceState") :
+        panelName === "wifi" ? wifiAdminStatus : deviceStatus;
+      target.textContent = error.message;
+    });
+  }
   if (panelName === "ota") refreshFirmwareStatus().catch(error => { firmwareStatus.textContent = error.message; });
   if (panelName === "logs") refreshDiagnostics().catch(error => { diagnosticLog.textContent = error.message; });
 }
@@ -1098,26 +1072,11 @@ document.getElementById("savePrompt").addEventListener("click",async()=>{
  finally{button.disabled=false;}
 });
 document.getElementById("resetPrompt").addEventListener("click",()=>{promptInput.value="Bạn là trợ lý ChatAI TPIOS. Hãy giao tiếp tự nhiên, thân thiện và rõ ràng bằng tiếng Việt. Chỉ trả lời bằng giọng nói trong phiên hội thoại thời gian thực.";promptTemplate.value="custom";updatePromptBytes();});
-document.getElementById("refreshDashboard").addEventListener("click",()=>{refreshDeviceStatus().catch(error=>{deviceStatus.textContent=error.message;});refreshBluetoothOverview();});
+document.getElementById("refreshDashboard").addEventListener("click",()=>refreshDeviceStatus().catch(error=>{deviceStatus.textContent=error.message;}));
 function formatOverviewBytes(bytes) {
   const value = Number(bytes);
   if (!Number.isFinite(value) || value < 0) return "—";
   return value >= 1048576 ? (value / 1048576).toFixed(2) + " MB" : Math.round(value / 1024) + " KB";
-}
-async function refreshBluetoothOverview() {
-  const stateLabel = document.getElementById("dashBleState");
-  const countLabel = document.getElementById("dashBleCount");
-  try {
-    const response = await fetch("/api/bluetooth/status", {cache:"no-store"});
-    const data = await response.json().catch(() => ({}));
-    if (!response.ok) throw new Error(data.error || "Không đọc được BLE");
-    stateLabel.textContent = data.scanning ? "Đang quét" : data.ready ? "Sẵn sàng" :
-      data.initialized ? "Đã khởi tạo" : data.error_code ? "Lỗi" : "Chưa khởi tạo";
-    countLabel.textContent = String(Number(data.device_count || 0));
-  } catch (_) {
-    stateLabel.textContent = "Không khả dụng";
-    countLabel.textContent = "—";
-  }
 }
 async function refreshDeviceStatus() {
   const response = await fetch("/api/device/status", {cache:"no-store"});
@@ -1136,7 +1095,7 @@ async function refreshDeviceStatus() {
     micGainInput.value = String(Number(data.mic_gain_db ?? 0));
     micGainValue.textContent = micGainInput.value + " dB";
   }
-  deviceStatus.textContent = state + (data.ip ? " · IP " + data.ip : "");
+  deviceStatus.textContent = state;
   const connectionPill = document.getElementById("connectionPill");
   if (connectionPill) {
     const online = Boolean(data.wifi_connected && data.internet_available && data.xiaozhi_ready);
@@ -1154,24 +1113,17 @@ async function refreshDeviceStatus() {
   document.getElementById("chatMicState").textContent = data.microphone_enabled ? "Đang bật" : "Đang tắt";
   document.getElementById("chatSpeakerState").textContent = data.speaker_enabled ? "Đang bật" : "Đang tắt";
   document.getElementById("overviewDeviceState").textContent = state;
-  document.getElementById("overviewBuildChip").textContent = "Build #" + Number(data.build_number || 0);
   document.getElementById("overviewUpdated").textContent = "Cập nhật lúc " +
     new Date().toLocaleTimeString("vi-VN", {hour:"2-digit", minute:"2-digit", second:"2-digit"});
   wifiAdminStatus.textContent = state + (data.ip ? " · IP: " + data.ip : "");
-  document.getElementById("dashSsid").textContent = data.ssid || (data.wifi_connected ? "Đã kết nối" : "Chưa kết nối");
-  document.getElementById("dashRssi").textContent = data.wifi_connected ? Number(data.rssi) + " dBm" : "—";
-  document.getElementById("dashIp").textContent = data.ip || "Chưa có IP";
-  document.getElementById("dashGateway").textContent = (data.gateway || "—") + " / " + (data.dns || "—");
-  document.getElementById("dashInternet").textContent = data.internet_available ? "Đã xác minh" : "Chưa xác minh";
-  document.getElementById("dashDnsProbe").textContent = data.dns_probe_state === 1 ? "Thành công" : data.dns_probe_state === 0 ? "Thất bại" : "Chưa xác định";
-  document.getElementById("dashTcpProbe").textContent = data.tcp443_probe_state === 1 ? "Thông" : data.tcp443_probe_state === 0 ? "Không thông" : "Chưa xác định";
-  document.getElementById("dashAp").textContent = data.softap_ip || "Không hoạt động";
-  document.getElementById("dashXiaozhi").textContent = data.xiaozhi_ready
-    ? (data.xiaozhi_listening ? "Đã kết nối · Đang nghe" : data.xiaozhi_chat_enabled ? "Đã kết nối · Chưa nghe" : "Đã kết nối")
-    : "Chưa kết nối";
-  document.getElementById("dashMicState").textContent = data.microphone_enabled ? "Đang bật" : "Đang tắt";
-  document.getElementById("dashSpeakerState").textContent = data.speaker_enabled ? "Đang bật" : "Đang tắt";
-  document.getElementById("dashVolume").textContent = Number(data.speaker_volume) + "%";
+  document.getElementById("wifiSsidState").textContent = data.ssid || (data.wifi_connected ? "Đã kết nối" : "Chưa kết nối");
+  document.getElementById("wifiRssiState").textContent = data.wifi_connected ? Number(data.rssi) + " dBm" : "—";
+  document.getElementById("wifiIpState").textContent = data.ip || "Chưa có IP";
+  document.getElementById("wifiGatewayState").textContent = (data.gateway || "—") + " / " + (data.dns || "—");
+  document.getElementById("wifiInternetState").textContent = data.internet_available ? "Đã xác minh" : "Chưa xác minh";
+  document.getElementById("wifiDnsProbeState").textContent = data.dns_probe_state === 1 ? "Thành công" : data.dns_probe_state === 0 ? "Thất bại" : "Chưa xác định";
+  document.getElementById("wifiTcpProbeState").textContent = data.tcp443_probe_state === 1 ? "Thông" : data.tcp443_probe_state === 0 ? "Không thông" : "Chưa xác định";
+  document.getElementById("wifiApState").textContent = data.softap_ip || "Không hoạt động";
   document.getElementById("dashHeap").textContent = formatOverviewBytes(data.free_heap);
   document.getElementById("dashMinHeap").textContent = formatOverviewBytes(data.min_free_heap);
   const uptime = Number(data.uptime_seconds || 0);
@@ -1264,7 +1216,6 @@ removeButton.addEventListener("click", async () => {
   } finally { removeButton.disabled = false; }
 });
 refreshStatus().catch(error => { statusText.textContent = error.message; });
-refreshBluetoothOverview();
 refreshDiagnostics().catch(error => { diagnosticLog.textContent = error.message; });
 setInterval(() => {
   refreshDeviceStatus().catch(error => { deviceStatus.textContent = error.message; });
