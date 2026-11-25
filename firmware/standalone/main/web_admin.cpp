@@ -12,6 +12,7 @@
 #include <esp_ota_ops.h>
 #include <esp_partition.h>
 #include <esp_system.h>
+#include <esp_heap_caps.h>
 #include <esp_timer.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
@@ -1397,7 +1398,18 @@ esp_err_t BluetoothStatusHandler(httpd_req_t* request) {
 }
 
 esp_err_t BluetoothDevicesHandler(httpd_req_t* request) {
-    chatai::bluetooth::Device devices[chatai::bluetooth::kMaxDevices]{};
+    // Keep the 10 KiB device snapshot in PSRAM, not on the 4 KiB HTTP task stack.
+    // Retain one buffer for this single-task HTTP server instead of allocating per request.
+    static chatai::bluetooth::Device* devices = nullptr;
+    if (devices == nullptr) {
+        devices = static_cast<chatai::bluetooth::Device*>(heap_caps_malloc(
+            sizeof(chatai::bluetooth::Device) * chatai::bluetooth::kMaxDevices,
+            MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+    }
+    if (devices == nullptr) {
+        return SendError(request, "500 Internal Server Error",
+                         "Không đủ bộ nhớ cho danh sách Bluetooth");
+    }
     const size_t count = chatai::bluetooth::GetDevices(devices, chatai::bluetooth::kMaxDevices);
     cJSON* root = cJSON_CreateObject();
     cJSON* items = cJSON_CreateArray();
