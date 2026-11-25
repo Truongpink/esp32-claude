@@ -132,9 +132,9 @@ esp_err_t XiaozhiAudioRuntime::Stop() {
         return codec_.Stop();
     }
 
+    capture_enabled_.store(false);
     service_.EnableVoiceProcessing(false);
     service_.RequestInputStop();
-    capture_enabled_.store(false);
     service_.Stop();
 
     const esp_err_t codec_result = codec_.Stop();
@@ -159,9 +159,9 @@ void XiaozhiAudioRuntime::SetCaptureEnabled(bool enabled) {
         chatai::diagnostics::Add("AFE_CAPTURE", "STARTED",
             "microphone capture and voice processing enabled");
     } else {
+        capture_enabled_.store(false);
         service_.EnableVoiceProcessing(false);
         service_.RequestInputStop();
-        capture_enabled_.store(false);
         chatai::diagnostics::Add("AFE_CAPTURE", "STOPPED",
             "microphone capture disabled");
     }
