@@ -69,6 +69,15 @@ bool Application::SetDeviceState(DeviceState state) { return state_machine_.Tran
 
 void Application::Initialize() {
     chatai::xiaozhi::g_application_initialized.store(false);
+    if (event_group_ == nullptr) {
+        ESP_LOGE(TAG, "Application initialization failed: event group allocation failed");
+        return;
+    }
+    if (clock_timer_handle_ == nullptr) {
+        ESP_LOGE(TAG, "Application initialization failed: clock timer creation failed");
+        return;
+    }
+
     auto& board = Board::GetInstance();
     SetDeviceState(kDeviceStateStarting);
 
@@ -126,7 +135,12 @@ void Application::Initialize() {
     });
 
     // Start the clock timer to update the status bar
-    esp_timer_start_periodic(clock_timer_handle_, 1000000);
+    const esp_err_t clock_timer_result =
+        esp_timer_start_periodic(clock_timer_handle_, 1000000);
+    if (clock_timer_result != ESP_OK) {
+        ESP_LOGW(TAG, "Clock timer unavailable; status bar periodic updates disabled: %s",
+                 esp_err_to_name(clock_timer_result));
+    }
 
     // Add MCP common tools (only once during initialization)
     auto& mcp_server = McpServer::GetInstance();
