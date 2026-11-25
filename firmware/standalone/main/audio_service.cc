@@ -233,6 +233,13 @@ void AudioService::Stop() {
     if(wait_bits){xEventGroupWaitBits(event_group_,wait_bits,pdTRUE,pdTRUE,portMAX_DELAY);vTaskDelay(1);}
     audio_input_task_handle_=nullptr;audio_output_task_handle_=nullptr;opus_codec_task_handle_=nullptr;
     started_task_exit_bits_=0;
+    // The input task disables the microphone as it exits. Stop the speaker
+    // explicitly after all audio tasks have joined so the amplifier is not
+    // left active when the service shuts down.
+    if (codec_ != nullptr) {
+        if (codec_->input_enabled()) codec_->EnableInput(false);
+        if (codec_->output_enabled()) codec_->EnableOutput(false);
+    }
     bool notify_drained=false;
     {
         std::lock_guard<std::mutex> lock(audio_queue_mutex_);
