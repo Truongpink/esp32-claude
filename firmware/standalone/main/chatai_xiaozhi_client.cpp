@@ -769,7 +769,7 @@ private:
             audio_.IsCaptureEnabled() ? 1 : 0, IsListening() ? 1 : 0,
             tts_active_.load() ? 1 : 0, audio_.IsPlaybackIdle() ? 1 : 0,
             turn_pending_.load() ? 1 : 0, vad_speaking_.load() ? 1 : 0);
-        chatai::diagnostics::Add("XIAOZHI_AUDIO", "UPLINK_SUMMARY", detail);
+        chatai::diagnostics::Add("XIAOZHI_TTS", "UPLINK_SUMMARY", detail);
         audio_.ResetUplinkDiagnostics();
         uplink_sent_packets_.store(0);
         uplink_sent_bytes_.store(0);
