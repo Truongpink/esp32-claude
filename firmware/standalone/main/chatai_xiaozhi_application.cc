@@ -377,6 +377,8 @@ void Application::HandleNetworkConnectedEvent() {
         // A fresh activation starts only after the previous task has completed.
         g_activation_cancel_requested.store(false);
         g_activation_retry_due = 0;
+        // A previous protocol-start failure must not poison this new attempt.
+        last_error_message_.clear();
         SetDeviceState(kDeviceStateActivating);
         const BaseType_t task_result = xTaskCreate(
             [](void* arg) {
