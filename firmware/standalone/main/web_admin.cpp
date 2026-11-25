@@ -174,7 +174,7 @@ body[data-theme="light"]{background:radial-gradient(ellipse at 50% -12%,#d7f5ff 
   <div class="home-greeting"><span class="eyebrow">CHATAI TPIOS · ESP32-S3</span><h2 id="connectionTitle">Trung tâm AI của anh</h2><p class="hint">Thiết bị cá nhân · Điều khiển thông minh</p></div>
   <button id="refreshDashboard" class="secondary overview-refresh" type="button" aria-label="Làm mới trạng thái">↻</button>
 </div>
-<div class="neural-banner"><div class="neural-copy"><span class="neural-eyebrow">CHATAI NEURAL CORE</span><strong>AI Energy Orb</strong><p>Giao diện điều khiển trung tâm · Xiaozhi Voice</p></div><div class="neural-orb" aria-hidden="true"></div></div>
+<div class="neural-banner"><div class="neural-copy"><span class="neural-eyebrow">CHATAI NEURAL CORE</span><strong>AI Energy Orb</strong><p>Trạng thái tổng quan · ESP32-S3</p></div><div class="neural-orb" aria-hidden="true"></div></div>
 
 <div class="overview-hero">
   <div><span class="overview-eyebrow">TRẠNG THÁI THIẾT BỊ</span><strong id="overviewDeviceState">Đang kiểm tra...</strong><p id="deviceStatus" role="status" aria-live="polite">Đang kiểm tra trạng thái thiết bị...</p></div>
@@ -1085,8 +1085,7 @@ async function refreshDeviceStatus() {
   let state;
   if (!data.wifi_connected) state = "Chưa kết nối Wi-Fi";
   else if (!data.internet_available) state = "Wi-Fi đã kết nối · Chưa xác minh Internet";
-  else if (data.xiaozhi_ready) state = data.xiaozhi_listening ? "Đang hoạt động" : "Đã kết nối mạng";
-  else state = "Đang chờ kết nối Xiaozhi";
+  else state = "Thiết bị đang trực tuyến";
   if (!speakerVolumeDirty && !speakerVolumeSaving && document.activeElement !== speakerVolumeInput) {
     speakerVolumeInput.value = String(Number(data.speaker_volume ?? 100));
     speakerVolumeValue.textContent = speakerVolumeInput.value + "%";
@@ -1098,7 +1097,7 @@ async function refreshDeviceStatus() {
   deviceStatus.textContent = state;
   const connectionPill = document.getElementById("connectionPill");
   if (connectionPill) {
-    const online = Boolean(data.wifi_connected && data.internet_available && data.xiaozhi_ready);
+    const online = Boolean(data.wifi_connected && data.internet_available);
     connectionPill.dataset.state = online ? "online" : data.wifi_connected ? "checking" : "offline";
     connectionPill.textContent = online ? "Online" : data.wifi_connected ? "Đang kết nối" : "Offline";
   }
