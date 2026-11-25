@@ -496,10 +496,14 @@ void AudioService::OpusCodecTask() {
                 decoder_lock.unlock();
                 if (ret == ESP_AUDIO_ERR_OK) {
                     task.pcm.resize(out_frame.decoded_size / sizeof(int16_t));
-                    {
+                    if (decoder_sample_rate_ == codec_->output_sample_rate()) {
+                        decoded = true;
+                    } else {
                         std::lock_guard<std::mutex> resampler_lock(output_resampler_mutex_);
-                        if (decoder_sample_rate_ != codec_->output_sample_rate() &&
-                            output_resampler_ != nullptr) {
+                        if (output_resampler_ == nullptr) {
+                            ESP_LOGE(TAG, "Speaker resampler is unavailable for %d -> %d Hz",
+                                     decoder_sample_rate_, codec_->output_sample_rate());
+                        } else {
                             uint32_t target_size = 0;
                             esp_ae_rate_cvt_get_max_out_sample_num(output_resampler_, task.pcm.size(),
                                                                    &target_size);
@@ -522,7 +526,6 @@ void AudioService::OpusCodecTask() {
                             }
                         }
                     }
-                    decoded = true;
                 } else {
                     ESP_LOGE(TAG, "Failed to decode audio after resize, error code: %d", ret);
                 }
