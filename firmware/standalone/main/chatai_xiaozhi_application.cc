@@ -9,6 +9,7 @@
 #include "settings.h"
 #include "system_info.h"
 #include "text_glyph_payload.h"
+#include "network_manager.h"
 #include "websocket_protocol.h"
 #include <atomic>
 
@@ -25,6 +26,11 @@ std::atomic<bool> g_application_initialized{false};
 }
 
 #define TAG "Application"
+
+namespace {
+// Retry activation task creation after a short delay if FreeRTOS cannot allocate it.
+TickType_t g_activation_retry_due = 0;
+}
 
 Application::Application() : notify_player_(audio_service_) {
     event_group_ = xEventGroupCreate();
@@ -325,6 +331,14 @@ void Application::Run() {
 
         if (bits & MAIN_EVENT_CLOCK_TICK) {
             clock_ticks_++;
+            if (g_activation_retry_due != 0 &&
+                chatai::network::NetworkManager::IsConnected() &&
+                GetDeviceState() == kDeviceStateWifiConfiguring &&
+                static_cast<int32_t>(xTaskGetTickCount() - g_activation_retry_due) >= 0) {
+                g_activation_retry_due = 0;
+                ESP_LOGI(TAG, "Retrying Xiaozhi activation task creation");
+                xEventGroupSetBits(event_group_, MAIN_EVENT_NETWORK_CONNECTED);
+            }
             auto display = Board::GetInstance().GetDisplay();
             display->UpdateStatusBar();
 
@@ -347,14 +361,14 @@ void Application::HandleNetworkConnectedEvent() {
     auto state = GetDeviceState();
 
     if (state == kDeviceStateStarting || state == kDeviceStateWifiConfiguring) {
-        // Network is ready, start activation
-        SetDeviceState(kDeviceStateActivating);
         if (activation_task_handle_ != nullptr) {
             ESP_LOGW(TAG, "Activation task already running");
             return;
         }
 
-        xTaskCreate(
+        // Network is ready, start activation.
+        SetDeviceState(kDeviceStateActivating);
+        const BaseType_t task_result = xTaskCreate(
             [](void* arg) {
                 Application* app = static_cast<Application*>(arg);
                 app->ActivationTask();
@@ -362,6 +376,17 @@ void Application::HandleNetworkConnectedEvent() {
                 vTaskDelete(NULL);
             },
             "activation", 4096 * 2, this, 2, &activation_task_handle_);
+
+        if (task_result != pdPASS) {
+            activation_task_handle_ = nullptr;
+            ESP_LOGE(TAG, "Could not create Xiaozhi activation task; retrying in 5 seconds");
+            // Activating -> WifiConfiguring is an allowed upstream state transition.
+            // This keeps the device recoverable instead of leaving it stuck activating.
+            SetDeviceState(kDeviceStateWifiConfiguring);
+            g_activation_retry_due = xTaskGetTickCount() + pdMS_TO_TICKS(5000);
+        } else {
+            g_activation_retry_due = 0;
+        }
     }
 
     // Update the status bar immediately to show the network state
