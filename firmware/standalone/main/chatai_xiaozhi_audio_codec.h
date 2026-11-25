@@ -29,6 +29,7 @@ protected:
 private:
     ChatAIAudioCodecBridge bridge_;
     std::atomic<esp_err_t> last_error_{ESP_OK};
+    std::atomic<esp_err_t> last_output_error_{ESP_OK};
 };
 
 }  // namespace chatai::audio
