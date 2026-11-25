@@ -752,7 +752,13 @@ void Application::InitializeProtocol() {
         }
     });
 
-    protocol_->Start();
+    if (!protocol_->Start()) {
+        ESP_LOGE(TAG, "Xiaozhi protocol failed to start");
+        if (last_error_message_.empty()) {
+            last_error_message_ = Lang::Strings::SERVER_NOT_CONNECTED;
+        }
+        xEventGroupSetBits(event_group_, MAIN_EVENT_ERROR);
+    }
 }
 
 void Application::ShowActivationCode(const std::string& code, const std::string& message) {
