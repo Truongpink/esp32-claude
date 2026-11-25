@@ -99,8 +99,16 @@ esp_err_t AudioService::Initialize(AudioCodec* codec) {
     } else {
         encoder_sample_rate_ = 16000;
         encoder_duration_ms_ = OPUS_FRAME_DURATION_MS;
-        esp_opus_enc_get_frame_size(opus_encoder_, &encoder_frame_size_, &encoder_outbuf_size_);
-        encoder_frame_size_ = encoder_frame_size_ / sizeof(int16_t);
+        const auto frame_size_ret =
+            esp_opus_enc_get_frame_size(opus_encoder_, &encoder_frame_size_, &encoder_outbuf_size_);
+        if (frame_size_ret != ESP_AUDIO_ERR_OK || encoder_frame_size_ <= 0 ||
+            encoder_outbuf_size_ <= 0 ||
+            encoder_frame_size_ % static_cast<int>(sizeof(int16_t)) != 0) {
+            ESP_LOGE(TAG, "Failed to get valid Opus encoder frame sizes, error code: %d",
+                     frame_size_ret);
+            return rollback_initialization(ESP_FAIL);
+        }
+        encoder_frame_size_ /= sizeof(int16_t);
     }
 
     if (codec->input_sample_rate() != 16000) {
