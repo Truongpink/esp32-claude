@@ -119,6 +119,17 @@ struct DebugStatistics {
 
 class AudioService {
 public:
+    struct UplinkDiagnostics {
+        uint32_t pcm_frames_queued = 0;
+        uint32_t opus_frames_encoded = 0;
+        uint32_t encode_failures = 0;
+        uint32_t encode_queue_drops = 0;
+        uint32_t send_queue_drops = 0;
+    };
+
+    UplinkDiagnostics GetUplinkDiagnostics() const;
+    void ResetUplinkDiagnostics();
+
     AudioService();
     ~AudioService();
 
@@ -180,6 +191,11 @@ private:
     int decoder_duration_ms_ = OPUS_FRAME_DURATION_MS;
     int decoder_frame_size_ = 0;
     DebugStatistics debug_statistics_;
+    std::atomic<uint32_t> uplink_pcm_frames_queued_{0};
+    std::atomic<uint32_t> uplink_opus_frames_encoded_{0};
+    std::atomic<uint32_t> uplink_encode_failures_{0};
+    std::atomic<uint32_t> uplink_encode_queue_drops_{0};
+    std::atomic<uint32_t> uplink_send_queue_drops_{0};
     int64_t last_encode_drop_log_time_ = 0;
     srmodel_list_t* models_list_ = nullptr;
 

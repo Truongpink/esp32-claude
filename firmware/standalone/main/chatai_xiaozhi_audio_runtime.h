@@ -33,6 +33,8 @@ public:
     bool IsRunning() const{return running_.load();}
     bool IsCaptureEnabled() const{return capture_enabled_.load();}
     bool IsPlaybackIdle() { return service_.IsPlaybackIdle(); }
+    AudioService::UplinkDiagnostics GetUplinkDiagnostics() const { return service_.GetUplinkDiagnostics(); }
+    void ResetUplinkDiagnostics() { service_.ResetUplinkDiagnostics(); }
 private:
     static constexpr size_t kMaxOpusPacketBytes=4096;
     ChatAIXiaozhiAudioCodec codec_; AudioService service_;

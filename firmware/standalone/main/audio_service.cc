@@ -513,8 +513,10 @@ void AudioService::OpusCodecTask() {
                              * audio is useless to the server, so drop the oldest packet. */
                             if (audio_send_queue_.size() >= MAX_SEND_PACKETS_IN_QUEUE) {
                                 audio_send_queue_.pop_front();
+                                uplink_send_queue_drops_.fetch_add(1);
                             }
                             audio_send_queue_.push_back(std::move(packet));
+                            uplink_opus_frames_encoded_.fetch_add(1);
                         }
                         if (callbacks_.on_send_queue_available) {
                             callbacks_.on_send_queue_available();
@@ -531,9 +533,11 @@ void AudioService::OpusCodecTask() {
                     }
                     debug_statistics_.encode_count++;
                 } else {
+                    if (task.type == kAudioTaskTypeEncodeToSendQueue) uplink_encode_failures_.fetch_add(1);
                     ESP_LOGE(TAG, "Failed to encode audio, error code: %d", ret);
                 }
             } else {
+                if (task.type == kAudioTaskTypeEncodeToSendQueue) uplink_encode_failures_.fetch_add(1);
                 ESP_LOGE(TAG,
                          "Failed to encode audio: encoder not configured or invalid frame size "
                          "(got %u, expected %u)",
@@ -598,6 +602,7 @@ void AudioService::PushTaskToEncodeQueue(AudioTaskType type, std::vector<int16_t
     AudioTask task;
     task.type = type;
     task.pcm = std::move(pcm);
+    if (type == kAudioTaskTypeEncodeToSendQueue) uplink_pcm_frames_queued_.fetch_add(1);
 
     uint32_t dropped_total = 0;
     {
@@ -616,6 +621,7 @@ void AudioService::PushTaskToEncodeQueue(AudioTaskType type, std::vector<int16_t
          * congestion or a failed UDP send). */
         if (audio_encode_queue_.size() >= MAX_ENCODE_TASKS_IN_QUEUE) {
             audio_encode_queue_.pop_front();
+            if (type == kAudioTaskTypeEncodeToSendQueue) uplink_encode_queue_drops_.fetch_add(1);
             dropped_total = ++debug_statistics_.encode_drop_count;
         }
         audio_encode_queue_.push_back(std::move(task));
@@ -798,6 +804,20 @@ void AudioService::EnableDeviceAec(bool enable) {
 }
 
 void AudioService::SetCallbacks(AudioServiceCallbacks& callbacks) { callbacks_ = callbacks; }
+
+AudioService::UplinkDiagnostics AudioService::GetUplinkDiagnostics() const {
+    return {uplink_pcm_frames_queued_.load(), uplink_opus_frames_encoded_.load(),
+            uplink_encode_failures_.load(), uplink_encode_queue_drops_.load(),
+            uplink_send_queue_drops_.load()};
+}
+
+void AudioService::ResetUplinkDiagnostics() {
+    uplink_pcm_frames_queued_.store(0);
+    uplink_opus_frames_encoded_.store(0);
+    uplink_encode_failures_.store(0);
+    uplink_encode_queue_drops_.store(0);
+    uplink_send_queue_drops_.store(0);
+}
 
 void AudioService::PlaySound(const std::string_view& ogg) {
     if (!codec_->output_enabled()) {

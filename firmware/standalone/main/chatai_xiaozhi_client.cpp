@@ -368,6 +368,7 @@ private:
                             const bool newer_speech_active =
                                 speech_started_us_.load() > expired_speech_end_us;
                             if (!newer_speech_active && turn_pending_.exchange(false)) {
+                                ReportUplinkSummary("turn_timeout");
                                 listen_started_us_.store(now_us);
                                 chatai::diagnostics::Add("VOICE_LATENCY", "TURN_TIMEOUT",
                                     "pending turn cleared after 30000 ms without TTS start");
@@ -502,6 +503,7 @@ private:
                         return;
                     }
                     if (state == "start") {
+                        ReportUplinkSummary("tts_start");
                         tts_started_us_.store(esp_timer_get_time());
                         tts_first_packet_reported_.store(false);
                         tts_playback_reported_.store(false);
@@ -517,8 +519,15 @@ private:
                         // Wait for queued speaker audio to drain before reopening the mic.
                         if (IsListening() && audio_.IsPlaybackIdle()) {
                             speaker_playing_.store(false);
-                            listen_started_us_.store(esp_timer_get_time());
+                            const bool capture_before = audio_.IsCaptureEnabled();
                             audio_.SetCaptureEnabled(true);
+                            listen_started_us_.store(esp_timer_get_time());
+                            char detail[144]{};
+                            std::snprintf(detail, sizeof(detail),
+                                "source=tts_stop capture_before=%d capture_after=%d listening=%d playback_idle=%d",
+                                capture_before ? 1 : 0, audio_.IsCaptureEnabled() ? 1 : 0,
+                                IsListening() ? 1 : 0, audio_.IsPlaybackIdle() ? 1 : 0);
+                            chatai::diagnostics::Add("AFE_CAPTURE", "REOPEN_CHECK", detail);
                         }
                     }
                 }
@@ -539,6 +548,13 @@ private:
                     chatai::diagnostics::Add("XIAOZHI_TTS", "START",
                         "server_started_voice_response");
                 } else if (state == "stop") {
+                    char capture_detail[160]{};
+                    std::snprintf(capture_detail, sizeof(capture_detail),
+                        "capture_enabled=%d listening=%d tts_active=%d playback_idle=%d turn_pending=%d",
+                        audio_.IsCaptureEnabled() ? 1 : 0, IsListening() ? 1 : 0,
+                        tts_active_.load() ? 1 : 0, audio_.IsPlaybackIdle() ? 1 : 0,
+                        turn_pending_.load() ? 1 : 0);
+                    chatai::diagnostics::Add("XIAOZHI_TTS", "STOP_STATE", capture_detail);
                     if (!downlink_packet_received_reported_.load()) {
                         chatai::diagnostics::Add("XIAOZHI_TTS",
                             "NO_UDP_PACKET_BEFORE_TTS_STOP",
@@ -686,8 +702,15 @@ private:
         std::lock_guard<std::mutex> state_lock(listening_mutex_);
         if (session_ready_.load() && IsListening() && !tts_active_.load() &&
             audio_.IsPlaybackIdle()) {
-            listen_started_us_.store(esp_timer_get_time());
+            const bool capture_before = audio_.IsCaptureEnabled();
             audio_.SetCaptureEnabled(true);
+            listen_started_us_.store(esp_timer_get_time());
+            char detail[144]{};
+            std::snprintf(detail, sizeof(detail),
+                "source=playback_drained capture_before=%d capture_after=%d listening=%d tts_active=%d",
+                capture_before ? 1 : 0, audio_.IsCaptureEnabled() ? 1 : 0,
+                IsListening() ? 1 : 0, tts_active_.load() ? 1 : 0);
+            chatai::diagnostics::Add("AFE_CAPTURE", "REOPEN_CHECK", detail);
         }
     }
 
@@ -714,6 +737,8 @@ private:
                                const chatai::audio::XiaozhiUplinkFrame& frame) {
         const int64_t now_us = esp_timer_get_time();
         last_uplink_sent_us_.store(now_us);
+        uplink_sent_packets_.fetch_add(1);
+        uplink_sent_bytes_.fetch_add(static_cast<uint32_t>(frame.payload.size()));
         if (uplink_packet_reported_.exchange(true)) return;
         first_uplink_sent_us_.store(now_us);
         char detail[128]{};
@@ -724,6 +749,32 @@ private:
             static_cast<unsigned long>(frame.payload.size()),
             static_cast<long long>(now_us));
         chatai::diagnostics::Add("VOICE_LATENCY", "UPLINK_STARTED", detail);
+    }
+
+    void ReportUplinkSummary(const char* reason) {
+        const auto stats = audio_.GetUplinkDiagnostics();
+        char detail[320]{};
+        std::snprintf(detail, sizeof(detail),
+            "reason=%s pcm_frames=%lu opus_encoded=%lu encode_fail=%lu encode_q_drop=%lu send_q_drop=%lu transport_sent=%lu sent_bytes=%lu send_fail=%lu skipped=%lu capture=%d listening=%d tts=%d playback_idle=%d pending=%d vad=%d",
+            reason,
+            static_cast<unsigned long>(stats.pcm_frames_queued),
+            static_cast<unsigned long>(stats.opus_frames_encoded),
+            static_cast<unsigned long>(stats.encode_failures),
+            static_cast<unsigned long>(stats.encode_queue_drops),
+            static_cast<unsigned long>(stats.send_queue_drops),
+            static_cast<unsigned long>(uplink_sent_packets_.load()),
+            static_cast<unsigned long>(uplink_sent_bytes_.load()),
+            static_cast<unsigned long>(uplink_send_failures_.load()),
+            static_cast<unsigned long>(uplink_skipped_frames_.load()),
+            audio_.IsCaptureEnabled() ? 1 : 0, IsListening() ? 1 : 0,
+            tts_active_.load() ? 1 : 0, audio_.IsPlaybackIdle() ? 1 : 0,
+            turn_pending_.load() ? 1 : 0, vad_speaking_.load() ? 1 : 0);
+        chatai::diagnostics::Add("XIAOZHI_AUDIO", "UPLINK_SUMMARY", detail);
+        audio_.ResetUplinkDiagnostics();
+        uplink_sent_packets_.store(0);
+        uplink_sent_bytes_.store(0);
+        uplink_send_failures_.store(0);
+        uplink_skipped_frames_.store(0);
     }
 
     void MaybeStopContinuousListeningAfterSilence() {
@@ -929,6 +980,11 @@ private:
             ReleaseUdpResources();
             return result;
         }
+        audio_.ResetUplinkDiagnostics();
+        uplink_sent_packets_.store(0);
+        uplink_sent_bytes_.store(0);
+        uplink_send_failures_.store(0);
+        uplink_skipped_frames_.store(0);
         udp_running_.store(true);
         if (xTaskCreate(UdpReceiveTaskEntry, "xiaozhi_udp_rx", 4096,
                         this, 5, &udp_rx_task_) != pdPASS) {
@@ -983,6 +1039,11 @@ private:
 
         const esp_err_t result = audio_.Start();
         if (result != ESP_OK) return result;
+        audio_.ResetUplinkDiagnostics();
+        uplink_sent_packets_.store(0);
+        uplink_sent_bytes_.store(0);
+        uplink_send_failures_.store(0);
+        uplink_skipped_frames_.store(0);
         udp_running_.store(true);
         if (xTaskCreate(UdpTransmitTaskEntry, "xiaozhi_ws_tx", 4096,
                         this, 5, &udp_tx_task_) != pdPASS) {
@@ -1131,7 +1192,10 @@ private:
                 MaybeStopOneShotAfterSilence();
                 continue;
             }
-            if (!udp_running_.load() || !IsListening()) continue;
+            if (!udp_running_.load() || !IsListening()) {
+                uplink_skipped_frames_.fetch_add(1);
+                continue;
+            }
 
             if (active_transport_ == Transport::kWebSocket) {
                 std::vector<uint8_t> packet;
@@ -1166,6 +1230,7 @@ private:
                 }
                 const esp_err_t sent = websocket_.SendBinary(packet.data(), packet.size());
                 if (sent != ESP_OK) {
+                    uplink_send_failures_.fetch_add(1);
                     ESP_LOGW(kTag, "WebSocket audio send failed: %s",
                              esp_err_to_name(sent));
                     chatai::diagnostics::Add("XIAOZHI_AUDIO", "SEND_FAILED",
@@ -1200,9 +1265,13 @@ private:
             std::vector<uint8_t> packet(kUdpHeaderSize + frame.payload.size());
             std::copy(header.begin(), header.end(), packet.begin());
             if (!Crypt(frame.payload.data(), frame.payload.size(), header.data(),
-                       packet.data() + kUdpHeaderSize)) continue;
+                       packet.data() + kUdpHeaderSize)) {
+                uplink_send_failures_.fetch_add(1);
+                continue;
+            }
             const int sent = send(fd, packet.data(), packet.size(), 0);
             if (sent != static_cast<int>(packet.size())) {
+                uplink_send_failures_.fetch_add(1);
                 ESP_LOGW(kTag, "UDP audio send failed");
                 chatai::diagnostics::Add("XIAOZHI_AUDIO", "SEND_FAILED",
                     "transport=udp");
@@ -1429,6 +1498,10 @@ private:
     std::atomic<bool> vad_speaking_{false};
     std::atomic<bool> tts_first_packet_reported_{false};
     std::atomic<bool> tts_playback_reported_{false};
+    std::atomic<uint32_t> uplink_sent_packets_{0};
+    std::atomic<uint32_t> uplink_sent_bytes_{0};
+    std::atomic<uint32_t> uplink_send_failures_{0};
+    std::atomic<uint32_t> uplink_skipped_frames_{0};
     std::atomic<bool> downlink_packet_received_reported_{false};
     std::atomic<bool> downlink_bad_packet_reported_{false};
     std::atomic<bool> downlink_sequence_drop_reported_{false};
