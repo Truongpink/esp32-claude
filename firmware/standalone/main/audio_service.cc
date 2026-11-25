@@ -617,46 +617,57 @@ void AudioService::OpusCodecTask() {
 }
 
 void AudioService::SetDecodeSampleRate(int sample_rate, int frame_duration) {
-    if (decoder_sample_rate_ == sample_rate && decoder_duration_ms_ == frame_duration) {
-        return;
-    }
-
-    // Serialize close/open/reset/decode on the same decoder handle. ResetDecoder()
-    // may run from the session-control task while the codec task changes formats.
-    std::unique_lock<std::mutex> resampler_lock(output_resampler_mutex_);
-    std::unique_lock<std::mutex> decoder_lock(decoder_mutex_);
-    if (opus_decoder_ != nullptr) {
-        esp_opus_dec_close(opus_decoder_);
-        opus_decoder_ = nullptr;
-    }
-
-    esp_opus_dec_cfg_t opus_dec_cfg = OPUS_DEC_CFG(sample_rate, frame_duration);
-    auto ret = esp_opus_dec_open(&opus_dec_cfg, sizeof(esp_opus_dec_cfg_t), &opus_decoder_);
-    if (opus_decoder_ == nullptr) {
-        ESP_LOGE(TAG, "Failed to create audio decoder, error code: %d", ret);
-        return;
-    }
-    decoder_sample_rate_ = sample_rate;
-    decoder_duration_ms_ = frame_duration;
-    decoder_frame_size_ = decoder_sample_rate_ / 1000 * frame_duration;
-    decoder_lock.unlock();
-
     auto* codec = codec_;
     if (codec == nullptr) {
         return;
     }
-    if (decoder_sample_rate_ != codec->output_sample_rate()) {
-        ESP_LOGI(TAG, "Resampling audio from %d to %d", decoder_sample_rate_,
-                 codec->output_sample_rate());
-        if (output_resampler_ != nullptr) {
-            esp_ae_rate_cvt_close(output_resampler_);
-            output_resampler_ = nullptr;
+
+    // Serialize resampler changes and decoder close/open/reset/decode.
+    // ResetDecoder() may run from the session-control task while this task
+    // changes the incoming stream format.
+    std::unique_lock<std::mutex> resampler_lock(output_resampler_mutex_);
+    std::unique_lock<std::mutex> decoder_lock(decoder_mutex_);
+
+    const bool format_changed =
+        decoder_sample_rate_ != sample_rate || decoder_duration_ms_ != frame_duration;
+    if (format_changed || opus_decoder_ == nullptr) {
+        if (opus_decoder_ != nullptr) {
+            esp_opus_dec_close(opus_decoder_);
+            opus_decoder_ = nullptr;
         }
-        esp_ae_rate_cvt_cfg_t output_resampler_cfg =
-            RATE_CVT_CFG(decoder_sample_rate_, codec->output_sample_rate(), ESP_AUDIO_MONO);
-        auto resampler_ret = esp_ae_rate_cvt_open(&output_resampler_cfg, &output_resampler_);
-        if (output_resampler_ == nullptr) {
-            ESP_LOGE(TAG, "Failed to create output resampler, error code: %d", resampler_ret);
+
+        esp_opus_dec_cfg_t opus_dec_cfg = OPUS_DEC_CFG(sample_rate, frame_duration);
+        const auto ret =
+            esp_opus_dec_open(&opus_dec_cfg, sizeof(esp_opus_dec_cfg_t), &opus_decoder_);
+        if (opus_decoder_ == nullptr) {
+            ESP_LOGE(TAG, "Failed to create audio decoder, error code: %d", ret);
+            return;
+        }
+
+        decoder_sample_rate_ = sample_rate;
+        decoder_duration_ms_ = frame_duration;
+        decoder_frame_size_ = decoder_sample_rate_ / 1000 * frame_duration;
+    }
+    decoder_lock.unlock();
+
+    if (sample_rate != codec->output_sample_rate()) {
+        // Retry creation if a previous open failed. Otherwise a transient
+        // allocation failure would permanently discard every frame of this format.
+        if (format_changed || output_resampler_ == nullptr) {
+            if (output_resampler_ != nullptr) {
+                esp_ae_rate_cvt_close(output_resampler_);
+                output_resampler_ = nullptr;
+            }
+            ESP_LOGI(TAG, "Resampling audio from %d to %d", sample_rate,
+                     codec->output_sample_rate());
+            esp_ae_rate_cvt_cfg_t output_resampler_cfg =
+                RATE_CVT_CFG(sample_rate, codec->output_sample_rate(), ESP_AUDIO_MONO);
+            const auto resampler_ret =
+                esp_ae_rate_cvt_open(&output_resampler_cfg, &output_resampler_);
+            if (output_resampler_ == nullptr) {
+                ESP_LOGE(TAG, "Failed to create output resampler, error code: %d",
+                         resampler_ret);
+            }
         }
     } else if (output_resampler_ != nullptr) {
         esp_ae_rate_cvt_close(output_resampler_);
