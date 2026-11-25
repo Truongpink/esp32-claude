@@ -56,7 +56,7 @@ idf_component_register(
              esp_http_client http_parser mdns esp_driver_i2c esp_driver_i2s esp_driver_gpio
              esp_driver_rmt esp_websocket_client esp_audio_codec esp_audio_effects esp-sr mqtt
              freertos mbedtls esp_timer esp-tls led_strip spiffs esp_psram esp_pm
-             esp_app_format efuse pthread
+             esp_app_format efuse pthread esp-ml307
 )
 
 target_compile_definitions(${COMPONENT_LIB} PRIVATE
@@ -66,10 +66,10 @@ target_compile_definitions(${COMPONENT_LIB} PRIVATE
     CONFIG_USE_SERVER_AEC=0
     CONFIG_USE_AUDIO_DEBUGGER=0
     CONFIG_SEND_WAKE_WORD_DATA=0
-    "BOARD_TYPE=\"wifi\""
-    "BOARD_NAME=\"ChatAI TPIOS\""
-    "BOARD_MANUFACTURER=\"TPIOS\""
-    "CONFIG_OTA_URL=\"https://api.tenclass.net/xiaozhi/ota/\""
+    "BOARD_TYPE=\\\"wifi\\\""
+    "BOARD_NAME=\\\"ChatAI TPIOS\\\""
+    "BOARD_MANUFACTURER=\\\"TPIOS\\\""
+    "CONFIG_OTA_URL=\\\"https://api.tenclass.net/xiaozhi/ota/\\\""
 )
 target_compile_options(${COMPONENT_LIB} PRIVATE $<$<COMPILE_LANGUAGE:CXX>:-std=gnu++23>)
 
