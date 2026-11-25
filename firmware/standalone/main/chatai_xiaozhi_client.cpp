@@ -530,7 +530,7 @@ private:
                         "server_started_voice_response");
                 } else if (state == "stop") {
                     if (!downlink_packet_received_reported_.load()) {
-                        chatai::diagnostics::Add("XIAOZHI_AUDIO_RX",
+                        chatai::diagnostics::Add("XIAOZHI_TTS",
                             "NO_UDP_PACKET_BEFORE_TTS_STOP",
                             "no UDP datagram reached the audio socket during this TTS response");
                     }
@@ -683,7 +683,7 @@ private:
     void ReportDownlinkIssue(std::atomic<bool>& reported, const char* result,
                              const char* detail) {
         if (!reported.exchange(true)) {
-            chatai::diagnostics::Add("XIAOZHI_AUDIO_RX", result, detail);
+            chatai::diagnostics::Add("XIAOZHI_TTS", result, detail);
         }
     }
 
@@ -1022,7 +1022,7 @@ private:
             if (!downlink_packet_received_reported_.exchange(true)) {
                 char detail[64]{};
                 std::snprintf(detail, sizeof(detail), "first_udp_datagram_bytes=%d", received);
-                chatai::diagnostics::Add("XIAOZHI_AUDIO_RX", "UDP_PACKET_RECEIVED", detail);
+                chatai::diagnostics::Add("XIAOZHI_TTS", "UDP_PACKET_RECEIVED", detail);
             }
             if (received < static_cast<int>(kUdpHeaderSize) || packet[0] != 0x01) {
                 ReportDownlinkIssue(downlink_bad_packet_reported_, "DROP_BAD_PACKET",
