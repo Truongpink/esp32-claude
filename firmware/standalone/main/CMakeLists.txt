@@ -46,7 +46,7 @@ idf_component_register(
          "${XIAOZHI_DIR}/main/device_state_machine.cc"
          "${XIAOZHI_DIR}/main/protocols/mqtt_protocol.cc"
          "${XIAOZHI_DIR}/main/protocols/websocket_protocol.cc"
-         "${XIAOZHI_DIR}/main/protocols/text_glyph_payload.cc"
+         "chatai_xiaozhi_text_glyph_payload.cc"
          "${XIAOZHI_DIR}/main/display/text_glyph.cc"
          "${XIAOZHI_DIR}/main/notify/notify_player.cc"
     EMBED_FILES ${LANG_SOUNDS} ${COMMON_SOUNDS}
