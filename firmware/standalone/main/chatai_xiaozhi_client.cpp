@@ -43,6 +43,7 @@ constexpr uint32_t kHelloTimeoutMs = 12000;
 constexpr uint32_t kOneShotSilenceMs = 650;
 constexpr uint32_t kListenStopRetryMs = 300;
 constexpr uint32_t kTurnPendingTimeoutMs = 30000;
+constexpr uint32_t kContinuousListenSilenceTimeoutMs = 45000;
 constexpr uint32_t kMqttReconnectGraceMs = 6000;
 constexpr size_t kUdpHeaderSize = 16;
 constexpr size_t kMaxUdpPacketSize = 1500;
@@ -156,6 +157,7 @@ public:
     }
 
     void SetChatEnabled(bool enabled) {
+        if (enabled) standby_after_silence_.store(false);
         if (enabled && notify_player_.IsBusy()) {
             notify_player_.Stop();
             audio_.ResetNotificationPlayback();
@@ -218,6 +220,11 @@ private:
         while (true) {
             if (!chatai::network::NetworkManager::IsConnected()) {
                 vTaskDelay(pdMS_TO_TICKS(1000));
+                continue;
+            }
+            if (standby_after_silence_.load() &&
+                !conversation_requested_.load() && !push_to_talk_.load()) {
+                vTaskDelay(pdMS_TO_TICKS(250));
                 continue;
             }
 
@@ -361,11 +368,14 @@ private:
                             const bool newer_speech_active =
                                 speech_started_us_.load() > expired_speech_end_us;
                             if (!newer_speech_active && turn_pending_.exchange(false)) {
+                                listen_started_us_.store(now_us);
                                 chatai::diagnostics::Add("VOICE_LATENCY", "TURN_TIMEOUT",
                                     "pending turn cleared after 30000 ms without TTS start");
                             }
                         }
                     }
+
+                    MaybeStopContinuousListeningAfterSilence();
 
                     // Re-apply capture ownership while the transport is available.
                     if (transport_connected) UpdateListeningState();
@@ -507,6 +517,7 @@ private:
                         // Wait for queued speaker audio to drain before reopening the mic.
                         if (IsListening() && audio_.IsPlaybackIdle()) {
                             speaker_playing_.store(false);
+                            listen_started_us_.store(esp_timer_get_time());
                             audio_.SetCaptureEnabled(true);
                         }
                     }
@@ -675,6 +686,7 @@ private:
         std::lock_guard<std::mutex> state_lock(listening_mutex_);
         if (session_ready_.load() && IsListening() && !tts_active_.load() &&
             audio_.IsPlaybackIdle()) {
+            listen_started_us_.store(esp_timer_get_time());
             audio_.SetCaptureEnabled(true);
         }
     }
@@ -712,6 +724,37 @@ private:
             static_cast<unsigned long>(frame.payload.size()),
             static_cast<long long>(now_us));
         chatai::diagnostics::Add("VOICE_LATENCY", "UPLINK_STARTED", detail);
+    }
+
+    void MaybeStopContinuousListeningAfterSilence() {
+        if (!session_ready_.load() || !chat_enabled_.load() ||
+            !conversation_requested_.load() || push_to_talk_.load() ||
+            !last_listening_.load() || !audio_.IsCaptureEnabled() ||
+            tts_active_.load() || speaker_playing_.load() ||
+            turn_pending_.load() || vad_speaking_.load()) return;
+
+        const int64_t listen_started_us = listen_started_us_.load();
+        const int64_t speech_ended_us = speech_ended_us_.load();
+        const int64_t silence_started_us =
+            std::max(listen_started_us, speech_ended_us);
+        if (silence_started_us <= 0) return;
+
+        const int64_t now_us = esp_timer_get_time();
+        const int64_t silence_ms = (now_us - silence_started_us) / 1000;
+        if (silence_ms < static_cast<int64_t>(kContinuousListenSilenceTimeoutMs))
+            return;
+
+        // Latch standby before disabling continuous listening. A later BOOT press
+        // clears the latch; PTT temporarily permits a manual session.
+        standby_after_silence_.store(true);
+        SetChatEnabled(false);
+
+        char detail[128]{};
+        std::snprintf(detail, sizeof(detail),
+            "silence_threshold_ms=%lu actual_silence_ms=%lld action=listen_stop standby=1",
+            static_cast<unsigned long>(kContinuousListenSilenceTimeoutMs),
+            static_cast<long long>(silence_ms));
+        chatai::diagnostics::Add("XIAOZHI_LISTEN", "AUTO_STANDBY", detail);
     }
 
     void MaybeStopOneShotAfterSilence() {
@@ -1261,7 +1304,10 @@ private:
         cJSON_free(json);
         if (result == ESP_OK) {
             last_listening_.store(listening);
-            if (listening) audio_.SetCaptureEnabled(!tts_active_.load());
+            if (listening) {
+                listen_started_us_.store(esp_timer_get_time());
+                audio_.SetCaptureEnabled(!tts_active_.load());
+            }
             chatai::diagnostics::Add("XIAOZHI_LISTEN",
                 listening ? "START_SENT" : "STOP_SENT",
                 listening ? mode : "server_listen_stop_control_published");
@@ -1372,6 +1418,7 @@ private:
     std::atomic<bool> udp_running_{false};
     std::atomic<bool> chat_enabled_{false};
     std::atomic<bool> conversation_requested_{false};
+    std::atomic<bool> standby_after_silence_{false};
     std::atomic<bool> push_to_talk_{false};
     std::atomic<bool> last_listening_{false};
     std::atomic<bool> tts_active_{false};
