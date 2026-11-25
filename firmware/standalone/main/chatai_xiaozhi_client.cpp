@@ -496,11 +496,6 @@ private:
                         tts_started_us_.store(esp_timer_get_time());
                         tts_first_packet_reported_.store(false);
                         tts_playback_reported_.store(false);
-                        downlink_packet_received_reported_.store(false);
-                        downlink_bad_packet_reported_.store(false);
-                        downlink_sequence_drop_reported_.store(false);
-                        downlink_decrypt_failed_reported_.store(false);
-                        downlink_queue_rejected_reported_.store(false);
                         one_shot_local_vad_.store(false);
                         turn_pending_.store(false);
                         speaker_playing_.store(false);
@@ -541,6 +536,11 @@ private:
                     }
                     chatai::diagnostics::Add("XIAOZHI_TTS", "STOP",
                         "response_finished; continuous_chat_remains_enabled");
+                        downlink_packet_received_reported_.store(false);
+                        downlink_bad_packet_reported_.store(false);
+                        downlink_sequence_drop_reported_.store(false);
+                        downlink_decrypt_failed_reported_.store(false);
+                        downlink_queue_rejected_reported_.store(false);
                 }
             }
         } else if (type == "notify") {
