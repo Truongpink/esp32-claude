@@ -40,7 +40,7 @@ const char kAdminPage[] = R"html(
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-<meta name="color-scheme" content="dark">
+<meta name="color-scheme" content="dark light">
 <title>ChatAI TPIOS · Web Admin</title>
 <style>
 :root{color-scheme:dark;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:#090914;color:#f4f1ff;font-synthesis:none}
@@ -124,28 +124,38 @@ select,input[type=text]{width:100%;min-width:0;padding:13px;border:1px solid #ff
 @media(max-width:360px){.overview-panel{padding:13px}.overview-items{column-gap:8px}.overview-footer{align-items:flex-start;flex-direction:column}}
 .foot{text-align:center;color:#77718f;font-size:11px;margin:20px 0 0}
 @media(min-width:600px){body{padding-top:44px}}
+
+:root{color-scheme:dark;--line:#8bdcff24;--text:#edf7ff;--muted:#91a9c3;--cyan:#52e4f5}
+body{padding:18px 15px calc(108px + env(safe-area-inset-bottom));background:radial-gradient(ellipse at 50% -12%,#234d76 0,transparent 43%),linear-gradient(155deg,#070b18,#0a1426 55%,#080d1b);color:var(--text)}main{max-width:900px}
+header.app-header{gap:12px;margin:0 2px 20px;padding:5px 1px}.brand-mark{width:46px;height:46px;flex:none;border-radius:16px;background:linear-gradient(145deg,#50e5f3,#7562f5 62%,#b16bff);color:#071222;box-shadow:0 0 28px #48dff544;font-size:25px}.brand-copy{min-width:0;flex:1}h1{font-size:20px;letter-spacing:.1px}.subtitle{color:#9bb4cf}
+.header-actions{display:flex;align-items:center;gap:8px}.connection-pill{display:inline-flex;align-items:center;gap:6px;padding:7px 9px;border:1px solid var(--line);border-radius:999px;background:#10263b99;color:#b8d9ed;font-size:10px;white-space:nowrap}.connection-pill:before{content:"";width:6px;height:6px;border-radius:50%;background:#f4c76b}.connection-pill[data-state="online"]:before{background:#65f0c0}.connection-pill[data-state="offline"]:before{background:#ff758d}.theme-toggle{width:37px;height:37px;padding:0;border:1px solid var(--line);border-radius:13px;background:#ffffff0b;color:#e8f8ff;box-shadow:none;font-size:17px}
+.card{background:linear-gradient(145deg,#122039ed,#0d1729f2);border:1px solid var(--line);border-radius:23px;padding:18px;box-shadow:0 18px 48px #0005,inset 0 1px #ffffff08}.card-icon,.overview-group-icon{background:#42dff31a;color:var(--cyan)}h2{color:#effaff}.hint,.muted{color:var(--muted)}#deviceStatus{background:#0b182a;border-color:var(--line);color:#d8efff}
+button{background:linear-gradient(135deg,#43d9ed,#7869f5);color:#071321;box-shadow:0 8px 22px #39cce52c}button.secondary{background:#ffffff0a;border:1px solid var(--line);color:#cfe9f8;box-shadow:none}button.danger{background:linear-gradient(135deg,#ff718e,#b94472);color:#fff}
+input[type=password],input[type=file],select,input[type=text],textarea{background:#091426;border-color:var(--line);color:var(--text)}input:focus,select:focus,textarea:focus{border-color:var(--cyan);box-shadow:0 0 0 3px #52e4f51a}
+.tabbar{width:min(100%,900px);grid-template-columns:repeat(4,minmax(0,1fr));gap:7px;padding:9px 12px calc(9px + env(safe-area-inset-bottom));border:1px solid #9eeeff25;border-bottom:0;border-radius:22px 22px 0 0;background:#091426ef;backdrop-filter:blur(24px);-webkit-backdrop-filter:blur(24px);box-shadow:0 -12px 38px #0007}.tabbar button{min-height:56px;gap:4px;border-radius:15px;color:#91a9c3;font-size:10px;font-weight:650}.tabbar button .tab-icon{font-size:19px}.tabbar button[aria-selected="true"]{background:linear-gradient(145deg,#17465b,#30306d);border:1px solid #69e6f65c;color:#eaffff;box-shadow:inset 0 1px #ffffff18,0 5px 18px #2bcbe522}
+.neural-banner{position:relative;display:flex;align-items:center;justify-content:space-between;gap:16px;overflow:hidden;margin:0 0 15px;padding:18px;border:1px solid #5adff333;border-radius:20px;background:radial-gradient(circle at 80% 50%,#7258c344,transparent 42%),linear-gradient(115deg,#0f3044,#171b3b 68%,#17132d)}.neural-copy{position:relative;z-index:1;min-width:0}.neural-eyebrow{display:block;color:#70e7f5;font-size:9px;font-weight:800;letter-spacing:1.6px}.neural-copy strong{display:block;margin-top:6px;font-size:18px}.neural-copy p{margin:5px 0 0;color:#a9c5da;font-size:11px;line-height:1.45}.neural-orb{position:relative;flex:none;width:76px;height:76px;border-radius:50%;background:radial-gradient(circle at 36% 32%,#e5ffff 0 4%,#78f4f4 9%,#32cce9 25%,#665de8 52%,#241b54 72%);box-shadow:0 0 18px #45dff2a8,0 0 42px #735bff80,inset -9px -10px 20px #080b2b;animation:orbPulse 4s ease-in-out infinite}.neural-orb:before,.neural-orb:after{content:"";position:absolute;inset:-8px;border:1px solid #6be7f66b;border-radius:50%;transform:rotate(-28deg) scaleY(.48)}.neural-orb:after{inset:-14px;border-color:#a48cff55;transform:rotate(42deg) scaleY(.62)}@keyframes orbPulse{0%,100%{filter:brightness(.92);transform:scale(.97)}50%{filter:brightness(1.2);transform:scale(1.04)}}
+.module-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:11px;margin-top:14px}.module-tile{display:flex;align-items:center;gap:11px;min-width:0;min-height:76px;padding:12px;border:1px solid var(--line);border-radius:17px;background:linear-gradient(145deg,#14233b,#0d1729);color:var(--text);text-align:left;box-shadow:inset 0 1px #ffffff08}.module-tile:disabled{opacity:.48;cursor:not-allowed}.module-icon{display:grid;place-items:center;flex:none;width:42px;height:42px;border-radius:14px;background:linear-gradient(145deg,#2bcde4,#6b62e8);color:#061523;font-size:20px}.module-tile:nth-child(3n+2) .module-icon{background:linear-gradient(145deg,#a78bfa,#7352df)}.module-tile:nth-child(3n) .module-icon{background:linear-gradient(145deg,#5df0c1,#21a994)}.module-tile strong{display:block;font-size:12px}.module-tile small{display:block;margin-top:4px;color:var(--muted);font-size:10px;font-weight:500}
+.chat-state-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;margin-top:15px}.chat-state{padding:13px;border:1px solid var(--line);border-radius:16px;background:#0c192b}.chat-state span{display:block;color:var(--muted);font-size:10px}.chat-state strong{display:block;margin-top:6px;font-size:13px;overflow-wrap:anywhere}.chat-note{margin-top:14px;padding:12px;border-left:2px solid var(--cyan);border-radius:0 12px 12px 0;background:#52e4f50c;color:#a9c5da;font-size:11px;line-height:1.55}.foot{color:#6f88a2}.metric,.overview-group,.ble-device{background:#0c192b;border-color:var(--line)}.overview-hero{border-color:#52e4f533;background:linear-gradient(110deg,#15506a55,#5d4ca52a)}.overview-eyebrow{color:#6ee9f5}.overview-chip{background:#ffffff0b;color:#d4f4ff}.overview-item strong{color:#e7f7ff}
+body[data-theme="light"]{color-scheme:light;--text:#15253a;--muted:#61758d;--line:#6586a533;background:radial-gradient(ellipse at 50% -10%,#d5f5ff 0,transparent 46%),linear-gradient(155deg,#edf7ff,#e8edff 62%,#f8faff);color:var(--text)}body[data-theme="light"] .card{background:linear-gradient(145deg,#ffffffed,#f2f7ffed);border-color:#b7cde4;box-shadow:0 12px 35px #46688a18}body[data-theme="light"] .connection-pill{background:#ffffffc9;color:#3b5c78}body[data-theme="light"] .theme-toggle,body[data-theme="light"] button.secondary{background:#ffffffd9;color:#28445f;border-color:#b7cde4}body[data-theme="light"] .tabbar{background:#f5f9fff0;border-color:#b7cde4;box-shadow:0 -10px 30px #46688a20}body[data-theme="light"] .tabbar button{color:#627a94}body[data-theme="light"] .tabbar button[aria-selected="true"]{background:linear-gradient(145deg,#d5f7ff,#dedcff);border-color:#7abdd0;color:#183c56}body[data-theme="light"] .module-tile{background:linear-gradient(145deg,#ffffff,#edf4ff);color:#19334d;border-color:#bdd0e4}body[data-theme="light"] .chat-state,body[data-theme="light"] .metric,body[data-theme="light"] .overview-group,body[data-theme="light"] .ble-device{background:#f5f9ff;border-color:#c5d6e7}body[data-theme="light"] #deviceStatus,body[data-theme="light"] input[type=password],body[data-theme="light"] input[type=file],body[data-theme="light"] select,body[data-theme="light"] input[type=text],body[data-theme="light"] textarea{background:#fff;color:#19334d;border-color:#b9cde1}body[data-theme="light"] .overview-item strong,body[data-theme="light"] h2{color:#19334d}body[data-theme="light"] .neural-banner{background:radial-gradient(circle at 80% 50%,#a99bff55,transparent 42%),linear-gradient(115deg,#d7f7ff,#e7e4ff)}body[data-theme="light"] .neural-copy p{color:#526b86}body[data-theme="light"] .neural-eyebrow{color:#267b9b}body[data-theme="light"] .chat-note{background:#e4f8ff;color:#47627b}
+@media(max-width:390px){.connection-pill{font-size:9px;padding:6px 7px}.neural-banner{padding:14px}.neural-orb{width:62px;height:62px}.module-grid{gap:8px}.module-tile{padding:10px;gap:8px}.module-icon{width:37px;height:37px}}@media(min-width:700px){.tabbar{bottom:18px;border:1px solid #9eeeff25;border-radius:20px;width:min(860px,calc(100% - 32px))}body{padding-bottom:112px}}
+
 </style>
 </head>
 <body>
 <main>
-<header>
-<div class="brand-mark" aria-hidden="true">✦</div>
-<div><h1>ChatAI TPIOS</h1><p class="subtitle">Trung tâm điều khiển thiết bị</p></div>
-</header>
-<nav class="tabbar" role="tablist" aria-label="Các mục quản trị">
-<button type="button" role="tab" data-tab="overview" aria-selected="true"><span class="tab-icon">⌂</span><span>Tổng quan</span></button>
-<button type="button" role="tab" data-tab="wifi" aria-selected="false"><span class="tab-icon">⌁</span><span>Wi-Fi</span></button>
-<button type="button" role="tab" data-tab="bluetooth" aria-selected="false"><span class="tab-icon">ᛒ</span><span>Bluetooth</span></button>
-<button type="button" role="tab" data-tab="gemini" aria-selected="false"><span class="tab-icon">✧</span><span>Gemini (đã tắt)</span></button>
-<button type="button" role="tab" data-tab="audio" aria-selected="false"><span class="tab-icon">♫</span><span>Âm thanh</span></button>
-<button type="button" role="tab" data-tab="ota" aria-selected="false"><span class="tab-icon">⇧</span><span>OTA</span></button>
-<button type="button" role="tab" data-tab="logs" aria-selected="false"><span class="tab-icon">≋</span><span>Nhật ký</span></button>
+<header class="app-header"><div class="brand-mark" aria-hidden="true">✦</div><div class="brand-copy"><h1>ChatAI TPIOS</h1><p class="subtitle">Futuristic AI Control Center</p></div><div class="header-actions"><span id="connectionPill" class="connection-pill" data-state="checking">Đang kiểm tra</span><button id="themeToggle" class="theme-toggle" type="button" aria-label="Chuyển giao diện sáng">☼</button></div></header>
+<nav class="tabbar" role="tablist" aria-label="Điều hướng ChatAI">
+<button type="button" role="tab" data-tab="overview" aria-selected="true"><span class="tab-icon">⌂</span><span>Trang chủ</span></button>
+<button type="button" role="tab" data-tab="chat" aria-selected="false"><span class="tab-icon">◉</span><span>Trò chuyện</span></button>
+<button type="button" role="tab" data-tab="control" aria-selected="false"><span class="tab-icon">⌘</span><span>Điều khiển</span></button>
+<button type="button" role="tab" data-tab="settings" aria-selected="false"><span class="tab-icon">⚙</span><span>Cài đặt</span></button>
 </nav>
 <section class="card tab-panel overview-panel" data-panel="overview" role="tabpanel" aria-labelledby="connectionTitle">
 <div class="overview-top">
   <div class="card-head"><div class="card-icon" aria-hidden="true">◉</div><div><h2 id="connectionTitle">Tổng quan hệ thống</h2><p class="hint">Trạng thái thiết bị ChatAI TPIOS</p></div></div>
   <button id="refreshDashboard" class="secondary overview-refresh" type="button">↻ Làm mới</button>
 </div>
+<div class="neural-banner"><div class="neural-copy"><span class="neural-eyebrow">CHATAI NEURAL CORE</span><strong>AI Energy Orb</strong><p>Giao diện điều khiển trung tâm · Xiaozhi Voice</p></div><div class="neural-orb" aria-hidden="true"></div></div>
 <div class="overview-hero">
   <div><span class="overview-eyebrow">TRẠNG THÁI THIẾT BỊ</span><strong id="overviewDeviceState">Đang kiểm tra...</strong><p id="deviceStatus" role="status" aria-live="polite">Đang kiểm tra Wi-Fi, Internet và Xiaozhi...</p></div>
   <span class="overview-chip" id="overviewBuildChip">Firmware —</span>
@@ -200,6 +210,28 @@ select,input[type=text]{width:100%;min-width:0;padding:13px;border:1px solid #ff
 <button id="retryGemini" hidden type="button">Thử kết nối lại Gemini</button>
 <p id="restartResult" class="hint" role="status" aria-live="polite"></p>
 </section>
+<section class="card tab-panel" data-panel="chat" role="tabpanel" aria-labelledby="chatTitle" hidden>
+<div class="card-head"><div class="card-icon" aria-hidden="true">◉</div><div><h2 id="chatTitle">Xiaozhi Voice Monitor</h2><p class="hint">Theo dõi trạng thái hội thoại từ dữ liệu firmware hiện có</p></div></div>
+<div class="neural-banner"><div class="neural-copy"><span class="neural-eyebrow">VOICE ENGINE</span><strong id="chatVoiceState">Đang chờ dữ liệu...</strong><p id="chatVoiceDetail">Chưa đọc được trạng thái phiên Xiaozhi.</p></div><div class="neural-orb" aria-hidden="true"></div></div>
+<div class="chat-state-grid"><div class="chat-state"><span>Kết nối Xiaozhi</span><strong id="chatXiaozhiState">—</strong></div><div class="chat-state"><span>Kết nối mạng</span><strong id="chatNetworkState">—</strong></div><div class="chat-state"><span>Microphone</span><strong id="chatMicState">—</strong></div><div class="chat-state"><span>Speaker</span><strong id="chatSpeakerState">—</strong></div></div>
+<div class="chat-note">Firmware hiện chưa công khai trạng thái runtime riêng biệt cho Listening, Processing và Speaking qua API Web Admin. Màn hình này không tự suy đoán các trạng thái đó và không tạo transcript giả.</div></section>
+<section class="card tab-panel" data-panel="control" role="tabpanel" aria-labelledby="controlTitle" hidden>
+<div class="card-head"><div class="card-icon" aria-hidden="true">⌘</div><div><h2 id="controlTitle">Trung tâm điều khiển</h2><p class="hint">Chọn module để mở công cụ hiện có</p></div></div>
+<div class="module-grid">
+<button class="module-tile" type="button" data-open-panel="audio"><span class="module-icon">♫</span><span><strong>Âm thanh</strong><small>Volume · Microphone gain</small></span></button>
+<button class="module-tile" type="button" data-open-panel="wifi"><span class="module-icon">⌁</span><span><strong>Wi-Fi Analyzer</strong><small>Quét và cấu hình mạng</small></span></button>
+<button class="module-tile" type="button" data-open-panel="bluetooth"><span class="module-icon">ᛒ</span><span><strong>Bluetooth LE</strong><small>BLE Scanner · đang thử nghiệm</small></span></button>
+<button class="module-tile" type="button" disabled><span class="module-icon">▣</span><span><strong>OLED Display</strong><small>Chưa có API điều khiển</small></span></button>
+<button class="module-tile" type="button" disabled><span class="module-icon">✧</span><span><strong>RGB Light</strong><small>Chưa có API điều khiển</small></span></button>
+<button class="module-tile" type="button" disabled><span class="module-icon">▦</span><span><strong>System Monitor</strong><small>Dữ liệu tổng quan ở Trang chủ</small></span></button>
+</div></section>
+<section class="card tab-panel" data-panel="settings" role="tabpanel" aria-labelledby="settingsTitle" hidden>
+<div class="card-head"><div class="card-icon" aria-hidden="true">⚙</div><div><h2 id="settingsTitle">Cài đặt thiết bị</h2><p class="hint">Quản trị firmware, nhật ký và cấu hình hiện có</p></div></div>
+<div class="module-grid">
+<button class="module-tile" type="button" data-open-panel="ota"><span class="module-icon">⇧</span><span><strong>Firmware OTA</strong><small>Kiểm tra và cập nhật firmware</small></span></button>
+<button class="module-tile" type="button" data-open-panel="logs"><span class="module-icon">≋</span><span><strong>Diagnostics</strong><small>Xem, sao chép và tải log</small></span></button>
+<button class="module-tile" type="button" data-open-panel="gemini"><span class="module-icon">✧</span><span><strong>Gemini Settings</strong><small>Backend Gemini hiện đang tắt</small></span></button>
+</div><p class="chat-note">Xiaozhi là voice backend hiện tại. Gemini Live tiếp tục được giữ ở trạng thái tắt.</p></section>
 <section class="card tab-panel" data-panel="wifi" role="tabpanel" aria-labelledby="wifiTitle" hidden>
 <div class="card-head"><div class="card-icon" aria-hidden="true">⌁</div><div><h2 id="wifiTitle">Cấu hình Wi-Fi</h2><p class="hint">Quét mạng, đổi Wi-Fi và xác minh Internet trước khi lưu</p></div></div>
 <p id="wifiAdminStatus" class="hint" role="status" aria-live="polite">Đang đọc trạng thái Wi-Fi...</p>
@@ -353,19 +385,30 @@ let blePollTimer = null;
 let otaMaxBytes = 0;
 let currentBuildNumber = 0;
 
-document.querySelectorAll("[data-tab]").forEach(button => {
-  button.addEventListener("click", () => {
-    const selected = button.dataset.tab;
-    document.querySelectorAll("[data-tab]").forEach(tab => {
-      tab.setAttribute("aria-selected", String(tab === button));
-    });
-    document.querySelectorAll("[data-panel]").forEach(panel => {
-      panel.hidden = panel.dataset.panel !== selected;
-    });
-    if (selected === "bluetooth") refreshBluetooth();
-    if (selected === "overview") { refreshDeviceStatus().catch(error => { deviceStatus.textContent = error.message; }); refreshBluetoothOverview(); }
-  });
-});
+function showPanel(panelName) {
+  document.querySelectorAll("[data-panel]").forEach(panel => { panel.hidden = panel.dataset.panel !== panelName; });
+  const tab = panelName === "overview" ? "overview" : panelName === "chat" ? "chat" :
+    ["control","wifi","bluetooth","audio"].includes(panelName) ? "control" : "settings";
+  document.querySelectorAll("[data-tab]").forEach(button => button.setAttribute("aria-selected", String(button.dataset.tab === tab)));
+  if (panelName === "bluetooth") refreshBluetooth();
+  if (panelName === "overview") { refreshDeviceStatus().catch(error => { deviceStatus.textContent = error.message; }); refreshBluetoothOverview(); }
+  if (panelName === "chat") refreshDeviceStatus().catch(error => { document.getElementById("chatVoiceState").textContent = error.message; });
+  if (panelName === "ota") refreshFirmwareStatus().catch(error => { firmwareStatus.textContent = error.message; });
+  if (panelName === "logs") refreshDiagnostics().catch(error => { diagnosticLog.textContent = error.message; });
+}
+document.querySelectorAll("[data-tab]").forEach(button => button.addEventListener("click", () => showPanel(button.dataset.tab)));
+document.querySelectorAll("[data-open-panel]").forEach(button => button.addEventListener("click", () => showPanel(button.dataset.openPanel)));
+const themeToggle = document.getElementById("themeToggle");
+function applyTheme(theme) {
+  document.body.dataset.theme = theme;
+  themeToggle.textContent = theme === "light" ? "☾" : "☼";
+  themeToggle.setAttribute("aria-label", theme === "light" ? "Chuyển giao diện tối" : "Chuyển giao diện sáng");
+  try { localStorage.setItem("chatai-theme", theme); } catch (_) {}
+}
+let savedTheme = "dark";
+try { savedTheme = localStorage.getItem("chatai-theme") === "light" ? "light" : "dark"; } catch (_) {}
+applyTheme(savedTheme);
+themeToggle.addEventListener("click", () => applyTheme(document.body.dataset.theme === "light" ? "dark" : "light"));
 
 speakerVolumeInput.addEventListener("input", () => {
   speakerVolumeDirty = true;
@@ -1064,6 +1107,22 @@ async function refreshDeviceStatus() {
     micGainValue.textContent = micGainInput.value + " dB";
   }
   deviceStatus.textContent = state + (data.ip ? " · IP " + data.ip : "");
+  const connectionPill = document.getElementById("connectionPill");
+  if (connectionPill) {
+    const online = Boolean(data.wifi_connected && data.internet_available && data.xiaozhi_ready);
+    connectionPill.dataset.state = online ? "online" : data.wifi_connected ? "checking" : "offline";
+    connectionPill.textContent = online ? "Online" : data.wifi_connected ? "Đang kết nối" : "Offline";
+  }
+  document.getElementById("chatVoiceState").textContent = data.xiaozhi_ready
+    ? (data.xiaozhi_chat_enabled ? "Hội thoại đã bật" : "Xiaozhi sẵn sàng") : "Chưa kết nối Xiaozhi";
+  document.getElementById("chatVoiceDetail").textContent = data.xiaozhi_ready
+    ? (data.xiaozhi_chat_enabled ? "Firmware báo chế độ hội thoại đang bật." : "Voice backend đã sẵn sàng; chưa xác nhận phiên hội thoại đang hoạt động.")
+    : "Đang chờ kết nối voice backend.";
+  document.getElementById("chatXiaozhiState").textContent = data.xiaozhi_ready ? "Sẵn sàng" : "Chưa kết nối";
+  document.getElementById("chatNetworkState").textContent = data.wifi_connected
+    ? (data.internet_available ? "Wi-Fi · Internet OK" : "Wi-Fi · Internet chưa xác minh") : "Chưa kết nối Wi-Fi";
+  document.getElementById("chatMicState").textContent = data.microphone_enabled ? "Đang bật" : "Đang tắt";
+  document.getElementById("chatSpeakerState").textContent = data.speaker_enabled ? "Đang bật" : "Đang tắt";
   document.getElementById("overviewDeviceState").textContent = state;
   document.getElementById("overviewBuildChip").textContent = "Build #" + Number(data.build_number || 0);
   document.getElementById("overviewUpdated").textContent = "Cập nhật lúc " +
