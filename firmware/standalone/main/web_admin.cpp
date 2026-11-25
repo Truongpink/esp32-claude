@@ -197,7 +197,7 @@ body[data-theme="light"]{background:radial-gradient(ellipse at 50% -12%,#d7f5ff 
 <section class="card tab-panel" data-panel="chat" role="tabpanel" aria-labelledby="chatTitle" hidden>
 <div class="card-head"><div class="card-icon" aria-hidden="true">◉</div><div><h2 id="chatTitle">Xiaozhi Voice Monitor</h2><p class="hint">Theo dõi trạng thái hội thoại từ dữ liệu firmware hiện có</p></div></div>
 <div class="neural-banner"><div class="neural-copy"><span class="neural-eyebrow">VOICE ENGINE</span><strong id="chatVoiceState">Đang chờ dữ liệu...</strong><p id="chatVoiceDetail">Chưa đọc được trạng thái phiên Xiaozhi.</p></div><div class="neural-orb" aria-hidden="true"></div></div>
-<div class="chat-state-grid"><div class="chat-state"><span>Kết nối Xiaozhi</span><strong id="chatXiaozhiState">—</strong></div><div class="chat-state"><span>Kết nối mạng</span><strong id="chatNetworkState">—</strong></div><div class="chat-state"><span>Microphone</span><strong id="chatMicState">—</strong></div><div class="chat-state"><span>Speaker</span><strong id="chatSpeakerState">—</strong></div></div>
+<div class="chat-state-grid"><div class="chat-state"><span>Microphone</span><strong id="chatMicState">—</strong></div><div class="chat-state"><span>Speaker</span><strong id="chatSpeakerState">—</strong></div></div>
 <div class="chat-note">Firmware hiện chưa công khai trạng thái runtime riêng biệt cho Listening, Processing và Speaking qua API Web Admin. Màn hình này không tự suy đoán các trạng thái đó và không tạo transcript giả.</div></section>
 <section class="card tab-panel" data-panel="control" role="tabpanel" aria-labelledby="controlTitle" hidden>
 <div class="card-head"><div class="card-icon" aria-hidden="true">⌘</div><div><h2 id="controlTitle">Trung tâm điều khiển</h2><p class="hint">Chọn module để mở công cụ hiện có</p></div></div>
@@ -1107,9 +1107,6 @@ async function refreshDeviceStatus() {
   document.getElementById("chatVoiceDetail").textContent = data.xiaozhi_ready
     ? (data.xiaozhi_chat_enabled ? "Firmware báo chế độ hội thoại đang bật." : "Voice backend đã sẵn sàng; chưa xác nhận phiên hội thoại đang hoạt động.")
     : "Đang chờ kết nối voice backend.";
-  document.getElementById("chatXiaozhiState").textContent = data.xiaozhi_ready ? "Sẵn sàng" : "Chưa kết nối";
-  document.getElementById("chatNetworkState").textContent = data.wifi_connected
-    ? (data.internet_available ? "Wi-Fi · Internet OK" : "Wi-Fi · Internet chưa xác minh") : "Chưa kết nối Wi-Fi";
   document.getElementById("chatMicState").textContent = data.microphone_enabled ? "Đang bật" : "Đang tắt";
   document.getElementById("chatSpeakerState").textContent = data.speaker_enabled ? "Đang bật" : "Đang tắt";
   document.getElementById("overviewDeviceState").textContent = state;
