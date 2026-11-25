@@ -56,6 +56,29 @@ bool AfeAudioEngine::Initialize(AudioCodec* codec, int frame_duration_ms,
     frame_samples_ = frame_duration_ms * 16000 / 1000;
     output_buffer_.reserve(frame_samples_);
 
+    // AFE initialization may be retried after a failed attempt. Release only
+    // resources acquired by this engine so a retry cannot leak an owned model
+    // or retain a partially created AFE instance.
+    const auto rollback_initialization = [this]() {
+        if (afe_data_ != nullptr && afe_iface_ != nullptr) {
+            afe_iface_->destroy(afe_data_);
+        }
+        afe_data_ = nullptr;
+        afe_iface_ = nullptr;
+        if (owns_models_ && models_ != nullptr) {
+            esp_srmodel_deinit(models_);
+        }
+        models_ = nullptr;
+        owns_models_ = false;
+        codec_ = nullptr;
+        frame_samples_ = 0;
+        wake_detector_ = WakeDetector::kNone;
+        wake_words_.clear();
+        input_buffer_.clear();
+        output_buffer_.clear();
+        return false;
+    };
+
     if (models_list != nullptr) {
         models_ = models_list;
     } else if (esp_partition_find_first(
@@ -99,7 +122,7 @@ bool AfeAudioEngine::Initialize(AudioCodec* codec, int frame_duration_ms,
         afe_config_init(input_format.c_str(), models_, AFE_TYPE_FD, AFE_MODE_LOW_COST);
     if (afe_config == nullptr) {
         ESP_LOGE(TAG, "Failed to create AFE configuration");
-        return false;
+        return rollback_initialization();
     }
 
     afe_config->aec_init = codec_->input_reference();
@@ -177,9 +200,7 @@ bool AfeAudioEngine::Initialize(AudioCodec* codec, int frame_duration_ms,
         ESP_LOGE(TAG, "Failed to create FD AFE instance");
         chatai::diagnostics::Add("AFE", "INIT_FAILED",
             "FD AFE instance creation failed");
-        afe_iface_ = nullptr;
-        afe_data_ = nullptr;
-        return false;
+        return rollback_initialization();
     }
     chatai::diagnostics::Add("AFE", "READY",
         "vad_mode=2 min_speech_ms=64 vad_delay_ms=64 agc=webrtc compression_gain_db=12 target=-3dBFS");
@@ -203,10 +224,7 @@ bool AfeAudioEngine::Initialize(AudioCodec* codec, int frame_duration_ms,
         ESP_LOGE(TAG, "Failed to create AFE processing task, internal free=%u largest=%u",
                  heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
                  heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL));
-        afe_iface_->destroy(afe_data_);
-        afe_data_ = nullptr;
-        afe_iface_ = nullptr;
-        return false;
+        return rollback_initialization();
     }
 
     const char* detector = wake_detector_ == WakeDetector::kWakeNet ? "WakeNet" : "none";
