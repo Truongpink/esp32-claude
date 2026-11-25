@@ -252,7 +252,9 @@ void AfeAudioEngine::EnableVoiceProcessing(bool enable) {
         xEventGroupSetBits(event_group_, kVoiceProcessingEnabled);
     } else {
         xEventGroupClearBits(event_group_, kVoiceProcessingEnabled);
-        is_speaking_ = false;
+        if (is_speaking_.exchange(false) && vad_state_change_callback_) {
+            vad_state_change_callback_(false);
+        }
     }
     UpdateActiveState();
 }
