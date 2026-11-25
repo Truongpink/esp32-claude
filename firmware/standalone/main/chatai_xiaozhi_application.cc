@@ -30,6 +30,14 @@ std::atomic<bool> g_application_initialized{false};
 namespace {
 // Retry activation task creation after a short delay if FreeRTOS cannot allocate it.
 TickType_t g_activation_retry_due = 0;
+// Activation owns ota_ until it signals completion. Network loss requests a
+// cooperative stop; the main task performs cleanup after completion.
+std::atomic<bool> g_activation_cancel_requested{false};
+
+bool IsActivationCancelled() {
+    return g_activation_cancel_requested.load() ||
+           !chatai::network::NetworkManager::IsConnected();
+}
 }
 
 Application::Application() : notify_player_(audio_service_) {
@@ -362,17 +370,21 @@ void Application::HandleNetworkConnectedEvent() {
 
     if (state == kDeviceStateStarting || state == kDeviceStateWifiConfiguring) {
         if (activation_task_handle_ != nullptr) {
-            ESP_LOGW(TAG, "Activation task already running");
+            ESP_LOGW(TAG, "Activation task is still exiting; reconnect will be handled after cleanup");
             return;
         }
 
-        // Network is ready, start activation.
+        // A fresh activation starts only after the previous task has completed.
+        g_activation_cancel_requested.store(false);
+        g_activation_retry_due = 0;
         SetDeviceState(kDeviceStateActivating);
         const BaseType_t task_result = xTaskCreate(
             [](void* arg) {
                 Application* app = static_cast<Application*>(arg);
                 app->ActivationTask();
-                app->activation_task_handle_ = nullptr;
+                // Keep the handle non-null until the main task consumes the
+                // completion event, preventing a reconnect from racing cleanup.
+                xEventGroupSetBits(app->event_group_, MAIN_EVENT_ACTIVATION_DONE);
                 vTaskDelete(NULL);
             },
             "activation", 4096 * 2, this, 2, &activation_task_handle_);
@@ -395,6 +407,13 @@ void Application::HandleNetworkConnectedEvent() {
 }
 
 void Application::HandleNetworkDisconnectedEvent() {
+    // Do not abort an in-flight HTTP request. Ask ActivationTask to stop at
+    // its next cancellation checkpoint, then clean up from the main task.
+    if (activation_task_handle_ != nullptr) {
+        g_activation_cancel_requested.store(true);
+        ESP_LOGW(TAG, "Network lost during activation; cooperative cancellation requested");
+    }
+
     // Close current conversation when network disconnected
     auto state = GetDeviceState();
     if (state == kDeviceStateNotifying) {
@@ -412,7 +431,25 @@ void Application::HandleNetworkDisconnectedEvent() {
 }
 
 void Application::HandleActivationDoneEvent() {
-    ESP_LOGI(TAG, "Activation done");
+    ESP_LOGI(TAG, "Activation task completed");
+    // ActivationTask has returned before this event is posted. The task no
+    // longer accesses ota_ or protocol_, so main-loop cleanup is now safe.
+    activation_task_handle_ = nullptr;
+
+    const bool cancelled = g_activation_cancel_requested.exchange(false) ||
+                           !chatai::network::NetworkManager::IsConnected();
+    if (cancelled) {
+        ESP_LOGI(TAG, "Discarding activation result after network loss");
+        protocol_.reset();
+        ota_.reset();
+        last_error_message_.clear();
+        SetDeviceState(kDeviceStateWifiConfiguring);
+        Board::GetInstance().SetPowerSaveLevel(PowerSaveLevel::LOW_POWER);
+        if (chatai::network::NetworkManager::IsConnected()) {
+            xEventGroupSetBits(event_group_, MAIN_EVENT_NETWORK_CONNECTED);
+        }
+        return;
+    }
 
     SystemInfo::PrintHeapStats();
 
@@ -451,17 +488,21 @@ void Application::ActivationTask() {
     // Create OTA object for activation process
     ota_ = std::make_unique<Ota>();
 
-    // Check for new assets version
-    CheckAssetsVersion();
+    if (!IsActivationCancelled()) {
+        // Check for new assets version
+        CheckAssetsVersion();
+    }
 
-    // Check for new firmware version
-    CheckNewVersion();
+    // Check for new firmware version. This routine checks cancellation
+    // between HTTP operations and throughout its retry delays.
+    if (!IsActivationCancelled()) {
+        CheckNewVersion();
+    }
 
-    // Initialize the protocol
-    InitializeProtocol();
-
-    // Signal completion to main loop
-    xEventGroupSetBits(event_group_, MAIN_EVENT_ACTIVATION_DONE);
+    // Never initialize a protocol using an OTA response from a lost network.
+    if (!IsActivationCancelled()) {
+        InitializeProtocol();
+    }
 }
 
 void Application::CheckAssetsVersion() {
@@ -477,10 +518,12 @@ void Application::CheckNewVersion() {
 
     auto& board = Board::GetInstance();
     while (true) {
+        if (IsActivationCancelled()) return;
         auto display = board.GetDisplay();
         display->SetStatus(Lang::Strings::CHECKING_NEW_VERSION);
 
         auto check = ota_->CheckVersion();
+        if (IsActivationCancelled()) return;
         if (!check) {
             retry_count++;
             if (retry_count >= MAX_RETRY) {
@@ -509,8 +552,9 @@ void Application::CheckNewVersion() {
 
             ESP_LOGW(TAG, "Check new version failed, retry in %d seconds (%d/%d)", retry_delay,
                      retry_count, MAX_RETRY);
-            for (int i = 0; i < retry_delay; i++) {
-                vTaskDelay(pdMS_TO_TICKS(1000));
+            for (int i = 0; i < retry_delay * 10; i++) {
+                vTaskDelay(pdMS_TO_TICKS(100));
+                if (IsActivationCancelled()) return;
                 if (GetDeviceState() == kDeviceStateIdle) {
                     break;
                 }
@@ -543,14 +587,17 @@ void Application::CheckNewVersion() {
 
         // This will block the loop until the activation is done or timeout
         for (int i = 0; i < 10; ++i) {
+            if (IsActivationCancelled()) return;
             ESP_LOGI(TAG, "Activating... %d/%d", i + 1, 10);
             esp_err_t err = ota_->Activate();
+            if (IsActivationCancelled()) return;
             if (err == ESP_OK) {
                 break;
-            } else if (err == ESP_ERR_TIMEOUT) {
-                vTaskDelay(pdMS_TO_TICKS(3000));
-            } else {
-                vTaskDelay(pdMS_TO_TICKS(10000));
+            }
+            const int delay_ms = err == ESP_ERR_TIMEOUT ? 3000 : 10000;
+            for (int elapsed = 0; elapsed < delay_ms; elapsed += 100) {
+                vTaskDelay(pdMS_TO_TICKS(100));
+                if (IsActivationCancelled()) return;
             }
             if (GetDeviceState() == kDeviceStateIdle) {
                 break;
