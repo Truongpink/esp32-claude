@@ -333,6 +333,16 @@ void InitializeNimbleTask(void*) {
 }  // namespace
 
 esp_err_t StartScan() {
+    g_last_error.store(ESP_ERR_NOT_SUPPORTED);
+    chatai::diagnostics::Add(
+        "BLE_SCAN", "DISABLED",
+        "temporarily disabled to prioritize Xiaozhi voice stability");
+    chatai::display::SetBluetoothStatus(
+        chatai::display::BluetoothStatus::kError, GetDeviceCount(),
+        ESP_ERR_NOT_SUPPORTED);
+    ESP_LOGW(kTag, "Bluetooth scanning is temporarily disabled");
+    return ESP_ERR_NOT_SUPPORTED;
+
     bool start_now = false;
     {
         std::lock_guard<std::mutex> lock(g_init_mutex);
