@@ -52,6 +52,8 @@ std::atomic<bool> g_has_credentials{false};
 std::atomic<uint8_t> g_reconnect_attempts{0};
 std::atomic<TickType_t> g_next_reconnect_ticks{0};
 std::atomic<bool> g_connected{false};
+std::mutex g_connection_callback_mutex;
+chatai::network::NetworkManager::ConnectionCallback g_connection_callback;
 std::atomic<bool> g_internet_available{false};
 std::atomic<bool> g_provisioning_started{false};
 std::string g_provisioning_ssid;
@@ -67,6 +69,18 @@ std::atomic<TickType_t> g_attempt_started_ticks{0};
 std::mutex g_pending_credentials_mutex;
 std::string g_pending_ssid;
 std::string g_pending_password;
+
+void NotifyConnectionState(bool connected) {
+    chatai::network::NetworkManager::ConnectionCallback callback;
+    {
+        std::lock_guard<std::mutex> lock(g_connection_callback_mutex);
+        callback = g_connection_callback;
+    }
+    if (callback) {
+        callback(connected, connected ? chatai::network::NetworkManager::GetSsid() : std::string{});
+    }
+}
+
 esp_err_t SaveCredentials(const std::string& ssid, const std::string& password);
 esp_err_t StopProvisioning();
 esp_err_t StartProvisioning();
@@ -860,8 +874,9 @@ void EventHandler(void*, esp_event_base_t event_base, int32_t event_id, void* ev
     }
 
     if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_DISCONNECTED) {
-        g_connected.store(false);
+        const bool was_connected = g_connected.exchange(false);
         g_internet_available.store(false);
+        if (was_connected) NotifyConnectionState(false);
         const auto* disconnected = static_cast<const wifi_event_sta_disconnected_t*>(event_data);
         const int reason = disconnected != nullptr ? disconnected->reason : 0;
         if (g_connection_pending.exchange(false)) {
@@ -893,7 +908,8 @@ void EventHandler(void*, esp_event_base_t event_base, int32_t event_id, void* ev
         g_reconnect_attempts.store(0);
         g_next_reconnect_ticks.store(0);
         g_internet_available.store(false);
-        g_connected.store(true);
+        const bool was_connected = g_connected.exchange(true);
+        if (!was_connected) NotifyConnectionState(true);
         ESP_LOGI(kTag, "Wi-Fi received IPv4: " IPSTR " gateway: " IPSTR,
                  IP2STR(&event->ip_info.ip), IP2STR(&event->ip_info.gw));
         chatai::diagnostics::Add("WIFI", "OK", "STA connected and received IPv4 address");
@@ -906,8 +922,9 @@ void EventHandler(void*, esp_event_base_t event_base, int32_t event_id, void* ev
     }
 
     if (event_base == IP_EVENT && event_id == IP_EVENT_STA_LOST_IP) {
-        g_connected.store(false);
+        const bool was_connected = g_connected.exchange(false);
         g_internet_available.store(false);
+        if (was_connected) NotifyConnectionState(false);
         ESP_LOGW(kTag, "Wi-Fi station lost its IPv4 address");
         chatai::diagnostics::Add("WIFI", "FAIL", "station lost IPv4 address");
         if (g_has_credentials.load() && !g_connection_pending.load()) {
@@ -1034,9 +1051,21 @@ esp_err_t NetworkManager::Connect(
     g_connection_pending.store(true);
     g_attempt_started_ticks.store(xTaskGetTickCount());
     g_reconnect_attempts = 0;
-    g_connected.store(false);
+    const bool was_connected = g_connected.exchange(false);
     g_internet_available.store(false);
+    if (was_connected) NotifyConnectionState(false);
     return esp_wifi_connect();
+}
+
+
+void NetworkManager::SetConnectionCallback(ConnectionCallback callback) {
+    {
+        std::lock_guard<std::mutex> lock(g_connection_callback_mutex);
+        g_connection_callback = std::move(callback);
+    }
+    // NetworkManager is initialized before Xiaozhi Application. Replay the
+    // current connected state so activation is not missed on startup.
+    if (IsConnected()) NotifyConnectionState(true);
 }
 
 bool NetworkManager::IsConnected() {

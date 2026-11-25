@@ -1,12 +1,15 @@
 #pragma once
 
 #include <esp_err.h>
+#include <functional>
 #include <string>
 
 namespace chatai::network {
 
 class NetworkManager {
 public:
+    using ConnectionCallback = std::function<void(bool connected, const std::string& ssid)>;
+    static void SetConnectionCallback(ConnectionCallback callback);
     static esp_err_t ClearSavedCredentials();
     static esp_err_t Initialize();
     static esp_err_t Connect(const std::string& ssid, const std::string& password);
