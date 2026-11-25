@@ -8,3 +8,4 @@ dependencies:
   espressif/esp_audio_effects: "~1.3.0"
   espressif/esp-sr: "==2.5.0"
   espressif/mqtt: "1.1.0"
+  78/esp-ml307: "~3.8.2"

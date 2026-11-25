@@ -9,7 +9,7 @@
 #include <led_strip.h>
 
 #include "diagnostic_manager.h"
-#include "gemini_live_client.h"
+#include "chatai_xiaozhi_client.h"
 #include "network_manager.h"
 
 namespace chatai::status_led {
@@ -26,7 +26,7 @@ enum class State : uint8_t {
     kUnknown,
     kBoot,
     kWifiConnecting,
-    kGeminiConnecting,
+    kXiaozhiConnecting,
     kIdle,
     kListening,
     kSpeaking,
@@ -39,11 +39,16 @@ TickType_t s_started_tick = 0;
 
 State ResolveState(TickType_t now) {
     if (now - s_started_tick < kBootDuration) return State::kBoot;
-    if (chatai::gemini::HasError()) return State::kError;
-    if (chatai::gemini::IsSpeaking()) return State::kSpeaking;
-    if (chatai::gemini::IsListening()) return State::kListening;
+    const auto voice_state = chatai::xiaozhi::GetRuntimeState();
+    if (voice_state == chatai::xiaozhi::RuntimeState::kError) return State::kError;
+    if (voice_state == chatai::xiaozhi::RuntimeState::kSpeaking) return State::kSpeaking;
+    if (voice_state == chatai::xiaozhi::RuntimeState::kListening) return State::kListening;
     if (!chatai::network::NetworkManager::IsConnected()) return State::kWifiConnecting;
-    if (!chatai::gemini::IsReady()) return State::kGeminiConnecting;
+    if (!chatai::xiaozhi::IsReady() ||
+        voice_state == chatai::xiaozhi::RuntimeState::kConnecting ||
+        voice_state == chatai::xiaozhi::RuntimeState::kProcessing) {
+        return State::kXiaozhiConnecting;
+    }
     return State::kIdle;
 }
 
@@ -67,7 +72,7 @@ esp_err_t Render(State state, bool visible) {
     switch (state) {
         case State::kBoot:
         case State::kWifiConnecting:
-        case State::kGeminiConnecting:
+        case State::kXiaozhiConnecting:
             blue = kBrightness;
             break;
         case State::kListening:

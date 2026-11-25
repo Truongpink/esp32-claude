@@ -22,6 +22,7 @@
 
 namespace {
 constexpr char kTag[] = "ChatAI";
+bool g_audio_ready = false;
 
 esp_err_t InitializeMdns() {
     esp_err_t result = mdns_init();
@@ -122,7 +123,8 @@ bool InitializePlatform() {
     }
 
     const esp_err_t audio_result = chatai::audio::Initialize();
-    chatai::display::SetAudioReady(audio_result == ESP_OK);
+    g_audio_ready = audio_result == ESP_OK;
+    chatai::display::SetAudioReady(g_audio_ready);
     if (audio_result != ESP_OK) {
         ESP_LOGW(kTag, "Standalone I2S audio unavailable: %s",
                  esp_err_to_name(audio_result));
@@ -189,27 +191,37 @@ extern "C" void app_main(void) {
     }
 #endif
 
+    // The Xiaozhi codec only adapts the existing AudioManager; it never creates I2S.
+    if (!g_audio_ready) {
+        ESP_LOGE(kTag, "Xiaozhi startup skipped: ChatAI AudioManager is unavailable");
+        chatai::diagnostics::Add("XIAOZHI", "INIT_FAILED", "ChatAI AudioManager unavailable");
+        RestartIfOtaImageIsPending();
+        return;
+    }
+
+    // Initialize Application before starting button callbacks that call into it.
+    const esp_err_t xiaozhi_result = chatai::xiaozhi::Initialize();
     const esp_err_t led_result = chatai::status_led::Initialize();
     if (led_result != ESP_OK) {
         ESP_LOGW(kTag, "Status LED unavailable: %s", esp_err_to_name(led_result));
     }
-
-    const esp_err_t buttons_result = chatai::buttons::Initialize();
-    if (buttons_result != ESP_OK) {
-        ESP_LOGW(kTag, "Hardware button initialization failed: %s", esp_err_to_name(buttons_result));
-    }
-
-    // Xiaozhi is the sole voice client. Gemini Live remains fully disabled.
-    const esp_err_t xiaozhi_result = chatai::xiaozhi::Initialize();
     if (xiaozhi_result != ESP_OK) {
-        ESP_LOGE(kTag, "Xiaozhi client initialization failed: %s",
+        ESP_LOGE(kTag, "Xiaozhi Application initialization failed: %s",
                  esp_err_to_name(xiaozhi_result));
         chatai::diagnostics::Add("XIAOZHI", "INIT_FAILED",
                                  esp_err_to_name(xiaozhi_result));
-    } else {
-        chatai::diagnostics::Add("VOICE_CLIENT", "XIAOZHI_ONLY",
-                                 "Gemini Live disabled; Xiaozhi session manager started");
+        RestartIfOtaImageIsPending();
+        return;
     }
 
-    ESP_LOGI(kTag, "ESP-IDF platform, native Wi-Fi, OLED and Xiaozhi startup completed");
+    const esp_err_t buttons_result = chatai::buttons::Initialize();
+    if (buttons_result != ESP_OK) {
+        ESP_LOGW(kTag, "Hardware button initialization failed: %s",
+                 esp_err_to_name(buttons_result));
+    }
+
+    chatai::diagnostics::Add("VOICE_CLIENT", "XIAOZHI_ONLY",
+                             "Xiaozhi Application upstream; ChatAI owns Wi-Fi, I2S, OLED and OTA");
+    ESP_LOGI(kTag, "ChatAI platform initialized; entering Xiaozhi Application event loop");
+    chatai::xiaozhi::Run();
 }
