@@ -65,6 +65,9 @@ std::atomic<int> g_last_tcp_state{-1};
 std::atomic<int> g_wifi_setup_state{0};
 std::atomic<int> g_wifi_disconnect_reason{0};
 std::atomic<bool> g_connection_pending{false};
+// Distinguish the disconnect requested while replacing Wi-Fi credentials
+// from a failure of the new connection attempt.
+std::atomic<bool> g_expected_reconfigure_disconnect{false};
 std::atomic<TickType_t> g_attempt_started_ticks{0};
 std::mutex g_pending_credentials_mutex;
 std::string g_pending_ssid;
@@ -874,6 +877,14 @@ void EventHandler(void*, esp_event_base_t event_base, int32_t event_id, void* ev
     }
 
     if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_DISCONNECTED) {
+        if (g_expected_reconfigure_disconnect.exchange(false)) {
+            const bool was_connected = g_connected.exchange(false);
+            g_internet_available.store(false);
+            if (was_connected) NotifyConnectionState(false);
+            ESP_LOGI(kTag, "Wi-Fi disconnected for credential reconfiguration");
+            return;
+        }
+
         const bool was_connected = g_connected.exchange(false);
         g_internet_available.store(false);
         if (was_connected) NotifyConnectionState(false);
@@ -1038,7 +1049,21 @@ esp_err_t NetworkManager::Connect(
 
     g_has_credentials.store(false);
     g_connection_pending.store(false);
-    esp_wifi_disconnect();
+
+    // esp_wifi_disconnect() emits WIFI_EVENT_STA_DISCONNECTED asynchronously
+    // when the station is associated. Mark that specific event before asking
+    // the driver to disconnect so it cannot be mistaken for rejection of the
+    // credentials that are about to be installed.
+    wifi_ap_record_t current_ap{};
+    const bool was_associated = esp_wifi_sta_get_ap_info(&current_ap) == ESP_OK;
+    if (was_associated) {
+        g_expected_reconfigure_disconnect.store(true);
+    }
+    const esp_err_t disconnect_result = esp_wifi_disconnect();
+    if (disconnect_result != ESP_OK && was_associated) {
+        g_expected_reconfigure_disconnect.store(false);
+    }
+
     esp_err_t result = esp_wifi_set_config(WIFI_IF_STA, &config);
     if (result != ESP_OK) return result;
     {
