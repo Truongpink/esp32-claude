@@ -1,5 +1,10 @@
 #include "chatai_xiaozhi_audio_codec.h"
 
+#include "diagnostic_manager.h"
+
+#include <cstdio>
+#include <esp_err.h>
+
 #include <algorithm>
 #include <utility>
 
@@ -61,7 +66,16 @@ void ChatAIXiaozhiAudioCodec::EnableOutput(bool enable) {
 }
 
 void ChatAIXiaozhiAudioCodec::OutputData(std::vector<int16_t>& data) {
-    last_error_.store(bridge_.OutputData(data));
+    const esp_err_t result = bridge_.OutputData(data);
+    last_error_.store(result);
+    const esp_err_t previous = last_output_error_.exchange(result);
+    if (result != ESP_OK && previous != result) {
+        char detail[112]{};
+        std::snprintf(detail, sizeof(detail), "err=%s(%d) samples=%u",
+                      esp_err_to_name(result), static_cast<int>(result),
+                      static_cast<unsigned>(data.size()));
+        chatai::diagnostics::Add("AUDIO_OUTPUT", "ERROR", detail);
+    }
 }
 
 bool ChatAIXiaozhiAudioCodec::InputData(std::vector<int16_t>& data) {
