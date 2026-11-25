@@ -42,6 +42,8 @@ constexpr uint32_t kRetryDelayMs = 15000;
 constexpr uint32_t kHelloTimeoutMs = 12000;
 constexpr uint32_t kOneShotSilenceMs = 650;
 constexpr uint32_t kListenStopRetryMs = 300;
+constexpr uint32_t kTurnPendingTimeoutMs = 30000;
+constexpr uint32_t kMqttReconnectGraceMs = 6000;
 constexpr size_t kUdpHeaderSize = 16;
 constexpr size_t kMaxUdpPacketSize = 1500;
 constexpr EventBits_t kHelloReceived = 1 << 0;
@@ -319,15 +321,56 @@ private:
                     active_transport_ == Transport::kMqttUdp
                         ? "MQTT control and encrypted UDP audio channel ready"
                         : "WebSocket control and Opus audio channel ready");
-                while (session_ready_.load() && IsTransportConnected() &&
+                int64_t mqtt_disconnect_started_us = 0;
+                while (session_ready_.load() &&
                        chatai::network::NetworkManager::IsConnected()) {
                     const EventBits_t bits = xEventGroupWaitBits(
                         events_, kServerEnded, pdFALSE, pdFALSE,
                         pdMS_TO_TICKS(500));
                     if (bits & kServerEnded) break;
-                    // Re-apply capture ownership periodically. This retries I2S
-                    // microphone enable if a transient driver error occurred.
-                    UpdateListeningState();
+
+                    const bool transport_connected = IsTransportConnected();
+                    if (!transport_connected) {
+                        if (active_transport_ != Transport::kMqttUdp) break;
+                        if (mqtt_disconnect_started_us == 0) {
+                            mqtt_disconnect_started_us = esp_timer_get_time();
+                            audio_.SetCaptureEnabled(false);
+                            chatai::diagnostics::Add("XIAOZHI_MQTT", "RECONNECT_WAIT",
+                                "grace_ms=6000; microphone_capture_paused");
+                        } else if (esp_timer_get_time() - mqtt_disconnect_started_us >=
+                                   static_cast<int64_t>(kMqttReconnectGraceMs) * 1000) {
+                            chatai::diagnostics::Add("XIAOZHI_MQTT", "RECONNECT_TIMEOUT",
+                                "broker did not reconnect within 6000 ms");
+                            break;
+                        }
+                    } else if (mqtt_disconnect_started_us != 0) {
+                        mqtt_disconnect_started_us = 0;
+                        chatai::diagnostics::Add("XIAOZHI_MQTT", "RECONNECTED",
+                            "broker reconnected and response topic subscription acknowledged");
+                        audio_.SetCaptureEnabled(IsListening() && !tts_active_.load());
+                    }
+
+                    if (turn_pending_.load() && !vad_speaking_.load()) {
+                        int64_t expired_speech_end_us = speech_ended_us_.load();
+                        const int64_t now_us = esp_timer_get_time();
+                        if (expired_speech_end_us > 0 &&
+                            now_us - expired_speech_end_us >=
+                                static_cast<int64_t>(kTurnPendingTimeoutMs) * 1000 &&
+                            speech_ended_us_.compare_exchange_strong(
+                                expired_speech_end_us, 0) &&
+                            !vad_speaking_.load()) {
+                            turn_pending_.store(false);
+                            if (speech_ended_us_.load() > 0) {
+                                turn_pending_.store(true);
+                            } else {
+                                chatai::diagnostics::Add("VOICE_LATENCY", "TURN_TIMEOUT",
+                                    "pending turn cleared after 30000 ms without TTS start");
+                            }
+                        }
+                    }
+
+                    // Re-apply capture ownership while the transport is available.
+                    if (transport_connected) UpdateListeningState();
                 }
                 const EventBits_t end_bits = xEventGroupGetBits(events_);
                 const bool server_ended = (end_bits & kServerEnded) != 0;
