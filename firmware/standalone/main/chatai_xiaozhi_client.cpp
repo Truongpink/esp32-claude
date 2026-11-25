@@ -359,7 +359,6 @@ private:
                             speech_ended_us_.compare_exchange_strong(
                                 expired_speech_end_us, 0)) {
                             const bool newer_speech_active =
-                                vad_speaking_.load() ||
                                 speech_started_us_.load() > expired_speech_end_us;
                             if (!newer_speech_active && turn_pending_.exchange(false)) {
                                 chatai::diagnostics::Add("VOICE_LATENCY", "TURN_TIMEOUT",
