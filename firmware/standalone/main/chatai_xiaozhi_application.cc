@@ -38,6 +38,7 @@ uint8_t g_protocol_start_retry_count = 0;
 // cooperative stop; the main task performs cleanup after completion.
 std::atomic<bool> g_activation_cancel_requested{false};
 
+std::atomic<bool> g_turn_started{false};
 std::atomic<int64_t> g_turn_vad_end_us{0};
 std::atomic<int64_t> g_turn_last_uplink_us{0};
 std::atomic<int64_t> g_turn_first_tts_us{0};
@@ -160,6 +161,7 @@ void Application::Initialize() {
     };
     callbacks.on_vad_change = [this](bool speaking) {
         if (speaking) {
+            g_turn_started.store(true);
             g_turn_vad_end_us.store(0);
             g_turn_last_uplink_us.store(0);
             g_turn_first_tts_us.store(0);
@@ -173,6 +175,7 @@ void Application::Initialize() {
         const int64_t first_tts_us = g_turn_first_tts_us.load();
         if (first_tts_us > 0 && !g_turn_latency_logged.exchange(true)) {
             LogVoiceTurnLatency(esp_timer_get_time());
+            g_turn_started.store(false);
         }
     };
     callbacks.on_playback_drained = [this]() {
@@ -349,7 +352,7 @@ void Application::Run() {
         if (bits & MAIN_EVENT_SEND_AUDIO) {
             while (auto packet = audio_service_.PopPacketFromSendQueue()) {
                 const bool sent = protocol_ && protocol_->SendAudio(std::move(packet));
-                if (sent && g_turn_vad_end_us.load() > 0) {
+                if (sent && g_turn_started.load()) {
                     g_turn_last_uplink_us.store(esp_timer_get_time());
                 }
                 if (!sent) {
