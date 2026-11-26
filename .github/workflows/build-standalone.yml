@@ -2,12 +2,6 @@ name: Build ChatAI TPIOS standalone firmware
 
 on:
   workflow_dispatch:
-    inputs:
-      publish_release:
-        description: "Phát hành GitHub Release chính thức"
-        required: true
-        type: boolean
-        default: false
 
 concurrency:
   group: chatai-tpios-standalone-build
@@ -117,7 +111,6 @@ jobs:
           retention-days: 30
 
       - name: Publish official firmware release
-        if: ${{ inputs.publish_release == true }}
         env:
           GH_TOKEN: ${{ github.token }}
           BUILD_NUMBER: ${{ steps.version.outputs.build_number }}
