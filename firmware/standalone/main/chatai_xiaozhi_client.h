@@ -14,4 +14,5 @@ void SetPushToTalk(bool pressed);
 bool IsListening();
 RuntimeState GetRuntimeState();
 BootAction HandleBootToggle();
+AudioUplinkDiagnostics GetAudioUplinkDiagnostics();
 }  // namespace chatai::xiaozhi
