@@ -66,10 +66,10 @@ target_compile_definitions(${COMPONENT_LIB} PRIVATE
     CONFIG_USE_SERVER_AEC=0
     CONFIG_USE_AUDIO_DEBUGGER=0
     CONFIG_SEND_WAKE_WORD_DATA=0
-    "BOARD_TYPE=\\\"wifi\\\""
-    "BOARD_NAME=\\\"ChatAI TPIOS\\\""
-    "BOARD_MANUFACTURER=\\\"TPIOS\\\""
-    "CONFIG_OTA_URL=\\\"https://api.tenclass.net/xiaozhi/ota/\\\""
+    "BOARD_TYPE=\"wifi\""
+    "BOARD_NAME=\"ChatAI TPIOS\""
+    "BOARD_MANUFACTURER=\"TPIOS\""
+    "CONFIG_OTA_URL=\"https://api.tenclass.net/xiaozhi/ota/\""
 )
 
 # ESP-IDF 6.1 adds fields to esp_timer_create_args_t; the pinned upstream
