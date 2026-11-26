@@ -183,7 +183,7 @@ This table records representative milestones from Git history. Use the full Git 
 
 | Date (UTC) | Commit (short SHA) | Milestone |
 |---|---|---|
-| Nov 21 | `c5c21f9d3a46` | Pin Xiaozhi v2.6.0 source for Chat Voice integration |
+| Nov 22 | `c5c21f9d3a46` | Pin Xiaozhi v2.6.0 source for Chat Voice integration |
 | Nov 22 | `03cd35303e5e` | Add standalone Xiaozhi codec bridge |
 | Nov 22 | `0338864344a3` | Introduce independent PCM interface |
 | Nov 22 | `b1d463d421c3` | Add Xiaozhi codec adapter for ChatAI I2S |
