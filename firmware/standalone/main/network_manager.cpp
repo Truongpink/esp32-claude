@@ -1088,7 +1088,25 @@ esp_err_t NetworkManager::Connect(
     const bool was_connected = g_connected.exchange(false);
     g_internet_available.store(false);
     if (was_connected) NotifyConnectionState(false);
-    return esp_wifi_connect();
+
+    const esp_err_t connect_result = esp_wifi_connect();
+    if (connect_result != ESP_OK) {
+        g_connection_pending.store(false);
+        g_wifi_setup_state.store(4);
+        chatai::diagnostics::Add("WIFI", "FAIL",
+                                 "Wi-Fi connect request rejected by driver");
+        chatai::display::Notify("WI-FI", "Khong the bat dau ket noi");
+
+        // A synchronous driver error does not guarantee a later
+        // WIFI_EVENT_STA_DISCONNECTED callback. Restore setup access here.
+        const esp_err_t ap_result = StartProvisioning();
+        if (ap_result != ESP_OK) {
+            ESP_LOGE(kTag, "Could not start Wi-Fi setup AP after connect request failure: %s",
+                     esp_err_to_name(ap_result));
+        }
+        return connect_result;
+    }
+    return ESP_OK;
 }
 
 
