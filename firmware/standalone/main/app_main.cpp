@@ -167,29 +167,6 @@ extern "C" void app_main(void) {
             chatai::settings::ConsumePendingFirmwareRollback(boot_partition->address);
     }
 
-#if CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE
-    const esp_partition_t* running = esp_ota_get_running_partition();
-    esp_ota_img_states_t image_state;
-    if (running != nullptr &&
-        esp_ota_get_state_partition(running, &image_state) == ESP_OK &&
-        image_state == ESP_OTA_IMG_PENDING_VERIFY) {
-        const esp_err_t validation_result = esp_ota_mark_app_valid_cancel_rollback();
-        if (validation_result != ESP_OK) {
-            ESP_LOGE(kTag, "Could not confirm OTA image: %s",
-                     esp_err_to_name(validation_result));
-            esp_restart();
-            return;
-        }
-        ota_image_confirmed = true;
-        ESP_LOGI(kTag, "OTA firmware boot confirmed; rollback cancelled");
-    }
-    if (running != nullptr) {
-        const esp_err_t name_result = chatai::settings::ConfirmPendingFirmwareName(running->address);
-        if (name_result != ESP_OK)
-            ESP_LOGW(kTag, "Could not save confirmed firmware filename: %s",
-                     esp_err_to_name(name_result));
-    }
-#endif
 
     // The Xiaozhi codec only adapts the existing AudioManager; it never creates I2S.
     if (!g_audio_ready) {
@@ -214,6 +191,29 @@ extern "C" void app_main(void) {
         return;
     }
 
+#if CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE
+    const esp_partition_t* running = esp_ota_get_running_partition();
+    esp_ota_img_states_t image_state;
+    if (running != nullptr &&
+        esp_ota_get_state_partition(running, &image_state) == ESP_OK &&
+        image_state == ESP_OTA_IMG_PENDING_VERIFY) {
+        const esp_err_t validation_result = esp_ota_mark_app_valid_cancel_rollback();
+        if (validation_result != ESP_OK) {
+            ESP_LOGE(kTag, "Could not confirm OTA image: %s",
+                     esp_err_to_name(validation_result));
+            esp_restart();
+            return;
+        }
+        ota_image_confirmed = true;
+        ESP_LOGI(kTag, "OTA firmware boot confirmed; rollback cancelled");
+    }
+    if (running != nullptr) {
+        const esp_err_t name_result = chatai::settings::ConfirmPendingFirmwareName(running->address);
+        if (name_result != ESP_OK)
+            ESP_LOGW(kTag, "Could not save confirmed firmware filename: %s",
+                     esp_err_to_name(name_result));
+    }
+#endif
     const esp_err_t buttons_result = chatai::buttons::Initialize();
     if (buttons_result != ESP_OK) {
         ESP_LOGW(kTag, "Hardware button initialization failed: %s",
