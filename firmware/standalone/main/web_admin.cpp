@@ -1547,6 +1547,24 @@ esp_err_t DiagnosticsDownloadHandler(httpd_req_t* request) {
     return httpd_resp_send(request, log.c_str(), log.size());
 }
 
+esp_err_t AudioUplinkDiagnosticsHandler(httpd_req_t* request) {
+    const auto stats = chatai::xiaozhi::GetAudioUplinkDiagnostics();
+    char body[256]{};
+    std::snprintf(body, sizeof(body),
+                  "{\"available\":%s,\"pcm_frames_queued\":%lu,"
+                  "\"opus_frames_encoded\":%lu,\"encode_failures\":%lu,"
+                  "\"encode_queue_drops\":%lu,\"send_queue_drops\":%lu}",
+                  stats.available ? "true" : "false",
+                  static_cast<unsigned long>(stats.pcm_frames_queued),
+                  static_cast<unsigned long>(stats.opus_frames_encoded),
+                  static_cast<unsigned long>(stats.encode_failures),
+                  static_cast<unsigned long>(stats.encode_queue_drops),
+                  static_cast<unsigned long>(stats.send_queue_drops));
+    httpd_resp_set_type(request, "application/json; charset=utf-8");
+    SetNoStore(request);
+    return httpd_resp_sendstr(request, body);
+}
+
 esp_err_t DiagnosticsClearHandler(httpd_req_t* request) {
     if (!IsAuthorizedMutation(request)) {
         return SendError(request, "403 Forbidden", "Yêu cầu không hợp lệ");
@@ -2023,6 +2041,11 @@ esp_err_t RegisterRoutes(httpd_handle_t server, const std::string& csrf_token) {
     diagnostics_download_uri.method = HTTP_GET;
     diagnostics_download_uri.handler = DiagnosticsDownloadHandler;
 
+    httpd_uri_t audio_uplink_diagnostics_uri{};
+    audio_uplink_diagnostics_uri.uri = "/api/diagnostics/audio-uplink";
+    audio_uplink_diagnostics_uri.method = HTTP_GET;
+    audio_uplink_diagnostics_uri.handler = AudioUplinkDiagnosticsHandler;
+
     httpd_uri_t diagnostics_clear_uri{};
     diagnostics_clear_uri.uri = "/api/diagnostics/clear";
     diagnostics_clear_uri.method = HTTP_POST;
@@ -2069,6 +2092,7 @@ esp_err_t RegisterRoutes(httpd_handle_t server, const std::string& csrf_token) {
     if (result == ESP_OK) result = httpd_register_uri_handler(server, &delete_uri);
     if (result == ESP_OK) result = httpd_register_uri_handler(server, &diagnostics_uri);
     if (result == ESP_OK) result = httpd_register_uri_handler(server, &diagnostics_download_uri);
+    if (result == ESP_OK) result = httpd_register_uri_handler(server, &audio_uplink_diagnostics_uri);
     if (result == ESP_OK) result = httpd_register_uri_handler(server, &diagnostics_clear_uri);
     if (result == ESP_OK) result = httpd_register_uri_handler(server, &bluetooth_status_uri);
     if (result == ESP_OK) result = httpd_register_uri_handler(server, &bluetooth_devices_uri);
