@@ -184,6 +184,20 @@ RuntimeState GetRuntimeState() {
     }
 }
 
+AudioUplinkDiagnostics GetAudioUplinkDiagnostics() {
+    AudioUplinkDiagnostics result{};
+    if (!g_application_initialized.load()) return result;
+
+    const auto stats = Application::GetInstance().GetAudioService().GetUplinkDiagnostics();
+    result.available = true;
+    result.pcm_frames_queued = stats.pcm_frames_queued;
+    result.opus_frames_encoded = stats.opus_frames_encoded;
+    result.encode_failures = stats.encode_failures;
+    result.encode_queue_drops = stats.encode_queue_drops;
+    result.send_queue_drops = stats.send_queue_drops;
+    return result;
+}
+
 BootAction HandleBootToggle() {
     if (!g_application_initialized.load()) return BootAction::kFailed;
     if (g_push_to_talk.load()) return BootAction::kIgnored;
