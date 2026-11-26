@@ -382,6 +382,7 @@ void Application::HandleNetworkConnectedEvent() {
         g_activation_cancel_requested.store(false);
         g_activation_retry_due = 0;
         g_protocol_start_failed.store(false);
+        g_protocol_start_retry_count = 0;
         // A previous protocol-start failure must not poison this new attempt.
         last_error_message_.clear();
         SetDeviceState(kDeviceStateActivating);
