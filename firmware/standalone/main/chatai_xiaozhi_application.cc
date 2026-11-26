@@ -15,6 +15,7 @@
 
 #include <driver/gpio.h>
 #include <esp_log.h>
+#include <esp_timer.h>
 #include <arpa/inet.h>
 #include <cJSON.h>
 #include <algorithm>
@@ -36,6 +37,29 @@ uint8_t g_protocol_start_retry_count = 0;
 // Activation owns ota_ until it signals completion. Network loss requests a
 // cooperative stop; the main task performs cleanup after completion.
 std::atomic<bool> g_activation_cancel_requested{false};
+
+std::atomic<int64_t> g_turn_vad_end_us{0};
+std::atomic<int64_t> g_turn_last_uplink_us{0};
+std::atomic<int64_t> g_turn_first_tts_us{0};
+std::atomic<bool> g_turn_latency_logged{false};
+
+void LogVoiceTurnLatency(int64_t speaker_start_us) {
+    const int64_t vad_end_us = g_turn_vad_end_us.load();
+    const int64_t last_uplink_us = g_turn_last_uplink_us.load();
+    const int64_t first_tts_us = g_turn_first_tts_us.load();
+    if (vad_end_us <= 0 || first_tts_us <= 0 || speaker_start_us < first_tts_us) return;
+    const auto ms = [](int64_t delta_us) -> long long {
+        return delta_us >= 0 ? delta_us / 1000 : -1;
+    };
+    ESP_LOGI(TAG,
+             "VOICE_TURN vad_to_last_uplink_ms=%lld uplink_to_first_tts_ms=%lld "
+             "vad_to_first_tts_ms=%lld tts_to_speaker_ms=%lld vad_to_speaker_ms=%lld",
+             ms(last_uplink_us - vad_end_us),
+             ms(first_tts_us - last_uplink_us),
+             ms(first_tts_us - vad_end_us),
+             ms(speaker_start_us - first_tts_us),
+             ms(speaker_start_us - vad_end_us));
+}
 
 bool IsActivationCancelled() {
     return g_activation_cancel_requested.load() ||
@@ -135,7 +159,21 @@ void Application::Initialize() {
         xEventGroupSetBits(event_group_, MAIN_EVENT_WAKE_WORD_DETECTED);
     };
     callbacks.on_vad_change = [this](bool speaking) {
+        if (speaking) {
+            g_turn_vad_end_us.store(0);
+            g_turn_last_uplink_us.store(0);
+            g_turn_first_tts_us.store(0);
+            g_turn_latency_logged.store(false);
+        } else {
+            g_turn_vad_end_us.store(esp_timer_get_time());
+        }
         xEventGroupSetBits(event_group_, MAIN_EVENT_VAD_CHANGE);
+    };
+    callbacks.on_playback_started = []() {
+        const int64_t first_tts_us = g_turn_first_tts_us.load();
+        if (first_tts_us > 0 && !g_turn_latency_logged.exchange(true)) {
+            LogVoiceTurnLatency(esp_timer_get_time());
+        }
     };
     callbacks.on_playback_drained = [this]() {
         xEventGroupSetBits(event_group_, MAIN_EVENT_PLAYBACK_DRAINED);
@@ -310,7 +348,11 @@ void Application::Run() {
 
         if (bits & MAIN_EVENT_SEND_AUDIO) {
             while (auto packet = audio_service_.PopPacketFromSendQueue()) {
-                if (protocol_ && !protocol_->SendAudio(std::move(packet))) {
+                const bool sent = protocol_ && protocol_->SendAudio(std::move(packet));
+                if (sent && g_turn_vad_end_us.load() > 0) {
+                    g_turn_last_uplink_us.store(esp_timer_get_time());
+                }
+                if (!sent) {
                     // Drop the remaining packets. Leaving them in the queue would
                     // stall the Opus codec task (it waits for queue space), which in
                     // turn deadlocks the whole audio input pipeline, as no new
@@ -656,6 +698,8 @@ void Application::InitializeProtocol() {
 
     protocol_->OnIncomingAudio([this](std::unique_ptr<AudioStreamPacket> packet) {
         if (GetDeviceState() == kDeviceStateSpeaking) {
+            int64_t expected = 0;
+            g_turn_first_tts_us.compare_exchange_strong(expected, esp_timer_get_time());
             audio_service_.PushPacketToDecodeQueue(std::move(packet));
         }
     });
