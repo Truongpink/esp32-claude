@@ -40,6 +40,7 @@ idf_component_register(
          "button_manager.cpp" "gemini_settings.cpp"
          "web_admin.cpp" "diagnostic_manager.cpp" "status_led_manager.cpp"
          "${XIAOZHI_DIR}/main/boards/common/board.cc"
+         "${XIAOZHI_DIR}/main/boards/common/backlight.cc"
          "${XIAOZHI_DIR}/main/settings.cc"
          "${XIAOZHI_DIR}/main/system_info.cc"
          "${XIAOZHI_DIR}/main/ota.cc"
