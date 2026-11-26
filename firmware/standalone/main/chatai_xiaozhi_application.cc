@@ -597,8 +597,8 @@ void Application::CheckNewVersion() {
                      ota_->GetFirmwareVersion().c_str());
         }
 
-        // No new version, mark the current version as valid
-        ota_->MarkCurrentVersionValid();
+        // Bootloader OTA confirmation is owned by app_main after ChatAI and
+        // Xiaozhi Application initialization; do not confirm it from this retry task.
         if (!ota_->HasActivationCode() && !ota_->HasActivationChallenge()) {
             // Exit the loop if done checking new version
             break;
