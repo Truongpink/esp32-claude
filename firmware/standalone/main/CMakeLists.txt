@@ -55,7 +55,7 @@ idf_component_register(
                  "${XIAOZHI_DIR}/main/display" "${XIAOZHI_DIR}/main/protocols"
     REQUIRES app_update spi_flash nvs_flash esp_event esp_netif esp_wifi lwip esp_http_server
              esp_http_client http_parser mdns esp_driver_i2c esp_driver_i2s esp_driver_gpio
-             esp_driver_rmt esp_websocket_client esp_audio_codec esp_audio_effects esp-sr mqtt
+             esp_driver_rmt esp_driver_ledc esp_websocket_client esp_audio_codec esp_audio_effects esp-sr mqtt
              freertos mbedtls esp_timer esp-tls led_strip spiffs esp_psram esp_pm
              esp_app_format efuse pthread esp-ml307
 )
