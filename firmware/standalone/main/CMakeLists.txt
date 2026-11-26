@@ -66,11 +66,21 @@ target_compile_definitions(${COMPONENT_LIB} PRIVATE
     CONFIG_USE_SERVER_AEC=0
     CONFIG_USE_AUDIO_DEBUGGER=0
     CONFIG_SEND_WAKE_WORD_DATA=0
-    "BOARD_TYPE=\"wifi\""
-    "BOARD_NAME=\"ChatAI TPIOS\""
-    "BOARD_MANUFACTURER=\"TPIOS\""
-    "CONFIG_OTA_URL=\"https://api.tenclass.net/xiaozhi/ota/\""
+    "BOARD_TYPE=\\\"wifi\\\""
+    "BOARD_NAME=\\\"ChatAI TPIOS\\\""
+    "BOARD_MANUFACTURER=\\\"TPIOS\\\""
+    "CONFIG_OTA_URL=\\\"https://api.tenclass.net/xiaozhi/ota/\\\""
 )
+
+# ESP-IDF 6.1 adds fields to esp_timer_create_args_t; the pinned upstream
+# MQTT source intentionally leaves optional fields zero-initialized. Keep
+# -Werror for the rest of the component, but don't promote this warning in
+# that upstream translation unit.
+set_source_files_properties(
+    "${XIAOZHI_DIR}/main/protocols/mqtt_protocol.cc"
+    PROPERTIES COMPILE_OPTIONS "-Wno-error=missing-field-initializers"
+)
+
 target_compile_options(${COMPONENT_LIB} PRIVATE $<$<COMPILE_LANGUAGE:CXX>:-std=gnu++23>)
 
 add_custom_command(
