@@ -8,6 +8,9 @@ if(NOT CHATAI_FIRMWARE_BUILD MATCHES "^[0-9]+$")
 endif()
 
 set(XIAOZHI_DIR "${CMAKE_CURRENT_LIST_DIR}/../third_party/xiaozhi-esp32")
+
+# Apply the ChatAI-maintained UTC clock fix to the pinned Xiaozhi source before compilation.
+include("${CMAKE_CURRENT_LIST_DIR}/patch_xiaozhi_ota_time.cmake")
 set(LANG_DIR "vi-VN")
 set(LANG_JSON "${XIAOZHI_DIR}/main/assets/locales/${LANG_DIR}/language.json")
 set(LANG_HEADER "${XIAOZHI_DIR}/main/assets/lang_config.h")
