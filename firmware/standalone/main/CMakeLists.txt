@@ -73,12 +73,12 @@ target_compile_definitions(${COMPONENT_LIB} PRIVATE
     "CONFIG_OTA_URL=\"https://api.tenclass.net/xiaozhi/ota/\""
 )
 
-# ESP-IDF 6.1 adds fields to esp_timer_create_args_t; the pinned upstream
-# MQTT source intentionally leaves optional fields zero-initialized. Keep
-# -Werror for the rest of the component, but don't promote this warning in
-# that upstream translation unit.
+# ESP-IDF 6.1 adds optional fields to upstream timer and LEDC config
+# structs. Keep -Werror for ChatAI and other diagnostics, but don't promote
+# these upstream aggregate-initializer warnings in the affected translation units.
 set_source_files_properties(
     "${XIAOZHI_DIR}/main/protocols/mqtt_protocol.cc"
+    "${XIAOZHI_DIR}/main/boards/common/backlight.cc"
     PROPERTIES COMPILE_OPTIONS "-Wno-error=missing-field-initializers"
 )
 
