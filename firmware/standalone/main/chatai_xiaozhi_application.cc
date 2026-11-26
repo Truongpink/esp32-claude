@@ -30,6 +30,9 @@ std::atomic<bool> g_application_initialized{false};
 namespace {
 // Retry activation task creation after a short delay if FreeRTOS cannot allocate it.
 TickType_t g_activation_retry_due = 0;
+// Retry only synchronous protocol startup failures, not runtime transport errors.
+std::atomic<bool> g_protocol_start_failed{false};
+uint8_t g_protocol_start_retry_count = 0;
 // Activation owns ota_ until it signals completion. Network loss requests a
 // cooperative stop; the main task performs cleanup after completion.
 std::atomic<bool> g_activation_cancel_requested{false};
@@ -263,6 +266,7 @@ void Application::Run() {
         }
 
         if (bits & MAIN_EVENT_NETWORK_DISCONNECTED) {
+            g_activation_retry_due = 0;
             HandleNetworkDisconnectedEvent();
         }
 
@@ -377,6 +381,7 @@ void Application::HandleNetworkConnectedEvent() {
         // A fresh activation starts only after the previous task has completed.
         g_activation_cancel_requested.store(false);
         g_activation_retry_due = 0;
+        g_protocol_start_failed.store(false);
         // A previous protocol-start failure must not poison this new attempt.
         last_error_message_.clear();
         SetDeviceState(kDeviceStateActivating);
@@ -462,7 +467,22 @@ void Application::HandleActivationDoneEvent() {
     // the protocol initialized successfully; WifiConfiguring keeps IsReady()
     // false and allows a later network-connected event to retry activation.
     const bool has_error = !last_error_message_.empty();
+    const bool protocol_start_failed = g_protocol_start_failed.exchange(false);
+    if (!has_error) {
+        g_protocol_start_retry_count = 0;
+    }
     SetDeviceState(has_error ? kDeviceStateWifiConfiguring : kDeviceStateIdle);
+    if (has_error && protocol_start_failed && g_protocol_start_retry_count < 3 &&
+        chatai::network::NetworkManager::IsConnected()) {
+        const uint32_t delay_ms = 5000u << g_protocol_start_retry_count;
+        ++g_protocol_start_retry_count;
+        g_activation_retry_due = xTaskGetTickCount() + pdMS_TO_TICKS(delay_ms);
+        ESP_LOGW(TAG, "Protocol startup retry %u/3 scheduled in %lu ms",
+                 static_cast<unsigned>(g_protocol_start_retry_count),
+                 static_cast<unsigned long>(delay_ms));
+    } else if (has_error && protocol_start_failed) {
+        ESP_LOGE(TAG, "Protocol startup retry limit reached; waiting for network reconnection");
+    }
     if (!startup_completed_) {
         startup_completed_ = true;
         pending_startup_wake_word_hint_ = !has_error;
@@ -803,6 +823,7 @@ void Application::InitializeProtocol() {
     });
 
     if (!protocol_->Start()) {
+        g_protocol_start_failed.store(true);
         ESP_LOGE(TAG, "Xiaozhi protocol failed to start");
         if (last_error_message_.empty()) {
             last_error_message_ = Lang::Strings::SERVER_NOT_CONNECTED;
