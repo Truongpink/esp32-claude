@@ -20,6 +20,7 @@ set(_xiaozhi_ota_new [=[
             // timezone to the system clock; localtime_r() handles UTC+7.
             struct timeval tv;
             const double ts = timestamp->valuedouble;
+            (void)timezone_offset;  // Offset is for display only; system time remains UTC.
 
             tv.tv_sec = (time_t)(ts / 1000);
 ]=])
