@@ -584,7 +584,7 @@ void Application::CheckNewVersion() {
                     break;
                 }
             }
-            retry_delay *= 2;  // Double the retry delay
+            retry_delay = std::min(retry_delay * 2, 60);  // Cap retry delay at 60 seconds
             continue;
         }
         retry_count = 0;
