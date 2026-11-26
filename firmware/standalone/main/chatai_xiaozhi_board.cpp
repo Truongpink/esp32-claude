@@ -1,4 +1,5 @@
 #include "board.h"
+#include "display.h"
 
 #include "chatai_xiaozhi_audio_codec.h"
 #include "network_manager.h"
