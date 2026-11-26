@@ -105,7 +105,12 @@ bool ShouldKeepDiagnostic(const char* stage, const char* result) {
     if (std::strcmp(stage, "VOICE_LATENCY") == 0 ||
         std::strcmp(stage, "XIAOZHI_TTS") == 0 ||
         std::strcmp(stage, "XIAOZHI_LISTEN") == 0 ||
-        std::strcmp(stage, "AFE_CAPTURE") == 0) {
+        std::strcmp(stage, "AFE_CAPTURE") == 0 ||
+        std::strcmp(stage, "AFE") == 0 ||
+        std::strcmp(stage, "MIC_IO") == 0 ||
+        std::strcmp(stage, "MIC_LEVEL") == 0 ||
+        std::strcmp(stage, "MIC_RAW") == 0 ||
+        std::strcmp(stage, "MIC_VAD") == 0) {
         return true;
     }
     if (std::strncmp(stage, "BLE_", 4) == 0 ||
