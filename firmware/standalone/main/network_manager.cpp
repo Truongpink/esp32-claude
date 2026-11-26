@@ -793,7 +793,7 @@ esp_err_t StartHttpServer() {
         g_http_server = nullptr;
     } else {
         chatai::diagnostics::Add("HTTP_SERVER", "ROUTES_READY",
-                                 "registered=27 uri_limit=28 (base=5 admin=22)");
+                                 "registered=28 uri_limit=28 (base=5 admin=23)");
     }
     return result;
 }
