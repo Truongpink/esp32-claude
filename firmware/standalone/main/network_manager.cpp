@@ -798,7 +798,7 @@ esp_err_t WifiStatusHandler(httpd_req_t* request) {
 esp_err_t StartHttpServer() {
     if (g_http_server != nullptr) return ESP_OK;
     httpd_config_t config = HTTPD_DEFAULT_CONFIG();
-    config.max_uri_handlers = 30;
+    config.max_uri_handlers = 40;
     config.lru_purge_enable = true;
     config.uri_match_fn = httpd_uri_match_wildcard;
 
@@ -860,7 +860,7 @@ esp_err_t StartHttpServer() {
         g_http_server = nullptr;
     } else {
         chatai::diagnostics::Add("HTTP_SERVER", "ROUTES_READY",
-                                 "registered=28 uri_limit=28 (base=5 admin=23)");
+                                 "registered=32 uri_limit=40 (base=5 admin=27)");
     }
     return result;
 }
