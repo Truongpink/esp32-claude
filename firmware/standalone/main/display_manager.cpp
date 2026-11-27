@@ -35,6 +35,7 @@ constexpr size_t kPages = 8;
 constexpr int kGlyphWidth = 8;
 constexpr int kGlyphHeight = 12;
 constexpr int kFooterY = 52;
+constexpr TickType_t kScrollStepTicks = pdMS_TO_TICKS(120);
 
 i2c_master_bus_handle_t g_bus = nullptr;
 i2c_master_dev_handle_t g_display = nullptr;
@@ -52,7 +53,9 @@ std::atomic<int64_t> g_bluetooth_status_until_us{0};
 std::array<uint8_t, kWidth * kPages> g_frame{};
 std::array<uint8_t, kWidth * kPages> g_last_flushed_frame{};
 bool g_frame_flushed = false;
-char g_footer[24] = "IP: WAIT";
+char g_footer[96] = "CHATAI TPIOS - WIFI WAIT - SERVER WAIT";
+int g_footer_x = -static_cast<int>(sizeof("CHATAI TPIOS - WIFI WAIT - SERVER WAIT") - 1) * kGlyphWidth;
+TickType_t g_last_scroll_tick = 0;
 
 uint32_t DecodeUtf8(std::string_view text, size_t& offset) {
     const auto first = static_cast<uint8_t>(text[offset++]);
@@ -309,10 +312,14 @@ void UpdateFooter() {
         ? chatai::network::NetworkManager::GetIpAddress()
         : std::string{};
     const bool has_ip = !ip_address.empty() && ip_address != "0.0.0.0";
+    const bool server_ready = chatai::xiaozhi::IsReady();
     char next[sizeof(g_footer)]{};
-    std::snprintf(next, sizeof(next), "IP: %s",
-                  has_ip ? ip_address.c_str() : "WAIT");
+    std::snprintf(next, sizeof(next), "CHATAI TPIOS - IP: %s - SERVER %s",
+                  has_ip ? ip_address.c_str() : "WAIT",
+                  server_ready ? "READY" : "WAIT");
+    if (std::strcmp(next, g_footer) == 0) return;
     std::snprintf(g_footer, sizeof(g_footer), "%s", next);
+    g_footer_x = -TextWidth(g_footer);
 }
 
 const char* StatusText(chatai::xiaozhi::RuntimeState state) {
@@ -415,26 +422,32 @@ void RenderStatus() {
         const char* status = !g_audio_ready.load()
             ? "LỖI ÂM THANH"
             : StatusText(chatai::xiaozhi::GetDisplayRuntimeState());
-        // Fixed vertical hierarchy: live state, latest chat line, separator, IP.
-        DrawText((kWidth - TextWidth(status)) / 2, 18, status);
+        DrawText((kWidth - TextWidth(status)) / 2, 20, status);
         if (chat_message[0] != '\0') {
-            const int message_width = TextWidth(chat_message);
-            const int message_x = message_width <= 120 ? (kWidth - message_width) / 2 : 4;
-            DrawText(message_x, 33, chat_message);
+            DrawText((kWidth - TextWidth(chat_message)) / 2, 34, chat_message);
         }
 
-        for (int x = 4; x < kWidth - 4; x += 2) {
-            const int y = 48;
+        for (int x = 0; x < kWidth; x += 2) {
+            const int y = 46;
             g_frame[(y / 8) * kWidth + x] |= static_cast<uint8_t>(1U << (y % 8));
         }
     }
 
-    const int footer_width = TextWidth(g_footer);
-    DrawText((kWidth - footer_width) / 2, kFooterY, g_footer);
+    const TickType_t now = xTaskGetTickCount();
+    if (static_cast<TickType_t>(now - g_last_scroll_tick) >= kScrollStepTicks) {
+        ++g_footer_x;
+        g_last_scroll_tick = now;
+        if (g_footer_x > kWidth) g_footer_x = -TextWidth(g_footer);
+    }
+    DrawText(g_footer_x, kFooterY, g_footer);
 
+    static bool first_frame_logged = false;
     const esp_err_t result = FlushFrame();
     if (result != ESP_OK) {
-        ESP_LOGW(kTag, "OLED refresh failed: %s", esp_err_to_name(result));
+        ESP_LOGE(kTag, "OLED framebuffer transfer failed: %s", esp_err_to_name(result));
+    } else if (!first_frame_logged) {
+        ESP_LOGI(kTag, "OLED first framebuffer transfer completed");
+        first_frame_logged = true;
     }
 }
 
@@ -460,14 +473,22 @@ esp_err_t Initialize() {
     bus_config.flags.enable_internal_pullup = true;
 
     esp_err_t result = i2c_new_master_bus(&bus_config, &g_bus);
-    if (result != ESP_OK) return result;
+    if (result != ESP_OK) {
+        ESP_LOGE(kTag, "I2C bus initialization failed (SDA=%d SCL=%d): %s",
+                 kSdaPin, kSclPin, esp_err_to_name(result));
+        return result;
+    }
 
     i2c_device_config_t device_config{};
     device_config.dev_addr_length = I2C_ADDR_BIT_LEN_7;
     device_config.device_address = kAddress;
     device_config.scl_speed_hz = 400000;
     result = i2c_master_bus_add_device(g_bus, &device_config, &g_display);
-    if (result != ESP_OK) return result;
+    if (result != ESP_OK) {
+        ESP_LOGE(kTag, "SSD1306 I2C device registration failed (address=0x%02X): %s",
+                 kAddress, esp_err_to_name(result));
+        return result;
+    }
 
     const uint8_t initialization[] = {
         0x00, 0xAE, 0xD5, 0x80, 0xA8, 0x3F, 0xD3, 0x00,
@@ -475,11 +496,17 @@ esp_err_t Initialize() {
         0x12, 0x81, 0x7F, 0xD9, 0xF1, 0xDB, 0x40, 0xA6, 0xAF
     };
     result = i2c_master_transmit(g_display, initialization, sizeof(initialization), 250);
-    if (result != ESP_OK) return result;
+    if (result != ESP_OK) {
+        ESP_LOGE(kTag, "SSD1306 initialization command failed (address=0x%02X): %s",
+                 kAddress, esp_err_to_name(result));
+        return result;
+    }
 
     g_initialized = true;
+    g_last_scroll_tick = xTaskGetTickCount();
     if (xTaskCreate(DisplayTask, "chatai_oled", 4096, nullptr, 3, nullptr) != pdPASS) {
         g_initialized = false;
+        ESP_LOGE(kTag, "OLED display task creation failed");
         return ESP_ERR_NO_MEM;
     }
     ESP_LOGI(kTag, "Real-time OLED status initialized on SDA=%d SCL=%d",
