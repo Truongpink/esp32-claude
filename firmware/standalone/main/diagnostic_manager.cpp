@@ -218,7 +218,8 @@ void Clear() {
         g_log.clear();
     }
     ClearCrashContext();
-    std::lock_guard<std::mutex> boot_lock(g_boot_context_mutex);    ClearBootContextLocked();
+    std::lock_guard<std::mutex> boot_lock(g_boot_context_mutex);
+    ClearBootContextLocked();
 }
 
 void SetCrashContext(const char* stage, const char* detail) {
