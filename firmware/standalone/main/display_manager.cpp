@@ -23,6 +23,7 @@
 
 #include "chatai_xiaozhi_client.h"
 #include "network_manager.h"
+#include "diagnostic_manager.h"
 #include "vietnamese_font.h"
 
 namespace {
@@ -40,6 +41,9 @@ constexpr TickType_t kScrollStepTicks = pdMS_TO_TICKS(120);
 i2c_master_bus_handle_t g_bus = nullptr;
 i2c_master_dev_handle_t g_display = nullptr;
 bool g_initialized = false;
+bool g_display_task_started = false;
+bool g_first_full_refresh_logged = false;
+int64_t g_last_init_error_log_us = 0;
 bool g_sntp_started = false;
 bool g_time_synced = false;
 std::atomic<bool> g_audio_ready{false};
@@ -59,6 +63,25 @@ int64_t g_last_i2c_error_log_us = 0;
 char g_footer[96] = "CHATAI TPIOS - WIFI WAIT - SERVER WAIT";
 int g_footer_x = -static_cast<int>(sizeof("CHATAI TPIOS - WIFI WAIT - SERVER WAIT") - 1) * kGlyphWidth;
 TickType_t g_last_scroll_tick = 0;
+
+void LogOled(const char* result, const char* event, const char* detail = nullptr) {
+    char message[192]{};
+    std::snprintf(message, sizeof(message), "%s%s%s",
+                  event != nullptr ? event : "OLED",
+                  detail != nullptr && *detail != '\0' ? " " : "",
+                  detail != nullptr ? detail : "");
+    chatai::diagnostics::Add("OLED", result, message);
+}
+
+void LogOledInitFailure(const char* event, esp_err_t error) {
+    const int64_t now_us = esp_timer_get_time();
+    if (now_us - g_last_init_error_log_us < 5000000) return;
+    g_last_init_error_log_us = now_us;
+    char detail[128]{};
+    std::snprintf(detail, sizeof(detail), "%s error=%s(%d)",
+                  event, esp_err_to_name(error), static_cast<int>(error));
+    LogOled("FAIL", event, detail);
+}
 
 uint32_t DecodeUtf8(std::string_view text, size_t& offset) {
     const auto first = static_cast<uint8_t>(text[offset++]);
@@ -217,8 +240,7 @@ void DrawWifiIcon() {
                 SetPixel(x + column, y + row);
             }
         }
-    }
-}
+    }}
 
 void DrawBatteryIcon() {
     constexpr int x = 108;
@@ -367,6 +389,10 @@ esp_err_t FlushFrame() {
         // Restore SSD1306 configuration in case its controller reset silently.
         const esp_err_t refresh_result = RefreshController();
         if (refresh_result != ESP_OK) return refresh_result;
+        if (!g_first_full_refresh_logged) {
+            LogOled("OK", "OLED_FULL_REFRESH", "controller state reapplied");
+            g_first_full_refresh_logged = true;
+        }
     }
 
     for (uint8_t page = 0; page < kPages; ++page) {
@@ -437,8 +463,7 @@ void RenderStatus() {
         DrawText((kWidth - TextWidth("BLUETOOTH")) / 2, 17, "BLUETOOTH");
         DrawText((kWidth - TextWidth(state_text)) / 2, 29, state_text);
         char device_text[24]{};
-        std::snprintf(device_text, sizeof(device_text), "DEVICES: %u",
-                      static_cast<unsigned>(g_bluetooth_device_count.load()));
+        std::snprintf(device_text, sizeof(device_text), "DEVICES: %u",                      static_cast<unsigned>(g_bluetooth_device_count.load()));
         DrawText((kWidth - TextWidth(device_text)) / 2, 41, device_text);
         if (bluetooth_status == chatai::display::BluetoothStatus::kError) {
             char error_text[20]{};
@@ -483,35 +508,108 @@ void RenderStatus() {
         if (now_us - g_last_i2c_error_log_us >= 5000000) {
             ESP_LOGE(kTag, "OLED framebuffer transfer failed: %s",
                      esp_err_to_name(result));
+            char detail[96]{};
+            std::snprintf(detail, sizeof(detail), "framebuffer transfer error=%s(%d)",
+                          esp_err_to_name(result), static_cast<int>(result));
+            LogOled("FAIL", "OLED_FRAME_TRANSFER", detail);
             g_last_i2c_error_log_us = now_us;
         }
 
         // Recover only the OLED's I2C bus; never restart the ESP32 or audio subsystem.
         if (now_us >= g_next_i2c_recovery_us) {
             g_next_i2c_recovery_us = now_us + 5000000;
+            LogOled("WARN", "OLED_RECOVERY_START", "resetting I2C bus and reinitializing SSD1306");
             const esp_err_t reset_result = i2c_master_bus_reset(g_bus);
             if (reset_result == ESP_OK) {
                 const esp_err_t init_result = InitializeController();
                 if (init_result == ESP_OK) {
                     g_last_full_refresh_us = 0;
+                    g_frame_flushed = false;
+                    LogOled("OK", "OLED_RECOVERY_RESULT", "I2C bus reset and controller initialized");
                     ESP_LOGW(kTag, "OLED I2C bus and SSD1306 controller recovered");
                 } else {
+                    g_initialized = false;
+                    LogOledInitFailure("OLED_RECOVERY_CONTROLLER_FAILED", init_result);
                     ESP_LOGE(kTag, "OLED controller reinitialization failed: %s",
                              esp_err_to_name(init_result));
                 }
             } else {
+                g_initialized = false;
+                LogOledInitFailure("OLED_RECOVERY_BUS_FAILED", reset_result);
                 ESP_LOGE(kTag, "OLED I2C bus recovery failed: %s",
                          esp_err_to_name(reset_result));
             }
         }
     } else if (!first_frame_logged) {
+        LogOled("OK", "OLED_FIRST_FRAME", "128x64 framebuffer transmitted");
         ESP_LOGI(kTag, "OLED first framebuffer transfer completed");
         first_frame_logged = true;
     }
 }
 
+bool InitializeHardware() {
+    if (g_bus == nullptr) {
+        i2c_master_bus_config_t bus_config{};
+        bus_config.i2c_port = I2C_NUM_0;
+        bus_config.sda_io_num = kSdaPin;
+        bus_config.scl_io_num = kSclPin;
+        bus_config.clk_source = I2C_CLK_SRC_DEFAULT;
+        bus_config.glitch_ignore_cnt = 7;
+        bus_config.flags.enable_internal_pullup = true;
+
+        const esp_err_t bus_result = i2c_new_master_bus(&bus_config, &g_bus);
+        if (bus_result != ESP_OK) {
+            LogOledInitFailure("I2C_BUS_INIT_FAILED", bus_result);
+            g_bus = nullptr;
+            return false;
+        }
+        LogOled("OK", "I2C_BUS_READY", "port=I2C_NUM_0 SDA=41 SCL=42");
+    }
+
+    if (g_display == nullptr) {
+        const esp_err_t probe_result = i2c_master_probe(g_bus, kAddress, 100);
+        if (probe_result != ESP_OK) {
+            LogOledInitFailure("OLED_ADDRESS_CHECK_FAILED", probe_result);
+            return false;
+        }
+        LogOled("OK", "OLED_ADDRESS_CHECK", "SSD1306 ACK at 0x3C");
+
+        i2c_device_config_t device_config{};
+        device_config.dev_addr_length = I2C_ADDR_BIT_LEN_7;
+        device_config.device_address = kAddress;
+        device_config.scl_speed_hz = 400000;
+        const esp_err_t add_result =
+            i2c_master_bus_add_device(g_bus, &device_config, &g_display);
+        if (add_result != ESP_OK) {
+            LogOledInitFailure("OLED_DEVICE_REGISTER_FAILED", add_result);
+            g_display = nullptr;
+            return false;
+        }
+    }
+
+    const esp_err_t controller_result = InitializeController();
+    if (controller_result != ESP_OK) {
+        LogOledInitFailure("OLED_CONTROLLER_INIT_FAILED", controller_result);
+        return false;
+    }
+
+    g_initialized = true;
+    g_frame_flushed = false;
+    g_last_full_refresh_us = 0;
+    g_last_scroll_tick = xTaskGetTickCount();
+    LogOled("OK", "OLED_CONTROLLER_INIT", "SSD1306 initialization sequence accepted");
+    LogOled("OK", "OLED_DISPLAY_ON", "SSD1306 command 0xAF transmitted");
+    return true;
+}
+
 void DisplayTask(void*) {
     while (true) {
+        if (!g_initialized) {
+            if (!InitializeHardware()) {
+                vTaskDelay(pdMS_TO_TICKS(2000));
+                continue;
+            }
+        }
         RenderStatus();
         vTaskDelay(pdMS_TO_TICKS(60));
     }
@@ -521,50 +619,18 @@ void DisplayTask(void*) {
 namespace chatai::display {
 
 esp_err_t Initialize() {
-    if (g_initialized) return ESP_OK;
+    if (g_display_task_started) return ESP_OK;
 
-    i2c_master_bus_config_t bus_config{};
-    bus_config.i2c_port = I2C_NUM_0;
-    bus_config.sda_io_num = kSdaPin;
-    bus_config.scl_io_num = kSclPin;
-    bus_config.clk_source = I2C_CLK_SRC_DEFAULT;
-    bus_config.glitch_ignore_cnt = 7;
-    bus_config.flags.enable_internal_pullup = true;
-
-    esp_err_t result = i2c_new_master_bus(&bus_config, &g_bus);
-    if (result != ESP_OK) {
-        ESP_LOGE(kTag, "I2C bus initialization failed (SDA=%d SCL=%d): %s",
-                 kSdaPin, kSclPin, esp_err_to_name(result));
-        return result;
-    }
-
-    i2c_device_config_t device_config{};
-    device_config.dev_addr_length = I2C_ADDR_BIT_LEN_7;
-    device_config.device_address = kAddress;
-    device_config.scl_speed_hz = 400000;
-    result = i2c_master_bus_add_device(g_bus, &device_config, &g_display);
-    if (result != ESP_OK) {
-        ESP_LOGE(kTag, "SSD1306 I2C device registration failed (address=0x%02X): %s",
-                 kAddress, esp_err_to_name(result));
-        return result;
-    }
-
-    result = InitializeController();
-    if (result != ESP_OK) {
-        ESP_LOGE(kTag, "SSD1306 initialization command failed (address=0x%02X): %s",
-                 kAddress, esp_err_to_name(result));
-        return result;
-    }
-
-    g_initialized = true;
-    g_last_scroll_tick = xTaskGetTickCount();
+    LogOled("INFO", "OLED_INIT_START",
+            "SSD1306 128x64 address=0x3C SDA=41 SCL=42");
     if (xTaskCreate(DisplayTask, "chatai_oled", 4096, nullptr, 3, nullptr) != pdPASS) {
-        g_initialized = false;
+        LogOled("FAIL", "OLED_DISPLAY_TASK_FAILED", "could not create OLED supervisor task");
         ESP_LOGE(kTag, "OLED display task creation failed");
         return ESP_ERR_NO_MEM;
     }
-    ESP_LOGI(kTag, "Real-time OLED status initialized on SDA=%d SCL=%d",
-             kSdaPin, kSclPin);
+
+    g_display_task_started = true;
+    ESP_LOGI(kTag, "OLED supervisor task started; initialization will retry until successful");
     return ESP_OK;
 }
 
