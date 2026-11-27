@@ -129,6 +129,12 @@ bool IsActivationCancelled() {
 }
 }
 
+namespace chatai::xiaozhi {
+bool IsAwaitingAssistantResponse() {
+    return g_turn_started.load() && g_turn_vad_end_us.load() > 0;
+}
+}  // namespace chatai::xiaozhi
+
 Application::Application() : notify_player_(audio_service_) {
     event_group_ = xEventGroupCreate();
 
@@ -879,6 +885,8 @@ void Application::InitializeProtocol() {
                 });
             } else if (strcmp(state->valuestring, "stop") == 0) {
                 Schedule([this]() {
+                    g_turn_started.store(false);
+                    g_turn_vad_end_us.store(0);
                     if (GetDeviceState() == kDeviceStateSpeaking) {
                         if (listening_mode_ == kListeningModeManualStop) {
                             SetDeviceState(kDeviceStateIdle);
