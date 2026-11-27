@@ -50,6 +50,9 @@ std::atomic<bool> g_time_synced{false};
 std::atomic<bool> g_audio_ready{false};
 std::mutex g_content_mutex;
 char g_chat_message[96]{};
+std::array<chatai::display::ChatTranscriptEntry, chatai::display::kChatTranscriptCapacity> g_chat_history{};
+size_t g_chat_history_count = 0;
+size_t g_chat_history_next = 0;
 std::atomic<uint8_t> g_bluetooth_status{
     static_cast<uint8_t>(chatai::display::BluetoothStatus::kIdle)};
 std::atomic<size_t> g_bluetooth_device_count{0};
@@ -698,6 +701,16 @@ void SetChatMessage(const char* role, const char* message) {
     }
     std::lock_guard<std::mutex> lock(g_content_mutex);
     std::snprintf(g_chat_message, sizeof(g_chat_message), "%s", message);
+    if ((std::strcmp(role, "user") == 0 || std::strcmp(role, "assistant") == 0) &&
+        message[0] != '\0') {
+        auto& entry = g_chat_history[g_chat_history_next];
+        entry = {};
+        entry.uptime_ms = static_cast<uint64_t>(esp_timer_get_time() / 1000);
+        std::snprintf(entry.role, sizeof(entry.role), "%s", role);
+        std::snprintf(entry.message, sizeof(entry.message), "%s", message);
+        g_chat_history_next = (g_chat_history_next + 1) % chatai::display::kChatTranscriptCapacity;
+        if (g_chat_history_count < chatai::display::kChatTranscriptCapacity) ++g_chat_history_count;
+    }
 }
 
 void ClearChatMessages() {
@@ -708,8 +721,7 @@ void ClearChatMessages() {
 void GetWebSnapshot(WebSnapshot& snapshot) {
     snapshot = WebSnapshot{};
     snapshot.oled_ready = g_initialized.load();
-    // Keep Web Admin's shared status current even when the physical OLED cannot initialize.
-    UpdateFooter();
+    // Keep Web Admin's clock/footer current without mutating the OLED scroll state from HTTP.
     UpdateClockSync();
     const std::time_t now = std::time(nullptr);
     if (g_time_synced.load() && now >= 1700000000) {
@@ -718,9 +730,38 @@ void GetWebSnapshot(WebSnapshot& snapshot) {
             std::strftime(snapshot.clock, sizeof(snapshot.clock), "%H:%M:%S", &local_time);
         }
     }
+    const bool wifi_ready = chatai::network::NetworkManager::IsConnected();
+    const std::string ip_address = wifi_ready
+        ? chatai::network::NetworkManager::GetIpAddress()
+        : std::string{};
+    const bool has_ip = !ip_address.empty() && ip_address != "0.0.0.0";
+    std::snprintf(snapshot.footer, sizeof(snapshot.footer),
+                  "CHATAI TPIOS - IP: %s - SERVER %s",
+                  has_ip ? ip_address.c_str() : "WAIT",
+                  chatai::xiaozhi::IsReady() ? "READY" : "WAIT");
     std::lock_guard<std::mutex> lock(g_content_mutex);
     std::snprintf(snapshot.chat_message, sizeof(snapshot.chat_message), "%s", g_chat_message);
-    std::snprintf(snapshot.footer, sizeof(snapshot.footer), "%s", g_footer);
+}
+
+size_t CopyChatTranscript(ChatTranscriptEntry* destination, size_t capacity) {
+    if (destination == nullptr || capacity == 0) return 0;
+    std::lock_guard<std::mutex> lock(g_content_mutex);
+    const size_t count = std::min(g_chat_history_count, capacity);
+    const size_t first = (g_chat_history_next + chatai::display::kChatTranscriptCapacity -
+                          g_chat_history_count) % chatai::display::kChatTranscriptCapacity;
+    const size_t skip = g_chat_history_count - count;
+    for (size_t i = 0; i < count; ++i) {
+        destination[i] = g_chat_history[(first + skip + i) %
+                                        chatai::display::kChatTranscriptCapacity];
+    }
+    return count;
+}
+
+void ClearChatTranscript() {
+    std::lock_guard<std::mutex> lock(g_content_mutex);
+    g_chat_history = {};
+    g_chat_history_count = 0;
+    g_chat_history_next = 0;
 }
 
 void SetBluetoothStatus(BluetoothStatus status, size_t device_count, int error_code) {

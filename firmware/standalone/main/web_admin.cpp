@@ -161,6 +161,11 @@ body[data-theme="light"]{background:radial-gradient(ellipse at 50% -12%,#d7f5ff 
 .oled-preview{margin:14px 0 7px;padding:10px 13px 9px;border:7px solid #283342;border-radius:17px;background:#02060b;color:#c8fff1;box-shadow:inset 0 0 22px #4cf2c01b,0 8px 22px #0005;font:11px/1.35 ui-monospace,SFMono-Regular,monospace;min-height:112px}
 .oled-top{display:grid;grid-template-columns:1fr auto 1fr;align-items:center;gap:8px;min-height:17px;color:#9fffe5;font-size:10px}.oled-top strong{text-align:center;font-size:12px;letter-spacing:1px}.oled-top>span:last-child{justify-self:end}.oled-battery{position:relative;width:15px;height:8px;border:1px solid #9fffe5;border-radius:2px}.oled-battery:after{content:"";position:absolute;right:-3px;top:2px;width:2px;height:3px;background:#9fffe5}.oled-center{display:grid;place-content:center;min-height:54px;text-align:center;gap:6px}.oled-center strong{font-size:13px;letter-spacing:.5px}.oled-center p{max-width:100%;margin:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11px}.oled-divider{height:1px;background:repeating-linear-gradient(90deg,#9fffe5 0 3px,transparent 3px 6px);opacity:.6}.oled-footer{padding-top:5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:9px;color:#8ee8cf}
 .chat-control-group{margin-top:15px;padding:14px;border:1px solid var(--line);border-radius:17px;background:#0c192b}.chat-control-group h3{margin:0;font-size:13px}.chat-control-head{display:flex;align-items:center;justify-content:space-between;gap:10px}.chat-control-head .hint{margin-top:4px}.chat-control-group input[type=range]{width:100%;accent-color:#52e4f5}.chat-event-log{max-height:190px;overflow:auto;margin:12px 0 0;padding:11px;border:1px solid var(--line);border-radius:12px;background:#07111f;color:#b9d9e8;white-space:pre-wrap;overflow-wrap:anywhere;font:10px/1.55 ui-monospace,monospace}.chat-control-group hr{border-color:var(--line)}
+.chat-transcript{display:grid;gap:8px;max-height:250px;overflow:auto;margin-top:12px}
+.chat-transcript-item{padding:10px 12px;border:1px solid var(--line);border-radius:12px;background:#101b2b;font-size:12px;line-height:1.5;overflow-wrap:anywhere}
+.chat-transcript-item[data-role="assistant"]{background:#171936;border-color:#a18bff55}
+.chat-transcript-meta{display:flex;justify-content:space-between;gap:8px;margin-bottom:4px;color:var(--muted);font-size:10px}
+body[data-theme="light"] .chat-transcript-item{background:#fff;border-color:#c5d6e7}body[data-theme="light"] .chat-transcript-item[data-role="assistant"]{background:#f5f1ff}
 body[data-theme="light"] .chat-control-group{background:#f4f8ff;border-color:#c5d6e7}body[data-theme="light"] .chat-event-log{background:#fff;color:#294766;border-color:#c5d6e7}
 </style>
 </head>
@@ -236,7 +241,12 @@ body[data-theme="light"] .chat-control-group{background:#f4f8ff;border-color:#c5
   <div class="chat-control-head"><div><h3>Sự kiện gần đây</h3><p class="hint">Lấy từ Diagnostics trên ESP32 · tối đa 8 KB</p></div><button id="chatRefreshEvents" class="secondary" type="button">↻</button></div>
   <pre id="chatEventLog" class="chat-event-log" aria-live="polite">Đang tải sự kiện...</pre>
 </div>
-<div class="chat-note">Hiện firmware chỉ giữ dòng văn bản hội thoại gần nhất để hiển thị OLED, không lưu transcript đầy đủ. Nút xóa chỉ xóa dòng hiển thị này, không xóa lịch sử trên máy chủ XiaoZhi. Gửi tin nhắn văn bản từ Web Admin chưa được bật vì ứng dụng hiện chưa có API gửi text an toàn tới phiên XiaoZhi.</div>
+<div class="chat-control-group">
+  <div class="chat-control-head"><div><h3>Hội thoại gần đây</h3><p class="hint">Tối đa 12 câu STT/TTS gần nhất nhận được từ XiaoZhi</p></div><button id="chatClearHistory" class="secondary" type="button">Xóa lịch sử</button></div>
+  <div id="chatTranscript" class="chat-transcript" aria-live="polite"><p class="hint">Chưa có nội dung hội thoại.</p></div>
+  <p id="chatHistoryResult" class="hint" role="status" aria-live="polite"></p>
+</div>
+<div class="chat-note">Lịch sử này chỉ lưu tạm trong RAM của ESP32 và không xóa hội thoại trên máy chủ. Nút “Xóa dòng hiển thị” chỉ xóa nội dung OLED gần nhất. Gửi tin nhắn văn bản từ Web Admin chưa được bật vì giao thức XiaoZhi đang ghim chưa có API client gửi prompt text an toàn.</div>
 </section>
 <section class="card tab-panel" data-panel="control" role="tabpanel" aria-labelledby="controlTitle" hidden>
 <div class="card-head"><div class="card-icon" aria-hidden="true">⌘</div><div><h2 id="controlTitle">Trung tâm điều khiển</h2><p class="hint">Chọn module để mở công cụ hiện có</p></div></div>
@@ -426,6 +436,8 @@ const chatVolumeInput = document.getElementById("chatVolume");
 const chatVolumeValue = document.getElementById("chatVolumeValue");
 const chatMicGainInput = document.getElementById("chatMicGain");
 const chatMicGainValue = document.getElementById("chatMicGainValue");
+const chatTranscript = document.getElementById("chatTranscript");
+const chatHistoryResult = document.getElementById("chatHistoryResult");
 let chatVolumeDirty = false;
 let chatMicGainDirty = false;
 let chatAudioSaving = false;
@@ -445,7 +457,10 @@ function showPanel(panelName) {
   }
   if (panelName === "ota") refreshFirmwareStatus().catch(error => { firmwareStatus.textContent = error.message; });
   if (panelName === "logs") refreshDiagnostics().catch(error => { diagnosticLog.textContent = error.message; });
-  if (panelName === "chat") refreshChatEvents().catch(error => { document.getElementById("chatEventLog").textContent = error.message; });
+  if (panelName === "chat") {
+    refreshChatEvents().catch(error => { document.getElementById("chatEventLog").textContent = error.message; });
+    refreshChatHistory().catch(error => { chatHistoryResult.textContent = error.message; });
+  }
 }
 document.querySelectorAll("[data-tab]").forEach(button => button.addEventListener("click", () => showPanel(button.dataset.tab)));
 document.querySelectorAll("[data-open-panel]").forEach(button => button.addEventListener("click", () => showPanel(button.dataset.openPanel)));
@@ -535,6 +550,53 @@ document.getElementById("chatClearDisplay").addEventListener("click", async () =
 document.getElementById("chatRefreshEvents").addEventListener("click", () => refreshChatEvents().catch(error => {
   document.getElementById("chatEventLog").textContent = error.message;
 }));
+async function refreshChatHistory() {
+  const response = await fetch("/api/chat/history", {cache:"no-store"});
+  if (!response.ok) throw new Error("Không đọc được lịch sử hội thoại (HTTP " + response.status + ")");
+  const data = await response.json();
+  const messages = Array.isArray(data.messages) ? data.messages : [];
+  chatTranscript.replaceChildren();
+  if (!messages.length) {
+    const empty = document.createElement("p");
+    empty.className = "hint";
+    empty.textContent = "Chưa có nội dung hội thoại được nhận từ XiaoZhi.";
+    chatTranscript.appendChild(empty);
+    return;
+  }
+  messages.forEach(message => {
+    const item = document.createElement("div");
+    item.className = "chat-transcript-item";
+    item.dataset.role = message.role === "assistant" ? "assistant" : "user";
+    const meta = document.createElement("div");
+    meta.className = "chat-transcript-meta";
+    const role = document.createElement("strong");
+    role.textContent = message.role === "assistant" ? "XiaoZhi AI" : "Bạn";
+    const time = document.createElement("span");
+    time.textContent = "+" + Math.floor(Number(message.uptime_ms || 0) / 1000) + "s";
+    const text = document.createElement("div");
+    text.textContent = message.text || "";
+    meta.append(role, time);
+    item.append(meta, text);
+    chatTranscript.appendChild(item);
+  });
+}
+document.getElementById("chatClearHistory").addEventListener("click", async () => {
+  if (!confirm("Xóa 12 câu hội thoại đang lưu tạm trên ESP32? Không xóa lịch sử trên máy chủ XiaoZhi.")) return;
+  const button = document.getElementById("chatClearHistory");
+  button.disabled = true;
+  chatHistoryResult.textContent = "Đang xóa lịch sử...";
+  try {
+    const response = await fetch("/api/chat/history/clear", {
+      method:"POST", cache:"no-store", headers:{"X-ChatAI-CSRF":csrfToken}
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(data.error || "Không xóa được lịch sử");
+    chatHistoryResult.textContent = data.message || "Đã xóa lịch sử hiển thị.";
+    await refreshChatHistory();
+  } catch (error) {
+    chatHistoryResult.textContent = error.message;
+  } finally { button.disabled = false; }
+});
 
 speakerVolumeInput.addEventListener("input", () => {
   speakerVolumeDirty = true;
@@ -980,7 +1042,7 @@ async function extractOtaBinFromZip(file) {
     } catch (_) {
       throw new Error("Tên tệp trong ZIP không phải UTF-8.");
     }
-    if (!name || name.includes("\") || name.startsWith("/") || /^[A-Za-z]:/.test(name) ||
+    if (!name || name.includes("\\") || name.startsWith("/") || /^[A-Za-z]:/.test(name) ||
         name.split("/").some(part => part === "..") || name.includes("\0")) {
       throw new Error("Tệp ZIP chứa đường dẫn không an toàn.");
     }
@@ -1367,6 +1429,7 @@ setInterval(() => {
   refreshDiagnostics().catch(error => { diagnosticResult.textContent = error.message; });
   if (!document.querySelector('[data-panel="chat"]').hidden) {
     refreshChatEvents().catch(error => { document.getElementById("chatEventLog").textContent = error.message; });
+    refreshChatHistory().catch(error => { chatHistoryResult.textContent = error.message; });
   }
 }, 5000);
 </script>
@@ -1942,6 +2005,44 @@ esp_err_t ChatDisplayClearHandler(httpd_req_t* request) {
                     "{\"success\":true,\"message\":\"Đã xóa dòng hội thoại gần nhất khỏi màn hình.\",\"scope\":\"display_only\"}");
 }
 
+esp_err_t ChatHistoryHandler(httpd_req_t* request) {
+    static chatai::display::ChatTranscriptEntry entries[chatai::display::kChatTranscriptCapacity]{};
+    const size_t count = chatai::display::CopyChatTranscript(
+        entries, chatai::display::kChatTranscriptCapacity);
+    cJSON* root = cJSON_CreateObject();
+    cJSON* messages = cJSON_CreateArray();
+    if (root == nullptr || messages == nullptr) {
+        if (root != nullptr) cJSON_Delete(root);
+        if (messages != nullptr) cJSON_Delete(messages);
+        return SendError(request, "500 Internal Server Error", "Không đủ bộ nhớ");
+    }
+    for (size_t i = 0; i < count; ++i) {
+        cJSON* item = cJSON_CreateObject();
+        if (item == nullptr) continue;
+        cJSON_AddStringToObject(item, "role", entries[i].role);
+        cJSON_AddStringToObject(item, "text", entries[i].message);
+        cJSON_AddNumberToObject(item, "uptime_ms", static_cast<double>(entries[i].uptime_ms));
+        cJSON_AddItemToArray(messages, item);
+    }
+    cJSON_AddItemToObject(root, "messages", messages);
+    char* json = cJSON_PrintUnformatted(root);
+    cJSON_Delete(root);
+    if (json == nullptr) return SendError(request, "500 Internal Server Error", "Không thể tạo lịch sử hội thoại");
+    const esp_err_t result = SendJson(request, "200 OK", json);
+    cJSON_free(json);
+    return result;
+}
+
+esp_err_t ChatHistoryClearHandler(httpd_req_t* request) {
+    if (!IsAuthorizedMutation(request)) {
+        return SendError(request, "403 Forbidden", "Yêu cầu không hợp lệ");
+    }
+    chatai::display::ClearChatTranscript();
+    chatai::diagnostics::Add("WEB_CHAT", "HISTORY_CLEARED", "Cleared local XiaoZhi transcript buffer");
+    return SendJson(request, "200 OK",
+                    "{\"success\":true,\"message\":\"Đã xóa lịch sử hội thoại lưu tạm trên ESP32.\"}");
+}
+
 esp_err_t WifiConnectAdminHandler(httpd_req_t* request) {
     if (!IsAuthorizedMutation(request)) {
         return SendError(request, "403 Forbidden", "Yêu cầu không hợp lệ");
@@ -2207,6 +2308,16 @@ esp_err_t RegisterRoutes(httpd_handle_t server, const std::string& csrf_token) {
     chat_display_clear_uri.method = HTTP_POST;
     chat_display_clear_uri.handler = ChatDisplayClearHandler;
 
+    httpd_uri_t chat_history_uri{};
+    chat_history_uri.uri = "/api/chat/history";
+    chat_history_uri.method = HTTP_GET;
+    chat_history_uri.handler = ChatHistoryHandler;
+
+    httpd_uri_t chat_history_clear_uri{};
+    chat_history_clear_uri.uri = "/api/chat/history/clear";
+    chat_history_clear_uri.method = HTTP_POST;
+    chat_history_clear_uri.handler = ChatHistoryClearHandler;
+
     httpd_uri_t wifi_connect_uri{};
     wifi_connect_uri.uri = "/api/wifi/connect";
     wifi_connect_uri.method = HTTP_POST;
@@ -2287,6 +2398,8 @@ esp_err_t RegisterRoutes(httpd_handle_t server, const std::string& csrf_token) {
     if (result == ESP_OK) result = httpd_register_uri_handler(server, &mic_gain_uri);
     if (result == ESP_OK) result = httpd_register_uri_handler(server, &chat_listen_start_uri);
     if (result == ESP_OK) result = httpd_register_uri_handler(server, &chat_display_clear_uri);
+    if (result == ESP_OK) result = httpd_register_uri_handler(server, &chat_history_uri);
+    if (result == ESP_OK) result = httpd_register_uri_handler(server, &chat_history_clear_uri);
     if (result == ESP_OK) result = httpd_register_uri_handler(server, &wifi_connect_uri);
     if (result == ESP_OK) result = httpd_register_uri_handler(server, &device_status_uri);
     if (result == ESP_OK) result = httpd_register_uri_handler(server, &reconnect_uri);
