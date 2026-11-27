@@ -43,6 +43,7 @@ i2c_master_dev_handle_t g_display = nullptr;
 bool g_initialized = false;
 bool g_display_task_started = false;
 bool g_first_full_refresh_logged = false;
+bool g_bus_reset_required = false;
 int64_t g_last_init_error_log_us = 0;
 bool g_sntp_started = false;
 bool g_time_synced = false;
@@ -75,7 +76,7 @@ void LogOled(const char* result, const char* event, const char* detail = nullptr
 
 void LogOledInitFailure(const char* event, esp_err_t error) {
     const int64_t now_us = esp_timer_get_time();
-    if (now_us - g_last_init_error_log_us < 5000000) return;
+    if (g_last_init_error_log_us != 0 && now_us - g_last_init_error_log_us < 5000000) return;
     g_last_init_error_log_us = now_us;
     char detail[128]{};
     std::snprintf(detail, sizeof(detail), "%s error=%s(%d)",
@@ -240,7 +241,8 @@ void DrawWifiIcon() {
                 SetPixel(x + column, y + row);
             }
         }
-    }}
+    }
+}
 
 void DrawBatteryIcon() {
     constexpr int x = 108;
@@ -463,7 +465,8 @@ void RenderStatus() {
         DrawText((kWidth - TextWidth("BLUETOOTH")) / 2, 17, "BLUETOOTH");
         DrawText((kWidth - TextWidth(state_text)) / 2, 29, state_text);
         char device_text[24]{};
-        std::snprintf(device_text, sizeof(device_text), "DEVICES: %u",                      static_cast<unsigned>(g_bluetooth_device_count.load()));
+        std::snprintf(device_text, sizeof(device_text), "DEVICES: %u",
+                      static_cast<unsigned>(g_bluetooth_device_count.load()));
         DrawText((kWidth - TextWidth(device_text)) / 2, 41, device_text);
         if (bluetooth_status == chatai::display::BluetoothStatus::kError) {
             char error_text[20]{};
@@ -535,6 +538,7 @@ void RenderStatus() {
                 }
             } else {
                 g_initialized = false;
+                g_bus_reset_required = true;
                 LogOledInitFailure("OLED_RECOVERY_BUS_FAILED", reset_result);
                 ESP_LOGE(kTag, "OLED I2C bus recovery failed: %s",
                          esp_err_to_name(reset_result));
@@ -585,6 +589,15 @@ bool InitializeHardware() {
             g_display = nullptr;
             return false;
         }
+    }
+
+    if (g_bus_reset_required) {
+        const esp_err_t reset_result = i2c_master_bus_reset(g_bus);
+        if (reset_result != ESP_OK) {
+            LogOledInitFailure("OLED_RETRY_BUS_RESET_FAILED", reset_result);
+            return false;
+        }
+        g_bus_reset_required = false;
     }
 
     const esp_err_t controller_result = InitializeController();
@@ -658,30 +671,3 @@ void SetBluetoothStatus(BluetoothStatus status, size_t device_count, int error_c
     g_bluetooth_error.store(error_code);
     g_bluetooth_status.store(static_cast<uint8_t>(status));
     int64_t duration_us = 0;
-    switch (status) {
-        case BluetoothStatus::kInitializing:
-        case BluetoothStatus::kReady:
-            duration_us = 3000000;
-            break;
-        case BluetoothStatus::kComplete:
-        case BluetoothStatus::kError:
-            duration_us = 5000000;
-            break;
-        case BluetoothStatus::kScanning:
-            duration_us = 0;
-            break;
-        case BluetoothStatus::kIdle:
-            break;
-    }
-    g_bluetooth_status_until_us.store(
-        duration_us > 0 ? esp_timer_get_time() + duration_us : 0);
-}
-
-// Notifications no longer replace the real-time device-state screen.
-void Notify(const char* title, const char* message, uint32_t duration_ms) {
-    (void)title;
-    (void)message;
-    (void)duration_ms;
-}
-
-}  // namespace chatai::display
