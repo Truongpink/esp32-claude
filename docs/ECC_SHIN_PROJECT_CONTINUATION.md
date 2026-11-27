@@ -92,6 +92,45 @@ Preserve existing routes and route-registration capacity. The earlier project st
 - User has authorized commits to `main` for in-scope source work; that does not authorize build/flash/OTA.
 - When user asks only to inspect logs or source, do not trigger Actions.
 
+### Wi-Fi architecture standard (mandatory)
+
+**Owner:** ChatAI `NetworkManager` is the sole Wi-Fi/radio owner. Xiaozhi/Gemini/AI clients consume network-state callbacks; they must never initialize a competing Wi-Fi stack or control STA/SoftAP lifecycle.
+
+**Required behavior:**
+- On every boot, start the setup SoftAP and STA together in APSTA mode. The setup SSID format is `ChatAI-TPIOS-XXXXXX`; its current setup address is `192.168.50.1`. Start the local Web Admin so recovery does not depend on router or Internet availability.
+- If valid credentials exist in NVS namespace `chatai_net` (keys `ssid`, `password`), attempt the saved router connection directly. Do not scan first or ask the user to select a network again.
+- Keep SoftAP available during STA association. Stop it only after STA has continuously held IPv4 for 60 seconds; LAN Web Admin must remain available through the router.
+- If STA disconnects or loses IPv4, restore SoftAP immediately while STA reconnects. Retry SoftAP startup after a failure; retain diagnostics for failed recovery.
+- If saved credentials are rejected by authentication/4-way handshake, report the failure and restore SoftAP so the user can correct the network.
+- When the user submits replacement credentials, hold them as pending in RAM. Commit them to NVS only after STA receives IPv4. A failed attempt must leave the previously committed credentials intact. Do not require DNS, Internet probes, TLS, MQTT, WebSocket or AI-server availability before saving credentials.
+- Wi-Fi router state, Internet-probe state and AI-service state are separate. DNS/TCP/AI failures must not mark STA disconnected, erase credentials, stop LAN Web Admin or disable local OTA.
+- Web Admin must work over router LAN when STA has IPv4 and over setup SoftAP when router connectivity is unavailable. Local BIN upload/OTA must not require the ESP32 itself to have Internet access.
+- Scan nearby Wi-Fi only when the user opens provisioning/recovery or explicitly requests a network change; do not scan during normal boot when saved credentials are available.
+- Reveal/hide password controls are permitted; never return stored passwords from APIs or write them to logs.
+- Keep the current APSTA transition synchronization, reconnect backoff and single-owner model. Do not introduce parallel radio-control tasks or replace the existing NetworkManager with another Wi-Fi library.
+
+**Current source trace (reviewed on 2026-11-27; source inspection only):**
+- `firmware/standalone/main/network_manager.cpp`: `NetworkManager::Initialize()` loads saved credentials, starts Wi-Fi, starts setup AP in APSTA mode and starts HTTP/recovery tasks.
+- `EventHandler()`: STA start connects using saved credentials; STA disconnect/lost-IP and authentication rejection request SoftAP recovery; STA got-IPv4 marks router connectivity and commits pending credentials.
+- `SavePendingCredentials()` / `SaveCredentials()`: replacement SSID/password are committed to `chatai_net` only after STA got IPv4.
+- `WifiReconnectTask()`: uses the 60,000 ms stable-STA threshold before stopping SoftAP, and retries recovery/reconnect.
+- `InternetCheckTask()`: probes external reachability separately; it must not change the router/Web Admin connected state.
+- `StartProvisioning()` / `StopProvisioning()`: own APSTA/STA transitions and setup AP lifecycle.
+- `firmware/standalone/main/web_admin.*`: local management, Wi-Fi provisioning/status/scan and OTA routes. Check current route behavior before modifying it.
+- `docs/WEB_ADMIN.md`: detailed Web Admin contract and the ECC Shin Wi-Fi standard. Keep this guide and that document consistent.
+
+**Validation state:** source-reviewed, **NOT BUILD-VERIFIED / NOT HARDWARE-VERIFIED**. Do not promote this architecture to VERIFIED until the tests below pass on the actual board and the evidence is recorded.
+
+**Required Wi-Fi hardware tests:**
+1. Cold boot and warm reboot with saved credentials: SoftAP appears immediately, STA reconnects without scanning, then SoftAP stops only after 60 seconds of stable IPv4; LAN Web Admin remains reachable.
+2. Router power-off or out-of-range after AP has stopped: SoftAP returns immediately and STA reconnects when the router returns.
+3. Enter a wrong replacement password: authentication error is visible, SoftAP remains/restores, and old NVS credentials remain unchanged (verify by reboot/reconnect).
+4. Change the router password: old credentials are rejected, setup AP remains available, and the user can provision the new credentials.
+5. Disable WAN/DNS or make Xiaozhi/Gemini unavailable: STA and LAN Web Admin remain connected; AI failure does not alter Wi-Fi state.
+6. Upload a locally stored application BIN over LAN, then separately over SoftAP; verify OTA behavior on both paths only when OTA testing is explicitly authorized.
+7. Confirm password show/hide, no password leakage in API responses/logs, and no unnecessary scan during normal boot.
+8. Record firmware build, source commit, timestamps, relevant Wi-Fi diagnostics and outcome for every test.
+
 ### Architecture invariants
 - Keep ChatAI NetworkManager as the only Wi-Fi owner.
 - Keep ChatAI AudioManager as the only I2S channel/driver owner.
@@ -177,4 +216,4 @@ The user can say:
 
 Use this compact summary when transferring the project context into ChatGPT Memory/Personalization:
 
-> **ECC Shin / ChatAI TPIOS ESP32-S3:** Repository `Truongpink/esp32-claude`, work on `main` only. Current firmware integrates Xiaozhi v2.6.0 (submodule commit `4de00aed740595a8713b01f8332b9b2cf30685bc`) as the sole active voice client. ChatAI retains ownership of NetworkManager/Wi-Fi, Web Admin, AudioManager/I2S, OLED, buttons, diagnostics, NVS and manual dual-slot OTA; Xiaozhi uses ChatAI's AudioCodec bridge, no second Wi-Fi or I2S driver. Gemini is not active in current voice path. BLE disabled. ESP32-S3 N16R8, 16 MB flash/8 MB PSRAM; configured pins are in `docs/HARDWARE.md` and are not all physically verified. Build #80 succeeded in GitHub Actions run #97 on source commit `c251368ac66099c6846379440a6eeafb4c442c37`; user confirmed install and device runs “tạm ổn”, further stability testing pending. Read `docs/ECC_SHIN_PROJECT_CONTINUATION.md` then `docs/ECC_SHIN_XIAOZHI_MIGRATION_HISTORY.md`. Before edits inspect latest main HEAD and exact file SHA; minimal evidence-based changes; no branches; do not edit Xiaozhi submodule/pointer; do not run Actions/build/flash/OTA without separate explicit permission. Preserve Wi-Fi, Web Admin, AudioManager, OLED, NVS, partition and OTA; do not enable BLE or Gemini or claim WakeNet/AEC/NS without proof.
+> **ECC Shin / ChatAI TPIOS ESP32-S3:** Repository `Truongpink/esp32-claude`, work on `main` only. Current firmware integrates Xiaozhi v2.6.0 (submodule commit `4de00aed740595a8713b01f8332b9b2cf30685bc`) as the sole active voice client. ChatAI retains ownership of NetworkManager/Wi-Fi, Web Admin, AudioManager/I2S, OLED, buttons, diagnostics, NVS and manual dual-slot OTA; Xiaozhi uses ChatAI's AudioCodec bridge, no second Wi-Fi or I2S driver. **Wi-Fi standard:** on boot, start setup SoftAP + STA in APSTA mode; connect directly with saved NVS credentials without scanning; keep SoftAP until STA has stable IPv4 for 60 seconds; restore SoftAP immediately on STA disconnect/lost IPv4 or authentication rejection; commit replacement credentials only after STA receives IPv4; AI/DNS/TLS/WAN failure must not disconnect router Wi-Fi or disable LAN Web Admin/local OTA; scan only on explicit provisioning/network-change request. See the Wi-Fi architecture section in this guide and `docs/WEB_ADMIN.md`. This behavior is source-reviewed but not build- or hardware-verified. Current firmware integrates Xiaozhi v2.6.0 (submodule commit `4de00aed740595a8713b01f8332b9b2cf30685bc`) as the sole active voice client. Gemini is not active in current voice path. BLE disabled. ESP32-S3 N16R8, 16 MB flash/8 MB PSRAM; configured pins are in `docs/HARDWARE.md` and are not all physically verified. Build #80 succeeded in GitHub Actions run #97 on source commit `c251368ac66099c6846379440a6eeafb4c442c37`; user confirmed install and device runs “tạm ổn”, further stability testing pending. Read `docs/ECC_SHIN_PROJECT_CONTINUATION.md` then `docs/ECC_SHIN_XIAOZHI_MIGRATION_HISTORY.md`. Before edits inspect latest main HEAD and exact file SHA; minimal evidence-based changes; no branches; do not edit Xiaozhi submodule/pointer; do not run Actions/build/flash/OTA without separate explicit permission. Preserve Wi-Fi, Web Admin, AudioManager, OLED, NVS, partition and OTA; do not enable BLE or Gemini or claim WakeNet/AEC/NS without proof.
