@@ -17,11 +17,14 @@
 #include <driver/gpio.h>
 #include <esp_log.h>
 #include <esp_timer.h>
+#include <esp_netif_sntp.h>
 #include <arpa/inet.h>
 #include <cJSON.h>
 #include <algorithm>
 #include <cstring>
+#include <ctime>
 #include <limits>
+#include <mutex>
 
 namespace chatai::xiaozhi {
 std::atomic<bool> g_application_initialized{false};
@@ -61,6 +64,51 @@ void LogVoiceTurnLatency(int64_t speaker_start_us) {
              ms(first_tts_us - vad_end_us),
              ms(speaker_start_us - first_tts_us),
              ms(speaker_start_us - vad_end_us));
+}
+
+bool IsSystemTimeValid() {
+    const std::time_t now = std::time(nullptr);
+    return now >= 1735689600 && now < 4102444800;
+}
+
+esp_err_t EnsureSystemTime() {
+    static std::mutex mutex;
+    std::lock_guard<std::mutex> lock(mutex);
+
+    if (IsSystemTimeValid()) {
+        chatai::diagnostics::SetTimeSyncStatus(true, "SYSTEM_CLOCK");
+        chatai::diagnostics::Add("TIME_SYNC", "OK", "source=SYSTEM_CLOCK");
+        return ESP_OK;
+    }
+
+    chatai::diagnostics::SetTimeSyncStatus(false);
+    chatai::diagnostics::Add("TIME_SYNC", "START",
+                             "servers=time.google.com,pool.ntp.org,time.cloudflare.com");
+
+    const esp_sntp_config_t config = ESP_NETIF_SNTP_DEFAULT_CONFIG_MULTIPLE(
+        3, ESP_SNTP_SERVER_LIST("time.google.com", "pool.ntp.org",
+                                "time.cloudflare.com"));
+    const esp_err_t init_result = esp_netif_sntp_init(&config);
+    if (init_result != ESP_OK && init_result != ESP_ERR_INVALID_STATE) {
+        chatai::diagnostics::Add("TIME_SYNC", "FAIL", esp_err_to_name(init_result));
+        return init_result;
+    }
+
+    const esp_err_t sync_result =
+        esp_netif_sntp_sync_wait(pdMS_TO_TICKS(12000));
+    if (init_result == ESP_OK) {
+        esp_netif_sntp_deinit();
+    }
+    if (sync_result != ESP_OK || !IsSystemTimeValid()) {
+        chatai::diagnostics::SetTimeSyncStatus(false);
+        chatai::diagnostics::Add("TIME_SYNC", "FAIL",
+                                 esp_err_to_name(sync_result));
+        return sync_result != ESP_OK ? sync_result : ESP_ERR_INVALID_STATE;
+    }
+
+    chatai::diagnostics::SetTimeSyncStatus(true, "SNTP");
+    chatai::diagnostics::Add("TIME_SYNC", "OK", "source=SNTP");
+    return ESP_OK;
 }
 
 bool IsActivationCancelled() {
@@ -586,10 +634,36 @@ void Application::CheckNewVersion() {
     const int MAX_RETRY = 10;
     int retry_count = 0;
     int retry_delay = 10;  // Initial retry delay in seconds
+    bool alert_sound_played = false;
 
     auto& board = Board::GetInstance();
     while (true) {
         if (IsActivationCancelled()) return;
+        if (!IsSystemTimeValid()) {
+            const esp_err_t time_result = EnsureSystemTime();
+            if (time_result != ESP_OK) {
+                ++retry_count;
+                char time_failure[128]{};
+                std::snprintf(time_failure, sizeof(time_failure),
+                              "attempt=%d max=%d reason=SNTP error=%s",
+                              retry_count, MAX_RETRY, esp_err_to_name(time_result));
+                chatai::diagnostics::Add("OTA_CHECK", "FAIL", time_failure);
+                chatai::diagnostics::Add("ALERT_SOUND", "SKIPPED",
+                                         "reason=TIME_SYNC_FAILED");
+                if (retry_count >= MAX_RETRY) {
+                    ESP_LOGE(TAG, "Time synchronization retry limit reached; skipping OTA check");
+                    return;
+                }
+                ESP_LOGW(TAG, "System time sync failed; retry in %d seconds (%d/%d)",
+                         retry_delay, retry_count, MAX_RETRY);
+                for (int i = 0; i < retry_delay * 10; ++i) {
+                    vTaskDelay(pdMS_TO_TICKS(100));
+                    if (IsActivationCancelled()) return;
+                }
+                retry_delay = std::min(retry_delay * 2, 60);
+                continue;
+            }
+        }
         auto display = board.GetDisplay();
         display->SetStatus(Lang::Strings::CHECKING_NEW_VERSION);
 
@@ -632,8 +706,15 @@ void Application::CheckNewVersion() {
             std::snprintf(alert_detail, sizeof(alert_detail),
                           "reason=OTA_CHECK_FAILED attempt=%d retry_delay_s=%d",
                           retry_count, retry_delay);
-            chatai::diagnostics::Add("ALERT_SOUND", "REQUEST", alert_detail);
-            Alert(Lang::Strings::ERROR, buffer, "cloud_off", Lang::Sounds::OGG_EXCLAMATION);
+            if (!alert_sound_played) {
+                chatai::diagnostics::Add("ALERT_SOUND", "REQUEST", alert_detail);
+                Alert(Lang::Strings::ERROR, buffer, "cloud_off",
+                      Lang::Sounds::OGG_EXCLAMATION);
+                alert_sound_played = true;
+            } else {
+                chatai::diagnostics::Add("ALERT_SOUND", "SKIPPED",
+                                         "reason=REPEATED_OTA_FAILURE");
+            }
 
             ESP_LOGW(TAG, "Check new version failed, retry in %d seconds (%d/%d)", retry_delay,
                      retry_count, MAX_RETRY);
