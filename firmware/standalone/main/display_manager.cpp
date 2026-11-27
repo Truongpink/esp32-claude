@@ -35,7 +35,7 @@ constexpr size_t kPages = 8;
 constexpr int kGlyphWidth = 8;
 constexpr int kGlyphHeight = 12;
 constexpr int kFooterY = 52;
-constexpr TickType_t kScrollStepTicks = pdMS_TO_TICKS(60);
+constexpr TickType_t kScrollStepTicks = pdMS_TO_TICKS(120);
 
 i2c_master_bus_handle_t g_bus = nullptr;
 i2c_master_dev_handle_t g_display = nullptr;
@@ -51,6 +51,8 @@ std::atomic<size_t> g_bluetooth_device_count{0};
 std::atomic<int> g_bluetooth_error{0};
 std::atomic<int64_t> g_bluetooth_status_until_us{0};
 std::array<uint8_t, kWidth * kPages> g_frame{};
+std::array<uint8_t, kWidth * kPages> g_last_flushed_frame{};
+bool g_frame_flushed = false;
 char g_footer[96] = "CHATAI TPIOS - WIFI WAIT - SERVER WAIT";
 int g_footer_x = -static_cast<int>(sizeof("CHATAI TPIOS - WIFI WAIT - SERVER WAIT") - 1) * kGlyphWidth;
 TickType_t g_last_scroll_tick = 0;
@@ -108,8 +110,24 @@ uint32_t ComposeVietnamese(uint32_t base, uint32_t mark) {
         ? found->composed : base;
 }
 
-// One 8x12 cell per Unicode character. Decomposed Vietnamese tone marks are
-// composed before lookup so NFC and NFD input render identically.
+// Proportional advances make the compact OLED typeface feel closer to SF Pro.
+// The bitmap remains a fixed 8x12 raster, so rendering needs no allocation.
+int GlyphBounds(const chatai::display::Glyph8x12& glyph, int& min_column, int& max_column) {
+    min_column = kGlyphWidth;
+    max_column = -1;
+    for (int row = 0; row < kGlyphHeight; ++row) {
+        for (int column = 0; column < kGlyphWidth; ++column) {
+            if ((glyph.rows[row] & (1U << (7 - column))) != 0) {
+                min_column = std::min(min_column, column);
+                max_column = std::max(max_column, column);
+            }
+        }
+    }
+    return max_column >= min_column ? max_column - min_column + 1 : 4;
+}
+
+// Decomposed Vietnamese tone marks are composed before lookup so NFC and NFD
+// input render identically.
 void DrawText(int x, int y, std::string_view text) {
     size_t offset = 0;
     while (offset < text.size()) {
@@ -128,23 +146,14 @@ void DrawText(int x, int y, std::string_view text) {
 
         const auto* glyph = FindGlyph(codepoint);
         if (glyph != nullptr) {
-            int min_column = kGlyphWidth;
+            int min_column = 0;
             int max_column = -1;
-            for (int row = 0; row < kGlyphHeight; ++row) {
-                for (int column = 0; column < kGlyphWidth; ++column) {
-                    if ((glyph->rows[row] & (1U << (7 - column))) != 0) {
-                        min_column = std::min(min_column, column);
-                        max_column = std::max(max_column, column);
-                    }
-                }
-            }
+            const int glyph_width = GlyphBounds(*glyph, min_column, max_column);
             if (max_column >= min_column) {
-                const int glyph_width = max_column - min_column + 1;
-                const int glyph_offset = (kGlyphWidth - glyph_width) / 2;
                 for (int row = 0; row < kGlyphHeight; ++row) {
                     for (int column = min_column; column <= max_column; ++column) {
                         if ((glyph->rows[row] & (1U << (7 - column))) == 0) continue;
-                        const int pixel_x = x + glyph_offset + column - min_column;
+                        const int pixel_x = x + column - min_column;
                         const int pixel_y = y + row;
                         if (pixel_x >= 0 && pixel_x < kWidth &&
                             pixel_y >= 0 && pixel_y < 64) {
@@ -154,19 +163,29 @@ void DrawText(int x, int y, std::string_view text) {
                     }
                 }
             }
+            x += glyph_width + 1;
+        } else {
+            x += 6;
         }
-        x += kGlyphWidth;
     }
 }
 
 int TextWidth(std::string_view text) {
     size_t offset = 0;
-    int characters = 0;
+    int width = 0;
     while (offset < text.size()) {
         const uint32_t codepoint = DecodeUtf8(text, offset);
-        if (!IsVietnameseCombiningMark(codepoint)) ++characters;
+        if (IsVietnameseCombiningMark(codepoint)) continue;
+        const auto* glyph = FindGlyph(codepoint);
+        if (glyph == nullptr) {
+            width += 6;
+            continue;
+        }
+        int min_column = 0;
+        int max_column = -1;
+        width += GlyphBounds(*glyph, min_column, max_column) + 1;
     }
-    return characters * kGlyphWidth;
+    return width > 0 ? width - 1 : 0;
 }
 
 void SetPixel(int x, int y) {
@@ -318,17 +337,27 @@ const char* StatusText(chatai::xiaozhi::RuntimeState state) {
 
 esp_err_t FlushFrame() {
     for (uint8_t page = 0; page < kPages; ++page) {
+        const size_t offset = page * kWidth;
+        const uint8_t* current = g_frame.data() + offset;
+        if (g_frame_flushed &&
+            std::memcmp(current, g_last_flushed_frame.data() + offset, kWidth) == 0) {
+            continue;
+        }
+
         const uint8_t position[] = {
             0x00, static_cast<uint8_t>(0xB0 | page), 0x00, 0x10
         };
         esp_err_t result = i2c_master_transmit(g_display, position, sizeof(position), 100);
         if (result != ESP_OK) return result;
+
         uint8_t packet[kWidth + 1]{};
         packet[0] = 0x40;
-        std::memcpy(packet + 1, g_frame.data() + page * kWidth, kWidth);
+        std::memcpy(packet + 1, current, kWidth);
         result = i2c_master_transmit(g_display, packet, sizeof(packet), 250);
         if (result != ESP_OK) return result;
+        std::memcpy(g_last_flushed_frame.data() + offset, current, kWidth);
     }
+    g_frame_flushed = true;
     return ESP_OK;
 }
 
