@@ -149,15 +149,12 @@ bool IsListening() {
     return g_continuous_chat_enabled.load() || g_push_to_talk.load();
 }
 
-RuntimeState GetRuntimeState() {
+RuntimeState GetDisplayRuntimeState() {
     if (!g_application_initialized.load()) {
         return g_init_attempted.load() ? RuntimeState::kError : RuntimeState::kConnecting;
     }
 
-    auto& app = Application::GetInstance();
-    FinishDeferredStop(app);
-    SynchronizeContinuousChatState(app);
-    const auto device_state = app.GetDeviceState();
+    const auto device_state = Application::GetInstance().GetDeviceState();
     if (device_state == kDeviceStateFatalError) return RuntimeState::kError;
     if (!chatai::network::NetworkManager::IsConnected()) return RuntimeState::kConnecting;
 
@@ -182,6 +179,15 @@ RuntimeState GetRuntimeState() {
         default:
             return RuntimeState::kConnecting;
     }
+}
+
+RuntimeState GetRuntimeState() {
+    if (g_application_initialized.load()) {
+        auto& app = Application::GetInstance();
+        FinishDeferredStop(app);
+        SynchronizeContinuousChatState(app);
+    }
+    return GetDisplayRuntimeState();
 }
 
 AudioUplinkDiagnostics GetAudioUplinkDiagnostics() {
