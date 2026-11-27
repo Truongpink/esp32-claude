@@ -635,11 +635,12 @@ void Application::CheckNewVersion() {
     int retry_count = 0;
     int retry_delay = 10;  // Initial retry delay in seconds
     bool alert_sound_played = false;
+    bool time_sync_ready = false;
 
     auto& board = Board::GetInstance();
     while (true) {
         if (IsActivationCancelled()) return;
-        if (!IsSystemTimeValid()) {
+        if (!time_sync_ready) {
             const esp_err_t time_result = EnsureSystemTime();
             if (time_result != ESP_OK) {
                 ++retry_count;
