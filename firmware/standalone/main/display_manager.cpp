@@ -306,14 +306,14 @@ void UpdateFooter() {
 const char* StatusText(chatai::xiaozhi::RuntimeState state) {
     using chatai::xiaozhi::RuntimeState;
     switch (state) {
-        case RuntimeState::kConnecting: return "DANG KET NOI";
-        case RuntimeState::kWaiting: return "DANG CHO";
-        case RuntimeState::kListening: return "DANG NGHE";
-        case RuntimeState::kProcessing: return "DANG XU LY";
-        case RuntimeState::kSpeaking: return "DANG NOI";
-        case RuntimeState::kError: return "LOI MICROPHONE";
+        case RuntimeState::kConnecting: return "ĐANG KẾT NỐI";
+        case RuntimeState::kWaiting: return "ĐANG CHỜ";
+        case RuntimeState::kListening: return "ĐANG NGHE";
+        case RuntimeState::kProcessing: return "ĐANG XỬ LÝ";
+        case RuntimeState::kSpeaking: return "ĐANG NÓI";
+        case RuntimeState::kError: return "LỖI MICROPHONE";
     }
-    return "DANG KET NOI";
+    return "ĐANG KẾT NỐI";
 }
 
 esp_err_t FlushFrame() {
@@ -391,7 +391,7 @@ void RenderStatus() {
         }
         // Read the live XiaoZhi state every frame; cached SetStatus text can go stale.
         const char* status = !g_audio_ready.load()
-            ? "LOI AM THANH"
+            ? "LỖI ÂM THANH"
             : StatusText(chatai::xiaozhi::GetDisplayRuntimeState());
         DrawText((kWidth - TextWidth(status)) / 2, 20, status);
         if (chat_message[0] != '\0') {
