@@ -158,6 +158,10 @@ body[data-theme="light"]{background:radial-gradient(ellipse at 50% -12%,#d7f5ff 
 @media(max-width:390px){.app-launcher-grid{gap:16px 6px}.app-icon{width:62px;height:62px;border-radius:18px;font-size:28px}.module-icon{width:59px;height:59px}.overview-panel{padding:15px 12px}}
 @media(min-width:700px){main{max-width:560px}.tabbar{bottom:18px;border:1px solid #91dcf52c;border-radius:22px;width:min(540px,calc(100% - 32px))}}
 
+.oled-preview{margin:14px 0 7px;padding:10px 13px 9px;border:7px solid #283342;border-radius:17px;background:#02060b;color:#c8fff1;box-shadow:inset 0 0 22px #4cf2c01b,0 8px 22px #0005;font:11px/1.35 ui-monospace,SFMono-Regular,monospace;min-height:112px}
+.oled-top{display:grid;grid-template-columns:1fr auto 1fr;align-items:center;gap:8px;min-height:17px;color:#9fffe5;font-size:10px}.oled-top strong{text-align:center;font-size:12px;letter-spacing:1px}.oled-top>span:last-child{justify-self:end}.oled-battery{position:relative;width:15px;height:8px;border:1px solid #9fffe5;border-radius:2px}.oled-battery:after{content:"";position:absolute;right:-3px;top:2px;width:2px;height:3px;background:#9fffe5}.oled-center{display:grid;place-content:center;min-height:54px;text-align:center;gap:6px}.oled-center strong{font-size:13px;letter-spacing:.5px}.oled-center p{max-width:100%;margin:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11px}.oled-divider{height:1px;background:repeating-linear-gradient(90deg,#9fffe5 0 3px,transparent 3px 6px);opacity:.6}.oled-footer{padding-top:5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:9px;color:#8ee8cf}
+.chat-control-group{margin-top:15px;padding:14px;border:1px solid var(--line);border-radius:17px;background:#0c192b}.chat-control-group h3{margin:0;font-size:13px}.chat-control-head{display:flex;align-items:center;justify-content:space-between;gap:10px}.chat-control-head .hint{margin-top:4px}.chat-control-group input[type=range]{width:100%;accent-color:#52e4f5}.chat-event-log{max-height:190px;overflow:auto;margin:12px 0 0;padding:11px;border:1px solid var(--line);border-radius:12px;background:#07111f;color:#b9d9e8;white-space:pre-wrap;overflow-wrap:anywhere;font:10px/1.55 ui-monospace,monospace}.chat-control-group hr{border-color:var(--line)}
+body[data-theme="light"] .chat-control-group{background:#f4f8ff;border-color:#c5d6e7}body[data-theme="light"] .chat-event-log{background:#fff;color:#294766;border-color:#c5d6e7}
 </style>
 </head>
 <body>
@@ -195,10 +199,45 @@ body[data-theme="light"]{background:radial-gradient(ellipse at 50% -12%,#d7f5ff 
 <button id="retryGemini" hidden type="button">Thử kết nối lại Gemini</button>
 </section>
 <section class="card tab-panel" data-panel="chat" role="tabpanel" aria-labelledby="chatTitle" hidden>
-<div class="card-head"><div class="card-icon" aria-hidden="true">◉</div><div><h2 id="chatTitle">Xiaozhi Voice Monitor</h2><p class="hint">Theo dõi trạng thái hội thoại từ dữ liệu firmware hiện có</p></div></div>
-<div class="neural-banner"><div class="neural-copy"><span class="neural-eyebrow">VOICE ENGINE</span><strong id="chatVoiceState">Đang chờ dữ liệu...</strong><p id="chatVoiceDetail">Chưa đọc được trạng thái phiên Xiaozhi.</p></div><div class="neural-orb" aria-hidden="true"></div></div>
-<div class="chat-state-grid"><div class="chat-state"><span>Microphone</span><strong id="chatMicState">—</strong></div><div class="chat-state"><span>Speaker</span><strong id="chatSpeakerState">—</strong></div></div>
-<div class="chat-note">Firmware hiện chưa công khai trạng thái runtime riêng biệt cho Listening, Processing và Speaking qua API Web Admin. Màn hình này không tự suy đoán các trạng thái đó và không tạo transcript giả.</div></section>
+<div class="card-head"><div class="card-icon" aria-hidden="true">◉</div><div><h2 id="chatTitle">Trò chuyện · Voice Center</h2><p class="hint">Trạng thái XiaoZhi, nội dung OLED và điều khiển âm thanh</p></div></div>
+<div class="neural-banner"><div class="neural-copy"><span class="neural-eyebrow">VOICE ENGINE</span><strong id="chatVoiceState">Đang chờ dữ liệu...</strong><p id="chatVoiceDetail">Đang đọc trạng thái phiên XiaoZhi.</p></div><div class="neural-orb" aria-hidden="true"></div></div>
+<div class="oled-preview" aria-label="Mô phỏng nội dung OLED 128 nhân 64">
+  <div class="oled-top"><span id="chatOledWifi">Wi-Fi</span><strong id="chatOledClock">--:--:--</strong><span class="oled-battery" aria-label="Biểu tượng pin"></span></div>
+  <div class="oled-center"><strong id="chatOledState">ĐANG KẾT NỐI</strong><p id="chatOledMessage">CHATAI TPIOS</p></div>
+  <div class="oled-divider"></div>
+  <div id="chatOledFooter" class="oled-footer">CHATAI TPIOS - IP: WAIT - SERVER WAIT</div>
+</div>
+<p id="chatOledHealth" class="hint" role="status">Đang kiểm tra trạng thái OLED...</p>
+<div class="chat-state-grid">
+  <div class="chat-state"><span>Wi-Fi / IP</span><strong id="chatNetworkState">—</strong></div>
+  <div class="chat-state"><span>Microphone</span><strong id="chatMicState">—</strong></div>
+  <div class="chat-state"><span>Speaker</span><strong id="chatSpeakerState">—</strong></div>
+  <div class="chat-state"><span>Trạng thái AI</span><strong id="chatRuntimeState">—</strong></div>
+</div>
+<div class="chat-control-group">
+  <div class="chat-control-head"><div><h3>Điều khiển hội thoại</h3><p class="hint">Lệnh được gửi đến ESP32 và chỉ báo thành công khi firmware xác nhận</p></div></div>
+  <div class="actions"><button id="chatListenStart" type="button">🎙 Bắt đầu nghe</button><button id="chatClearDisplay" class="secondary" type="button">Xóa dòng hiển thị</button></div>
+  <p id="chatListenResult" class="hint" role="status" aria-live="polite"></p>
+</div>
+<div class="chat-control-group">
+  <h3>Âm thanh</h3>
+  <label for="chatVolume">Âm lượng loa: <output id="chatVolumeValue">—</output></label>
+  <input id="chatVolume" type="range" min="0" max="100" step="1" value="50">
+  <div class="actions"><button id="chatSaveVolume" type="button">Lưu âm lượng</button></div>
+  <p id="chatVolumeResult" class="hint" role="status" aria-live="polite"></p>
+  <hr>
+  <label for="chatMicGain">Độ nhạy microphone: <output id="chatMicGainValue">—</output></label>
+  <input id="chatMicGain" type="range" min="-6" max="6" step="1" value="0">
+  <div class="actions"><button id="chatSaveMic" type="button">Lưu độ nhạy</button></div>
+  <p id="chatMicResult" class="hint" role="status" aria-live="polite"></p>
+  <p class="hint">Độ nhạy là gain số thực tế từ -6 đến +6 dB, không phải ngưỡng VAD. Thay đổi dùng chung cấu hình với tab Điều khiển → Âm thanh.</p>
+</div>
+<div class="chat-control-group">
+  <div class="chat-control-head"><div><h3>Sự kiện gần đây</h3><p class="hint">Lấy từ Diagnostics trên ESP32 · tối đa 8 KB</p></div><button id="chatRefreshEvents" class="secondary" type="button">↻</button></div>
+  <pre id="chatEventLog" class="chat-event-log" aria-live="polite">Đang tải sự kiện...</pre>
+</div>
+<div class="chat-note">Hiện firmware chỉ giữ dòng văn bản hội thoại gần nhất để hiển thị OLED, không lưu transcript đầy đủ. Nút xóa chỉ xóa dòng hiển thị này, không xóa lịch sử trên máy chủ XiaoZhi. Gửi tin nhắn văn bản từ Web Admin chưa được bật vì ứng dụng hiện chưa có API gửi text an toàn tới phiên XiaoZhi.</div>
+</section>
 <section class="card tab-panel" data-panel="control" role="tabpanel" aria-labelledby="controlTitle" hidden>
 <div class="card-head"><div class="card-icon" aria-hidden="true">⌘</div><div><h2 id="controlTitle">Trung tâm điều khiển</h2><p class="hint">Chọn module để mở công cụ hiện có</p></div></div>
 <div class="module-grid">
@@ -383,6 +422,13 @@ let bleCachedDevices = [];
 let blePollTimer = null;
 let otaMaxBytes = 0;
 let currentBuildNumber = 0;
+const chatVolumeInput = document.getElementById("chatVolume");
+const chatVolumeValue = document.getElementById("chatVolumeValue");
+const chatMicGainInput = document.getElementById("chatMicGain");
+const chatMicGainValue = document.getElementById("chatMicGainValue");
+let chatVolumeDirty = false;
+let chatMicGainDirty = false;
+let chatAudioSaving = false;
 
 function showPanel(panelName) {
   document.querySelectorAll("[data-panel]").forEach(panel => { panel.hidden = panel.dataset.panel !== panelName; });
@@ -399,6 +445,7 @@ function showPanel(panelName) {
   }
   if (panelName === "ota") refreshFirmwareStatus().catch(error => { firmwareStatus.textContent = error.message; });
   if (panelName === "logs") refreshDiagnostics().catch(error => { diagnosticLog.textContent = error.message; });
+  if (panelName === "chat") refreshChatEvents().catch(error => { document.getElementById("chatEventLog").textContent = error.message; });
 }
 document.querySelectorAll("[data-tab]").forEach(button => button.addEventListener("click", () => showPanel(button.dataset.tab)));
 document.querySelectorAll("[data-open-panel]").forEach(button => button.addEventListener("click", () => showPanel(button.dataset.openPanel)));
@@ -413,6 +460,81 @@ let savedTheme = "dark";
 try { savedTheme = localStorage.getItem("chatai-theme") === "light" ? "light" : "dark"; } catch (_) {}
 applyTheme(savedTheme);
 themeToggle.addEventListener("click", () => applyTheme(document.body.dataset.theme === "light" ? "dark" : "light"));
+
+chatVolumeInput.addEventListener("input", () => {
+  chatVolumeDirty = true;
+  chatVolumeValue.textContent = chatVolumeInput.value + "%";
+});
+chatMicGainInput.addEventListener("input", () => {
+  chatMicGainDirty = true;
+  chatMicGainValue.textContent = (Number(chatMicGainInput.value) > 0 ? "+" : "") + chatMicGainInput.value + " dB";
+});
+async function saveChatAudio(url, payload, button, resultElement) {
+  if (chatAudioSaving) return;
+  chatAudioSaving = true;
+  button.disabled = true;
+  resultElement.textContent = "Đang gửi lệnh đến ESP32...";
+  try {
+    const response = await fetch(url, {
+      method:"POST", cache:"no-store",
+      headers:{"Content-Type":"application/json","X-ChatAI-CSRF":csrfToken},
+      body:JSON.stringify(payload)
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(data.error || ("ESP32 từ chối lệnh (HTTP " + response.status + ")"));
+    resultElement.textContent = data.message || "ESP32 đã xác nhận áp dụng.";
+    if (url === "/api/audio/volume") chatVolumeDirty = false;
+    if (url === "/api/audio/mic-gain") chatMicGainDirty = false;
+    refreshDeviceStatus().catch(() => {});
+  } catch (error) {
+    resultElement.textContent = error.message;
+  } finally {
+    chatAudioSaving = false;
+    button.disabled = false;
+  }
+}
+document.getElementById("chatSaveVolume").addEventListener("click", () => saveChatAudio(
+  "/api/audio/volume", {volume:Number(chatVolumeInput.value)},
+  document.getElementById("chatSaveVolume"), document.getElementById("chatVolumeResult")));
+document.getElementById("chatSaveMic").addEventListener("click", () => saveChatAudio(
+  "/api/audio/mic-gain", {gain_db:Number(chatMicGainInput.value)},
+  document.getElementById("chatSaveMic"), document.getElementById("chatMicResult")));
+document.getElementById("chatListenStart").addEventListener("click", async () => {
+  const button = document.getElementById("chatListenStart");
+  const result = document.getElementById("chatListenResult");
+  button.disabled = true;
+  result.textContent = "Đang yêu cầu ESP32 bắt đầu nghe...";
+  try {
+    const response = await fetch("/api/chat/listen/start", {
+      method:"POST", cache:"no-store", headers:{"X-ChatAI-CSRF":csrfToken}
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(data.error || ("Không thể bắt đầu nghe (HTTP " + response.status + ")"));
+    result.textContent = data.message || "ESP32 đã nhận lệnh bắt đầu nghe.";
+    await refreshDeviceStatus();
+  } catch (error) {
+    result.textContent = error.message;
+  } finally { button.disabled = false; }
+});
+document.getElementById("chatClearDisplay").addEventListener("click", async () => {
+  if (!confirm("Xóa dòng văn bản hội thoại đang hiển thị trên OLED và Web Admin? Không xóa lịch sử máy chủ XiaoZhi.")) return;
+  const button = document.getElementById("chatClearDisplay");
+  button.disabled = true;
+  try {
+    const response = await fetch("/api/chat/display/clear", {
+      method:"POST", cache:"no-store", headers:{"X-ChatAI-CSRF":csrfToken}
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(data.error || ("Không xóa được nội dung hiển thị (HTTP " + response.status + ")"));
+    document.getElementById("chatListenResult").textContent = data.message || "Đã xóa dòng hiển thị.";
+    await refreshDeviceStatus();
+  } catch (error) {
+    document.getElementById("chatListenResult").textContent = error.message;
+  } finally { button.disabled = false; }
+});
+document.getElementById("chatRefreshEvents").addEventListener("click", () => refreshChatEvents().catch(error => {
+  document.getElementById("chatEventLog").textContent = error.message;
+}));
 
 speakerVolumeInput.addEventListener("input", () => {
   speakerVolumeDirty = true;
@@ -1078,6 +1200,13 @@ function formatOverviewBytes(bytes) {
   if (!Number.isFinite(value) || value < 0) return "—";
   return value >= 1048576 ? (value / 1048576).toFixed(2) + " MB" : Math.round(value / 1024) + " KB";
 }
+async function refreshChatEvents() {
+  const response = await fetch("/api/diagnostics", {cache:"no-store"});
+  if (!response.ok) throw new Error("Không đọc được sự kiện (HTTP " + response.status + ")");
+  const text = await response.text();
+  const lines = text.trim().split("\\n").filter(Boolean).slice(-12);
+  document.getElementById("chatEventLog").textContent = lines.length ? lines.join("\\n") : "Chưa có sự kiện được ghi nhận.";
+}
 async function refreshDeviceStatus() {
   const response = await fetch("/api/device/status", {cache:"no-store"});
   if (!response.ok) throw new Error("Không đọc được trạng thái thiết bị (HTTP " + response.status + ")");
@@ -1108,6 +1237,26 @@ async function refreshDeviceStatus() {
     : "Đang chờ kết nối voice backend.";
   document.getElementById("chatMicState").textContent = data.microphone_enabled ? "Đang bật" : "Đang tắt";
   document.getElementById("chatSpeakerState").textContent = data.speaker_enabled ? "Đang bật" : "Đang tắt";
+  const runtimeLabels = {connecting:"Đang kết nối",waiting:"Đang chờ",listening:"Đang nghe",processing:"Đang xử lý",speaking:"Đang nói",error:"Lỗi"};
+  const runtimeLabel = runtimeLabels[data.xiaozhi_runtime_state] || "Chưa xác định";
+  document.getElementById("chatRuntimeState").textContent = runtimeLabel;
+  document.getElementById("chatNetworkState").textContent = (data.ssid || (data.wifi_connected ? "Wi-Fi" : "Mất Wi-Fi")) + (data.ip ? " · " + data.ip : "");
+  document.getElementById("chatOledWifi").textContent = data.wifi_connected ? "Wi-Fi ●" : "Wi-Fi ×";
+  document.getElementById("chatOledClock").textContent = data.oled_clock || "--:--:--";
+  document.getElementById("chatOledState").textContent = (runtimeLabel || "ĐANG KẾT NỐI").toLocaleUpperCase("vi-VN");
+  document.getElementById("chatOledMessage").textContent = data.oled_chat_message || "CHATAI TPIOS";
+  document.getElementById("chatOledFooter").textContent = data.oled_footer || ("CHATAI TPIOS - IP: " + (data.ip || "WAIT"));
+  document.getElementById("chatOledHealth").textContent = data.oled_ready
+    ? "OLED: firmware đã khởi tạo màn hình · nội dung đang đồng bộ từ cùng nguồn trạng thái."
+    : "OLED vật lý chưa xác nhận khởi tạo; phần xem trước vẫn hiển thị dữ liệu trạng thái do firmware cung cấp.";
+  if (!chatVolumeDirty && document.activeElement !== chatVolumeInput) {
+    chatVolumeInput.value = String(Number(data.speaker_volume ?? 50));
+    chatVolumeValue.textContent = chatVolumeInput.value + "%";
+  }
+  if (!chatMicGainDirty && document.activeElement !== chatMicGainInput) {
+    chatMicGainInput.value = String(Number(data.mic_gain_db ?? 0));
+    chatMicGainValue.textContent = (Number(chatMicGainInput.value) > 0 ? "+" : "") + chatMicGainInput.value + " dB";
+  }
   document.getElementById("overviewDeviceState").textContent = state;
   document.getElementById("overviewUpdated").textContent = "Cập nhật lúc " +
     new Date().toLocaleTimeString("vi-VN", {hour:"2-digit", minute:"2-digit", second:"2-digit"});
@@ -1216,6 +1365,9 @@ refreshDiagnostics().catch(error => { diagnosticLog.textContent = error.message;
 setInterval(() => {
   refreshDeviceStatus().catch(error => { deviceStatus.textContent = error.message; });
   refreshDiagnostics().catch(error => { diagnosticResult.textContent = error.message; });
+  if (!document.querySelector('[data-panel="chat"]').hidden) {
+    refreshChatEvents().catch(error => { document.getElementById("chatEventLog").textContent = error.message; });
+  }
 }, 5000);
 </script>
 </body>
@@ -1398,6 +1550,22 @@ esp_err_t DeviceStatusHandler(httpd_req_t* request) {
     cJSON_AddNumberToObject(root, "min_free_heap", esp_get_minimum_free_heap_size());
     cJSON_AddNumberToObject(root, "uptime_seconds", esp_timer_get_time() / 1000000);
     cJSON_AddNumberToObject(root, "build_number", chatai::firmware::kBuildNumber);
+    chatai::display::WebSnapshot oled_snapshot{};
+    chatai::display::GetWebSnapshot(oled_snapshot);
+    cJSON_AddBoolToObject(root, "oled_ready", oled_snapshot.oled_ready);
+    cJSON_AddStringToObject(root, "oled_clock", oled_snapshot.clock);
+    cJSON_AddStringToObject(root, "oled_chat_message", oled_snapshot.chat_message);
+    cJSON_AddStringToObject(root, "oled_footer", oled_snapshot.footer);
+    const char* runtime_state = "connecting";
+    switch (chatai::xiaozhi::GetDisplayRuntimeState()) {
+        case chatai::xiaozhi::RuntimeState::kWaiting: runtime_state = "waiting"; break;
+        case chatai::xiaozhi::RuntimeState::kListening: runtime_state = "listening"; break;
+        case chatai::xiaozhi::RuntimeState::kProcessing: runtime_state = "processing"; break;
+        case chatai::xiaozhi::RuntimeState::kSpeaking: runtime_state = "speaking"; break;
+        case chatai::xiaozhi::RuntimeState::kError: runtime_state = "error"; break;
+        case chatai::xiaozhi::RuntimeState::kConnecting: default: break;
+    }
+    cJSON_AddStringToObject(root, "xiaozhi_runtime_state", runtime_state);
     char* json = cJSON_PrintUnformatted(root);
     cJSON_Delete(root);
     if (json == nullptr) return SendError(request, "500 Internal Server Error", "Không thể tạo trạng thái thiết bị");
@@ -1751,6 +1919,29 @@ esp_err_t MicGainPostHandler(httpd_req_t* request) {
     return SendJson(request, "200 OK", response);
 }
 
+esp_err_t ChatListenStartHandler(httpd_req_t* request) {
+    if (!IsAuthorizedMutation(request)) {
+        return SendError(request, "403 Forbidden", "Yêu cầu không hợp lệ");
+    }
+    if (!chatai::xiaozhi::IsReady()) {
+        return SendError(request, "409 Conflict", "XiaoZhi chưa sẵn sàng hoặc chưa kết nối mạng");
+    }
+    if (!chatai::xiaozhi::StartConversation()) {
+        return SendError(request, "409 Conflict", "Thiết bị chưa thể bắt đầu nghe ở trạng thái hiện tại");
+    }
+    return SendJson(request, "200 OK",
+                    "{\\"success\\":true,\\"message\\":\\"ESP32 đã nhận lệnh bắt đầu nghe.\\",\\"state\\":\\"listening\\"}");
+}
+
+esp_err_t ChatDisplayClearHandler(httpd_req_t* request) {
+    if (!IsAuthorizedMutation(request)) {
+        return SendError(request, "403 Forbidden", "Yêu cầu không hợp lệ");
+    }
+    chatai::display::ClearChatMessages();
+    return SendJson(request, "200 OK",
+                    "{\\"success\\":true,\\"message\\":\\"Đã xóa dòng hội thoại gần nhất khỏi màn hình.\\",\\"scope\\":\\"display_only\\"}");
+}
+
 esp_err_t WifiConnectAdminHandler(httpd_req_t* request) {
     if (!IsAuthorizedMutation(request)) {
         return SendError(request, "403 Forbidden", "Yêu cầu không hợp lệ");
@@ -2006,6 +2197,16 @@ esp_err_t RegisterRoutes(httpd_handle_t server, const std::string& csrf_token) {
     mic_gain_uri.method = HTTP_POST;
     mic_gain_uri.handler = MicGainPostHandler;
 
+    httpd_uri_t chat_listen_start_uri{};
+    chat_listen_start_uri.uri = "/api/chat/listen/start";
+    chat_listen_start_uri.method = HTTP_POST;
+    chat_listen_start_uri.handler = ChatListenStartHandler;
+
+    httpd_uri_t chat_display_clear_uri{};
+    chat_display_clear_uri.uri = "/api/chat/display/clear";
+    chat_display_clear_uri.method = HTTP_POST;
+    chat_display_clear_uri.handler = ChatDisplayClearHandler;
+
     httpd_uri_t wifi_connect_uri{};
     wifi_connect_uri.uri = "/api/wifi/connect";
     wifi_connect_uri.method = HTTP_POST;
@@ -2084,6 +2285,8 @@ esp_err_t RegisterRoutes(httpd_handle_t server, const std::string& csrf_token) {
     if (result == ESP_OK) result = httpd_register_uri_handler(server, &gemini_prompt_uri);
     if (result == ESP_OK) result = httpd_register_uri_handler(server, &audio_volume_uri);
     if (result == ESP_OK) result = httpd_register_uri_handler(server, &mic_gain_uri);
+    if (result == ESP_OK) result = httpd_register_uri_handler(server, &chat_listen_start_uri);
+    if (result == ESP_OK) result = httpd_register_uri_handler(server, &chat_display_clear_uri);
     if (result == ESP_OK) result = httpd_register_uri_handler(server, &wifi_connect_uri);
     if (result == ESP_OK) result = httpd_register_uri_handler(server, &device_status_uri);
     if (result == ESP_OK) result = httpd_register_uri_handler(server, &reconnect_uri);
