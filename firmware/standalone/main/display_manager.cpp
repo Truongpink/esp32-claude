@@ -40,13 +40,13 @@ constexpr TickType_t kScrollStepTicks = pdMS_TO_TICKS(120);
 
 i2c_master_bus_handle_t g_bus = nullptr;
 i2c_master_dev_handle_t g_display = nullptr;
-bool g_initialized = false;
+std::atomic<bool> g_initialized{false};
 bool g_display_task_started = false;
 bool g_first_full_refresh_logged = false;
 bool g_bus_reset_required = false;
 int64_t g_last_init_error_log_us = 0;
 bool g_sntp_started = false;
-bool g_time_synced = false;
+std::atomic<bool> g_time_synced{false};
 std::atomic<bool> g_audio_ready{false};
 std::mutex g_content_mutex;
 char g_chat_message[96]{};
@@ -354,6 +354,7 @@ void UpdateFooter() {
     std::snprintf(next, sizeof(next), "CHATAI TPIOS - IP: %s - SERVER %s",
                   has_ip ? ip_address.c_str() : "WAIT",
                   server_ready ? "READY" : "WAIT");
+    std::lock_guard<std::mutex> lock(g_content_mutex);
     if (std::strcmp(next, g_footer) == 0) return;
     std::snprintf(g_footer, sizeof(g_footer), "%s", next);
     g_footer_x = -TextWidth(g_footer);
@@ -703,6 +704,21 @@ void SetChatMessage(const char* role, const char* message) {
 void ClearChatMessages() {
     std::lock_guard<std::mutex> lock(g_content_mutex);
     g_chat_message[0] = '\0';
+}
+
+void GetWebSnapshot(WebSnapshot& snapshot) {
+    snapshot = WebSnapshot{};
+    snapshot.oled_ready = g_initialized.load();
+    const std::time_t now = std::time(nullptr);
+    if (g_time_synced.load() && now >= 1700000000) {
+        std::tm local_time{};
+        if (localtime_r(&now, &local_time) != nullptr) {
+            std::strftime(snapshot.clock, sizeof(snapshot.clock), "%H:%M:%S", &local_time);
+        }
+    }
+    std::lock_guard<std::mutex> lock(g_content_mutex);
+    std::snprintf(snapshot.chat_message, sizeof(snapshot.chat_message), "%s", g_chat_message);
+    std::snprintf(snapshot.footer, sizeof(snapshot.footer), "%s", g_footer);
 }
 
 void SetBluetoothStatus(BluetoothStatus status, size_t device_count, int error_code) {
