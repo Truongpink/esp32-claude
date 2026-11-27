@@ -2,6 +2,7 @@
 #include "assets/lang_config.h"
 #include "audio_codec.h"
 #include "board.h"
+#include "diagnostic_manager.h"
 #include "cjson_utils.h"
 #include "display.h"
 #include "mcp_server.h"
@@ -592,10 +593,19 @@ void Application::CheckNewVersion() {
         auto display = board.GetDisplay();
         display->SetStatus(Lang::Strings::CHECKING_NEW_VERSION);
 
+        char check_detail[64]{};
+        std::snprintf(check_detail, sizeof(check_detail), "attempt=%d",
+                      retry_count + 1);
+        chatai::diagnostics::Add("OTA_CHECK", "START", check_detail);
         auto check = ota_->CheckVersion();
         if (IsActivationCancelled()) return;
         if (!check) {
             retry_count++;
+            char failure_detail[224]{};
+            std::snprintf(failure_detail, sizeof(failure_detail),
+                          "attempt=%d max=%d error=%.150s",
+                          retry_count, MAX_RETRY, check.error().ToString().c_str());
+            chatai::diagnostics::Add("OTA_CHECK", "FAIL", failure_detail);
             if (retry_count >= MAX_RETRY) {
                 ESP_LOGE(TAG, "Too many retries, exit version check");
                 return;
@@ -618,6 +628,11 @@ void Application::CheckNewVersion() {
                 alert_message_length >= static_cast<int>(sizeof(buffer))) {
                 snprintf(buffer, sizeof(buffer), "%s", err.Message());
             }
+            char alert_detail[96]{};
+            std::snprintf(alert_detail, sizeof(alert_detail),
+                          "reason=OTA_CHECK_FAILED attempt=%d retry_delay_s=%d",
+                          retry_count, retry_delay);
+            chatai::diagnostics::Add("ALERT_SOUND", "REQUEST", alert_detail);
             Alert(Lang::Strings::ERROR, buffer, "cloud_off", Lang::Sounds::OGG_EXCLAMATION);
 
             ESP_LOGW(TAG, "Check new version failed, retry in %d seconds (%d/%d)", retry_delay,
@@ -632,6 +647,7 @@ void Application::CheckNewVersion() {
             retry_delay = std::min(retry_delay * 2, 60);  // Cap retry delay at 60 seconds
             continue;
         }
+        chatai::diagnostics::Add("OTA_CHECK", "OK", "version_check=passed");
         retry_count = 0;
         retry_delay = 10;  // Reset retry delay
 

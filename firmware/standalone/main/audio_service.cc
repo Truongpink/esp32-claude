@@ -897,6 +897,13 @@ void AudioService::ResetUplinkDiagnostics() {
 }
 
 void AudioService::PlaySound(const std::string_view& ogg) {
+    char request_detail[96]{};
+    std::snprintf(request_detail, sizeof(request_detail),
+                  "ogg_bytes=%u output_enabled=%d",
+                  static_cast<unsigned>(ogg.size()),
+                  codec_->output_enabled() ? 1 : 0);
+    chatai::diagnostics::Add("SOUND_PLAY", "START", request_detail);
+
     if (!codec_->output_enabled()) {
         esp_timer_stop(audio_power_timer_);
         esp_timer_start_periodic(audio_power_timer_, AUDIO_POWER_CHECK_INTERVAL_MS * 1000);
@@ -907,8 +914,10 @@ void AudioService::PlaySound(const std::string_view& ogg) {
     size_t size = ogg.size();
 
     auto demuxer = std::make_unique<OggDemuxer>();
+    size_t parsed_packets = 0;
     demuxer->OnPacket(
-        [this](const uint8_t* data, int sample_rate, int frame_duration_ms, size_t size) {
+        [this, &parsed_packets](const uint8_t* data, int sample_rate, int frame_duration_ms, size_t size) {
+            ++parsed_packets;
             auto packet = std::make_unique<AudioStreamPacket>();
             packet->sample_rate = sample_rate;
             packet->frame_duration = frame_duration_ms;
@@ -918,6 +927,11 @@ void AudioService::PlaySound(const std::string_view& ogg) {
         });
     demuxer->Reset();
     demuxer->Process(buf, size);
+    char parsed_detail[80]{};
+    std::snprintf(parsed_detail, sizeof(parsed_detail), "parsed_packets=%u",
+                  static_cast<unsigned>(parsed_packets));
+    chatai::diagnostics::Add("SOUND_PLAY", parsed_packets > 0 ? "OK" : "EMPTY",
+                             parsed_detail);
 }
 
 bool AudioService::IsIdle() {

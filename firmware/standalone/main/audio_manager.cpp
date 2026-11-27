@@ -167,16 +167,21 @@ esp_err_t Initialize() {
     }
     chatai::diagnostics::Add("AMP_ENABLE", "OK", "speaker amplifier GPIO17 set HIGH");
 
+    chatai::diagnostics::Add("SPEAKER_I2S", "START",
+                             "configuring I2S0 speaker TX and I2S1 microphone RX");
     err = ConfigureSpeaker();
     if (err == ESP_OK) {
         err = ConfigureMicrophone();
     }
     if (err != ESP_OK) {
         ESP_LOGE(kTag, "I2S channel setup failed: %s", esp_err_to_name(err));
+        chatai::diagnostics::Add("SPEAKER_I2S", "FAIL", esp_err_to_name(err));
         DeleteChannels();
         gpio_set_level(kSpeakerAmpEnable, 0);
         return err;
     }
+    chatai::diagnostics::Add("SPEAKER_I2S", "OK",
+                             "I2S0 speaker TX and I2S1 microphone RX configured");
 
     ESP_LOGW(kTag, "I2S ready; microphone GPIO 5/4/6 remains a provisional, unverified mapping");
     ESP_LOGI(kTag, "Speaker: I2S0, 24 kHz PCM16; microphone: I2S1, 16 kHz 32-bit input");
@@ -217,6 +222,9 @@ esp_err_t EnableSpeaker(bool enable) {
     std::lock_guard<std::mutex> state_lock(s_state_mutex);
     std::lock_guard<std::mutex> io_lock(s_speaker_io_mutex);
     if (s_speaker_tx == nullptr) {
+        chatai::diagnostics::Add("SPEAKER_ENABLE", "FAIL",
+                                 enable ? "requested=enabled reason=channel_uninitialized"
+                                        : "requested=disabled reason=channel_uninitialized");
         return ESP_ERR_INVALID_STATE;
     }
     if (enable == s_speaker_enabled.load()) {
@@ -227,6 +235,10 @@ esp_err_t EnableSpeaker(bool enable) {
                            : i2s_channel_disable(s_speaker_tx);
     if (err == ESP_OK) {
         s_speaker_enabled = enable;
+        chatai::diagnostics::Add("SPEAKER_ENABLE", "OK",
+                                 enable ? "state=enabled" : "state=disabled");
+    } else {
+        chatai::diagnostics::Add("SPEAKER_ENABLE", "FAIL", esp_err_to_name(err));
     }
     return err;
 }

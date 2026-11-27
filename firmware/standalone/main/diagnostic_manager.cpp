@@ -5,8 +5,10 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
+#include <ctime>
 #include <mutex>
 #include <string>
+#include <sys/time.h>
 
 #include <esp_timer.h>
 #include <esp_attr.h>
@@ -117,6 +119,12 @@ bool ShouldKeepDiagnostic(const char* stage, const char* result) {
         std::strcmp(stage, "PREVIOUS_BOOT_EVENT") == 0) {
         return true;
     }
+    if (std::strcmp(stage, "AMP_ENABLE") == 0 ||
+        std::strcmp(stage, "SPEAKER_I2S") == 0 ||
+        std::strcmp(stage, "SPEAKER_ENABLE") == 0 ||
+        std::strcmp(stage, "OTA_CHECK") == 0 ||
+        std::strcmp(stage, "ALERT_SOUND") == 0 ||
+        std::strcmp(stage, "SOUND_PLAY") == 0) return true;
     if (std::strcmp(stage, "BOOT") == 0 && result != nullptr &&
         std::strcmp(result, "INFO") == 0) return true;
     if (std::strcmp(stage, "WIFI") == 0 && result != nullptr &&
@@ -140,7 +148,30 @@ void SetTimeSyncStatus(bool synchronized, const char* source) {
 
 void Add(const char* stage, const char* result, const char* detail) {
     if (!ShouldKeepDiagnostic(stage, result)) return;
-    std::string line = "[UPTIME_MS=";
+
+    timeval wall_time{};
+    const bool wall_time_valid =
+        gettimeofday(&wall_time, nullptr) == 0 &&
+        wall_time.tv_sec >= 1735689600 && wall_time.tv_sec < 4102444800;
+    const bool time_synchronized = wall_time_valid;
+    char real_time[48] = "UNSYNCED";
+    if (wall_time_valid) {
+        const std::time_t ict_seconds = wall_time.tv_sec + 7 * 60 * 60;
+        std::tm ict_time{};
+        if (gmtime_r(&ict_seconds, &ict_time) != nullptr) {
+            std::snprintf(real_time, sizeof(real_time),
+                          "%04d-%02d-%02d %02d:%02d:%02d.%03ld ICT",
+                          ict_time.tm_year + 1900, ict_time.tm_mon + 1,
+                          ict_time.tm_mday, ict_time.tm_hour, ict_time.tm_min,
+                          ict_time.tm_sec, static_cast<long>(wall_time.tv_usec / 1000));
+        }
+    }
+
+    std::string line = "[TIME_SYNC=";
+    line += time_synchronized ? "SYNCED" : "UNSYNCED";
+    line += "][TIME_REAL=";
+    line += real_time;
+    line += "][UPTIME_MS=";
     line += std::to_string(static_cast<long long>(esp_timer_get_time() / 1000));
     line += "]";
     line += "[";
