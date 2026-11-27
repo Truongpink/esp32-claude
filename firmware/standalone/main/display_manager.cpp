@@ -53,6 +53,9 @@ std::atomic<int64_t> g_bluetooth_status_until_us{0};
 std::array<uint8_t, kWidth * kPages> g_frame{};
 std::array<uint8_t, kWidth * kPages> g_last_flushed_frame{};
 bool g_frame_flushed = false;
+int64_t g_last_full_refresh_us = 0;
+int64_t g_next_i2c_recovery_us = 0;
+int64_t g_last_i2c_error_log_us = 0;
 char g_footer[96] = "CHATAI TPIOS - WIFI WAIT - SERVER WAIT";
 int g_footer_x = -static_cast<int>(sizeof("CHATAI TPIOS - WIFI WAIT - SERVER WAIT") - 1) * kGlyphWidth;
 TickType_t g_last_scroll_tick = 0;
@@ -335,11 +338,33 @@ const char* StatusText(chatai::xiaozhi::RuntimeState state) {
     return "ĐANG KẾT NỐI";
 }
 
+esp_err_t InitializeController() {
+    const uint8_t initialization[] = {
+        0x00, 0xAE, 0xD5, 0x80, 0xA8, 0x3F, 0xD3, 0x00,
+        0x40, 0x8D, 0x14, 0x20, 0x02, 0xA1, 0xC8, 0xDA,
+        0x12, 0x81, 0x7F, 0xD9, 0xF1, 0xDB, 0x40, 0xA6, 0xAF
+    };
+    return i2c_master_transmit(g_display, initialization, sizeof(initialization), 250);
+}
+
 esp_err_t FlushFrame() {
+    constexpr int64_t kFullRefreshIntervalUs = 5000000;
+    const int64_t now_us = esp_timer_get_time();
+    const bool force_full_refresh = !g_frame_flushed ||
+        now_us - g_last_full_refresh_us >= kFullRefreshIntervalUs;
+
+    if (force_full_refresh) {
+        // The SSD1306 may lose its display RAM while the ESP32 framebuffer stays unchanged.
+        const uint8_t display_on[] = {0x00, 0xAF};
+        const esp_err_t wake_result =
+            i2c_master_transmit(g_display, display_on, sizeof(display_on), 100);
+        if (wake_result != ESP_OK) return wake_result;
+    }
+
     for (uint8_t page = 0; page < kPages; ++page) {
         const size_t offset = page * kWidth;
         const uint8_t* current = g_frame.data() + offset;
-        if (g_frame_flushed &&
+        if (!force_full_refresh && g_frame_flushed &&
             std::memcmp(current, g_last_flushed_frame.data() + offset, kWidth) == 0) {
             continue;
         }
@@ -358,6 +383,7 @@ esp_err_t FlushFrame() {
         std::memcpy(g_last_flushed_frame.data() + offset, current, kWidth);
     }
     g_frame_flushed = true;
+    if (force_full_refresh) g_last_full_refresh_us = now_us;
     return ESP_OK;
 }
 
@@ -444,7 +470,32 @@ void RenderStatus() {
     static bool first_frame_logged = false;
     const esp_err_t result = FlushFrame();
     if (result != ESP_OK) {
-        ESP_LOGE(kTag, "OLED framebuffer transfer failed: %s", esp_err_to_name(result));
+        g_frame_flushed = false;
+        const int64_t now_us = esp_timer_get_time();
+        if (now_us - g_last_i2c_error_log_us >= 5000000) {
+            ESP_LOGE(kTag, "OLED framebuffer transfer failed: %s",
+                     esp_err_to_name(result));
+            g_last_i2c_error_log_us = now_us;
+        }
+
+        // Recover only the OLED's I2C bus; never restart the ESP32 or audio subsystem.
+        if (now_us >= g_next_i2c_recovery_us) {
+            g_next_i2c_recovery_us = now_us + 5000000;
+            const esp_err_t reset_result = i2c_master_bus_reset(g_bus);
+            if (reset_result == ESP_OK) {
+                const esp_err_t init_result = InitializeController();
+                if (init_result == ESP_OK) {
+                    g_last_full_refresh_us = 0;
+                    ESP_LOGW(kTag, "OLED I2C bus and SSD1306 controller recovered");
+                } else {
+                    ESP_LOGE(kTag, "OLED controller reinitialization failed: %s",
+                             esp_err_to_name(init_result));
+                }
+            } else {
+                ESP_LOGE(kTag, "OLED I2C bus recovery failed: %s",
+                         esp_err_to_name(reset_result));
+            }
+        }
     } else if (!first_frame_logged) {
         ESP_LOGI(kTag, "OLED first framebuffer transfer completed");
         first_frame_logged = true;
@@ -490,12 +541,7 @@ esp_err_t Initialize() {
         return result;
     }
 
-    const uint8_t initialization[] = {
-        0x00, 0xAE, 0xD5, 0x80, 0xA8, 0x3F, 0xD3, 0x00,
-        0x40, 0x8D, 0x14, 0x20, 0x02, 0xA1, 0xC8, 0xDA,
-        0x12, 0x81, 0x7F, 0xD9, 0xF1, 0xDB, 0x40, 0xA6, 0xAF
-    };
-    result = i2c_master_transmit(g_display, initialization, sizeof(initialization), 250);
+    result = InitializeController();
     if (result != ESP_OK) {
         ESP_LOGE(kTag, "SSD1306 initialization command failed (address=0x%02X): %s",
                  kAddress, esp_err_to_name(result));
