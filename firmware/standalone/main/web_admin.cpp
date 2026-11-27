@@ -240,7 +240,7 @@ body[data-theme="light"]{background:radial-gradient(ellipse at 50% -12%,#d7f5ff 
 <label for="wifiPassword">Mật khẩu Wi-Fi</label>
 <div style="display:flex;gap:8px"><input id="wifiPassword" type="password" maxlength="64" autocomplete="current-password" placeholder="Nhập mật khẩu Wi-Fi" style="flex:1;min-width:0"><button type="button" id="toggleWifiPassword" class="secondary">Hiện</button></div>
 <div class="actions"><button type="button" id="connectAdminWifi">Lưu và kết nối</button></div>
-<p class="hint">Thông tin Wi-Fi chỉ được lưu vào NVS sau khi thiết bị kết nối router, nhận IP và xác minh DNS/TCP 443 thành công. SoftAP cấu hình được giữ trong lúc thử kết nối.</p>
+<p class="hint">Thông tin Wi-Fi được lưu sau khi STA kết nối router và nhận IPv4. DNS, Internet và máy chủ AI được kiểm tra riêng; lỗi các dịch vụ này không làm mất Wi-Fi hoặc Web Admin.</p>
 </section>
 <section class="card tab-panel" data-panel="bluetooth" role="tabpanel" aria-labelledby="bluetoothTitle" hidden>
 <div class="card-head"><div class="card-icon" aria-hidden="true">ᛒ</div><div><h2 id="bluetoothTitle">Bluetooth Tool · BLE Scanner</h2><p class="hint">Quét thụ động các thiết bị Bluetooth Low Energy xung quanh</p></div></div>
@@ -641,7 +641,7 @@ async function pollAdminWifiStatus() {
     if (!response.ok) throw new Error("Không đọc được trạng thái Wi-Fi (HTTP " + response.status + ")");
     const state = await response.json();
     wifiAdminStatus.textContent = state.message + (state.ip ? " IP: " + state.ip : "");
-    if ((state.state === 1 || state.state === 2 || state.state === 5) && wifiPollAttempts++ < 60) {
+    if ((state.state === 1 || state.state === 2) && wifiPollAttempts++ < 60) {
       setTimeout(pollAdminWifiStatus, 1500);
     } else if (state.state === 3) {
       wifiPasswordInput.value = "";

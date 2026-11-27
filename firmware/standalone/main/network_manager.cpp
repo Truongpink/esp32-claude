@@ -283,13 +283,8 @@ void InternetCheckTask(void*) {
             }
         }
 
-        if (available) {
-            if (g_has_credentials.load()) g_wifi_setup_state.store(3);
-        } else if (g_has_credentials.load()) {
-            // This probe targets api.tenclass.net only; it does not determine
-            // whether the router connection or LAN Web Admin is available.
-            g_wifi_setup_state.store(5);
-        }
+        // Router connectivity is established by STA receiving IPv4. This
+        // service probe must never change the router/Web Admin connection state.
 
         vTaskDelay(pdMS_TO_TICKS(available ? 10000 : 5000));
     }
@@ -651,14 +646,14 @@ a{color:#c4a5ff;text-decoration:none;font-size:13px}
 <header><div class="mark" aria-hidden="true">✦</div><div><h1>ChatAI TPIOS</h1><p class="sub">Thiết lập kết nối mạng Wi-Fi</p></div></header>
 <section class="card">
 <h2>Kết nối Wi-Fi nhà anh</h2>
-<p>Chọn mạng Wi-Fi, nhập mật khẩu rồi lưu để thiết bị kết nối Internet và kết nối máy chủ Xiaozhi.</p>
+<p>Chọn mạng Wi-Fi và nhập mật khẩu. Web Admin trên mạng LAN hoạt động độc lập với Internet và máy chủ AI.</p>
 <form id="wifiForm" method="post" action="/wifi">
 <input type="hidden" name="token" value=")html" + g_form_token + R"html(">
 <label for="ssid">Tên mạng Wi-Fi (SSID)</label>
 <select id="ssid" name="ssid" required><option value="">Đang tìm mạng Wi-Fi...</option></select>
 <div class="actions"><button type="button" class="secondary" id="scanWifi">Quét lại Wi-Fi</button></div>
 <label for="password">Mật khẩu Wi-Fi</label>
-<input id="password" name="password" type="password" maxlength="64" autocomplete="current-password" placeholder="Nhập mật khẩu mạng">
+<div style="display:flex;gap:9px"><input id="password" name="password" type="password" maxlength="64" autocomplete="current-password" placeholder="Nhập mật khẩu mạng" style="flex:1;min-width:0"><button type="button" class="secondary" id="togglePassword">Hiện</button></div>
 <div class="actions"><button type="submit">Lưu và kết nối</button></div>
 </form>
 <p id="scanStatus" role="status" aria-live="polite">Đang quét các mạng Wi-Fi xung quanh...</p>
@@ -697,6 +692,13 @@ async function scanWifi(){
 document.getElementById("scanWifi").addEventListener("click",scanWifi);
 const form=document.getElementById("wifiForm");
 const wifiStatus=document.getElementById("wifiStatus");
+const passwordInput=document.getElementById("password");
+const togglePassword=document.getElementById("togglePassword");
+togglePassword.addEventListener("click",()=>{
+  const visible=passwordInput.type==="password";
+  passwordInput.type=visible?"text":"password";
+  togglePassword.textContent=visible?"Ẩn":"Hiện";
+});
 form.addEventListener("submit",async event=>{
   event.preventDefault();
   wifiStatus.textContent="Đang gửi cấu hình Wi-Fi...";
@@ -714,7 +716,10 @@ async function pollWifiStatus(){
     const state=await response.json();
     wifiStatus.textContent=state.message;
     if(state.state===1||state.state===2)setTimeout(pollWifiStatus,1500);
-    else if(state.state===3)wifiStatus.textContent=state.message+" IP: "+state.ip;
+    else if(state.state===3){
+      wifiStatus.textContent=state.message+" IP: "+state.ip+
+        ". Hãy chuyển iPhone sang Wi-Fi nhà rồi mở http://"+state.ip+"/admin để tiếp tục quản trị.";
+    }
   }catch(error){
     wifiStatus.textContent=error.message;
     setTimeout(pollWifiStatus,3000);
@@ -860,8 +865,10 @@ esp_err_t StartHttpServer() {
 }
 
 esp_err_t StartProvisioning() {
-    bool expected = false;
-    if (!g_provisioning_started.compare_exchange_strong(expected, true)) return ESP_OK;
+    // Reapply APSTA/AP configuration even when provisioning was already
+    // marked active: a failed STA association can leave the shared radio
+    // on the router's channel and make the setup AP unreachable.
+    const bool was_started = g_provisioning_started.exchange(true);
 
     if (g_ap_netif == nullptr) {
         g_ap_netif = esp_netif_create_default_wifi_ap();
@@ -912,9 +919,10 @@ esp_err_t StartProvisioning() {
         return result;
     }
 
-    ESP_LOGI(kTag, "Open Wi-Fi setup AP started: ssid=%s ip=192.168.50.1",
-             g_provisioning_ssid.c_str());
-    chatai::diagnostics::Add("WIFI_RECOVERY", "AP_STARTED",
+    ESP_LOGI(kTag, "Open Wi-Fi setup AP %s: ssid=%s ip=192.168.50.1",
+             was_started ? "restored" : "started", g_provisioning_ssid.c_str());
+    chatai::diagnostics::Add("WIFI_RECOVERY",
+                             was_started ? "AP_RESTORED" : "AP_STARTED",
                              g_provisioning_ssid.c_str());
     return ESP_OK;
 }
@@ -973,6 +981,27 @@ void EventHandler(void*, esp_event_base_t event_base, int32_t event_id, void* ev
             return;
         }
         g_wifi_disconnect_reason.store(reason);
+        const bool authentication_failed =
+            reason == WIFI_REASON_AUTH_FAIL ||
+            reason == WIFI_REASON_4WAY_HANDSHAKE_TIMEOUT ||
+            reason == WIFI_REASON_HANDSHAKE_TIMEOUT;
+        if (g_has_credentials.load() && authentication_failed) {
+            g_wifi_setup_state.store(4);
+            g_next_reconnect_ticks.store(0);
+            MarkStaOutageStarted();
+            chatai::diagnostics::Add(
+                "WIFI", "SAVED_CREDENTIALS_REJECTED",
+                "Saved router credentials failed authentication; setup AP recovery requested");
+            chatai::display::Notify("WI-FI", "Mat khau da doi");
+            const esp_err_t ap_result = StartProvisioning();
+            if (ap_result != ESP_OK) {
+                ESP_LOGE(kTag, "Could not restore setup AP after saved credential rejection: %s",
+                         esp_err_to_name(ap_result));
+                chatai::diagnostics::Add(
+                    "WIFI_RECOVERY", "AP_AUTH_RECOVERY_FAILED", esp_err_to_name(ap_result));
+            }
+            return;
+        }
         MarkStaOutageStarted();
         ESP_LOGW(kTag, "Wi-Fi disconnected; reason=%d", reason);
         chatai::diagnostics::Add("WIFI", "DISCONNECTED", "station connection lost; reconnect worker scheduled");
@@ -1007,6 +1036,10 @@ void EventHandler(void*, esp_event_base_t event_base, int32_t event_id, void* ev
             g_wifi_setup_state.store(2);
             chatai::display::Notify("WI-FI", "Dang luu mang Wi-Fi");
             SavePendingCredentials();
+        } else if (g_has_credentials.load()) {
+            // A saved network reconnects directly; IPv4 is sufficient for
+            // Web Admin and must not wait for DNS or an AI-server probe.
+            g_wifi_setup_state.store(3);
         }
         return;
     }
