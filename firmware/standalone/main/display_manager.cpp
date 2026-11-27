@@ -123,7 +123,7 @@ int GlyphBounds(const chatai::display::Glyph8x12& glyph, int& min_column, int& m
             }
         }
     }
-    return max_column >= min_column ? max_column + 2 : 4;
+    return max_column >= min_column ? max_column + 1 : 4;
 }
 
 // Decomposed Vietnamese tone marks are composed before lookup so NFC and NFD
