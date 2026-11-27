@@ -10,6 +10,7 @@
 #include <cstdlib>
 #include <ctime>
 #include <iterator>
+#include <mutex>
 #include <string_view>
 
 #include <driver/gpio.h>
@@ -42,6 +43,9 @@ bool g_initialized = false;
 bool g_sntp_started = false;
 bool g_time_synced = false;
 std::atomic<bool> g_audio_ready{false};
+std::mutex g_content_mutex;
+char g_status_text[32]{};
+char g_chat_message[96]{};
 std::atomic<uint8_t> g_bluetooth_status{
     static_cast<uint8_t>(chatai::display::BluetoothStatus::kIdle)};
 std::atomic<size_t> g_bluetooth_device_count{0};
@@ -343,10 +347,21 @@ void RenderStatus() {
             DrawText((kWidth - TextWidth(error_text)) / 2, 41, error_text);
         }
     } else {
+        char status_text[sizeof(g_status_text)]{};
+        char chat_message[sizeof(g_chat_message)]{};
+        {
+            std::lock_guard<std::mutex> lock(g_content_mutex);
+            std::snprintf(status_text, sizeof(status_text), "%s", g_status_text);
+            std::snprintf(chat_message, sizeof(chat_message), "%s", g_chat_message);
+        }
         const char* status = !g_audio_ready.load()
             ? "LOI AM THANH"
-            : StatusText(chatai::xiaozhi::GetRuntimeState());
-        DrawText((kWidth - TextWidth(status)) / 2, 23, status);
+            : (status_text[0] != '\0' ? status_text
+                                       : StatusText(chatai::xiaozhi::GetRuntimeState()));
+        DrawText((kWidth - TextWidth(status)) / 2, 20, status);
+        if (chat_message[0] != '\0') {
+            DrawText((kWidth - TextWidth(chat_message)) / 2, 34, chat_message);
+        }
 
         for (int x = 0; x < kWidth; x += 2) {
             const int y = 46;
@@ -420,6 +435,26 @@ esp_err_t Initialize() {
 
 void SetAudioReady(bool ready) {
     g_audio_ready.store(ready);
+}
+
+void SetXiaozhiStatus(const char* status) {
+    std::lock_guard<std::mutex> lock(g_content_mutex);
+    std::snprintf(g_status_text, sizeof(g_status_text), "%s",
+                  status != nullptr ? status : "");
+}
+
+void SetChatMessage(const char* role, const char* message) {
+    if (role == nullptr || message == nullptr ||
+        (std::strcmp(role, "user") != 0 && std::strcmp(role, "assistant") != 0)) {
+        return;
+    }
+    std::lock_guard<std::mutex> lock(g_content_mutex);
+    std::snprintf(g_chat_message, sizeof(g_chat_message), "%s", message);
+}
+
+void ClearChatMessages() {
+    std::lock_guard<std::mutex> lock(g_content_mutex);
+    g_chat_message[0] = '\0';
 }
 
 void SetBluetoothStatus(BluetoothStatus status, size_t device_count, int error_code) {
