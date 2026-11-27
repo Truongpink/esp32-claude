@@ -347,6 +347,16 @@ esp_err_t InitializeController() {
     return i2c_master_transmit(g_display, initialization, sizeof(initialization), 250);
 }
 
+esp_err_t RefreshController() {
+    // Reapply panel power, addressing, scan and display-on settings without blanking first.
+    const uint8_t refresh[] = {
+        0x00, 0xD5, 0x80, 0xA8, 0x3F, 0xD3, 0x00, 0x40,
+        0x8D, 0x14, 0x20, 0x02, 0xA1, 0xC8, 0xDA, 0x12,
+        0x81, 0x7F, 0xD9, 0xF1, 0xDB, 0x40, 0xA6, 0xAF
+    };
+    return i2c_master_transmit(g_display, refresh, sizeof(refresh), 250);
+}
+
 esp_err_t FlushFrame() {
     constexpr int64_t kFullRefreshIntervalUs = 5000000;
     const int64_t now_us = esp_timer_get_time();
@@ -354,11 +364,9 @@ esp_err_t FlushFrame() {
         now_us - g_last_full_refresh_us >= kFullRefreshIntervalUs;
 
     if (force_full_refresh) {
-        // The SSD1306 may lose its display RAM while the ESP32 framebuffer stays unchanged.
-        const uint8_t display_on[] = {0x00, 0xAF};
-        const esp_err_t wake_result =
-            i2c_master_transmit(g_display, display_on, sizeof(display_on), 100);
-        if (wake_result != ESP_OK) return wake_result;
+        // Restore SSD1306 configuration in case its controller reset silently.
+        const esp_err_t refresh_result = RefreshController();
+        if (refresh_result != ESP_OK) return refresh_result;
     }
 
     for (uint8_t page = 0; page < kPages; ++page) {
