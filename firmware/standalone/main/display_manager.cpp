@@ -508,7 +508,8 @@ void RenderStatus() {
     if (result != ESP_OK) {
         g_frame_flushed = false;
         const int64_t now_us = esp_timer_get_time();
-        if (now_us - g_last_i2c_error_log_us >= 5000000) {
+        if (g_last_i2c_error_log_us == 0 ||
+            now_us - g_last_i2c_error_log_us >= 5000000) {
             ESP_LOGE(kTag, "OLED framebuffer transfer failed: %s",
                      esp_err_to_name(result));
             char detail[96]{};
@@ -671,3 +672,30 @@ void SetBluetoothStatus(BluetoothStatus status, size_t device_count, int error_c
     g_bluetooth_error.store(error_code);
     g_bluetooth_status.store(static_cast<uint8_t>(status));
     int64_t duration_us = 0;
+    switch (status) {
+        case BluetoothStatus::kInitializing:
+        case BluetoothStatus::kReady:
+            duration_us = 3000000;
+            break;
+        case BluetoothStatus::kComplete:
+        case BluetoothStatus::kError:
+            duration_us = 5000000;
+            break;
+        case BluetoothStatus::kScanning:
+            duration_us = 0;
+            break;
+        case BluetoothStatus::kIdle:
+            break;
+    }
+    g_bluetooth_status_until_us.store(
+        duration_us > 0 ? esp_timer_get_time() + duration_us : 0);
+}
+
+// Notifications no longer replace the real-time device-state screen.
+void Notify(const char* title, const char* message, uint32_t duration_ms) {
+    (void)title;
+    (void)message;
+    (void)duration_ms;
+}
+
+}  // namespace chatai::display
