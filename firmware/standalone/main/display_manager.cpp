@@ -123,7 +123,7 @@ int GlyphBounds(const chatai::display::Glyph8x12& glyph, int& min_column, int& m
             }
         }
     }
-    return max_column >= min_column ? max_column - min_column + 1 : 4;
+    return max_column >= min_column ? max_column + 2 : 4;
 }
 
 // Decomposed Vietnamese tone marks are composed before lookup so NFC and NFD
@@ -153,7 +153,7 @@ void DrawText(int x, int y, std::string_view text) {
                 for (int row = 0; row < kGlyphHeight; ++row) {
                     for (int column = min_column; column <= max_column; ++column) {
                         if ((glyph->rows[row] & (1U << (7 - column))) == 0) continue;
-                        const int pixel_x = x + column - min_column;
+                        const int pixel_x = x + column;
                         const int pixel_y = y + row;
                         if (pixel_x >= 0 && pixel_x < kWidth &&
                             pixel_y >= 0 && pixel_y < 64) {
