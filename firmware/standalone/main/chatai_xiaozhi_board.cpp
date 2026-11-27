@@ -5,6 +5,7 @@
 #include "network_manager.h"
 #include "esp_network.h"
 #include "system_info.h"
+#include "display_manager.h"
 
 #include <esp_log.h>
 #include <cJSON.h>
@@ -16,11 +17,23 @@
 namespace {
 constexpr char kTag[] = "ChatAI-Board";
 
-class ChatAINoDisplay final : public NoDisplay {
+class ChatAIDisplay final : public NoDisplay {
 public:
-    ChatAINoDisplay() {
+    ChatAIDisplay() {
         width_ = 128;
         height_ = 64;
+    }
+
+    void SetStatus(const char* status) override {
+        chatai::display::SetXiaozhiStatus(status);
+    }
+
+    void SetChatMessage(const char* role, const char* message) override {
+        chatai::display::SetChatMessage(role, message);
+    }
+
+    void ClearChatMessages() override {
+        chatai::display::ClearChatMessages();
     }
 };
 
@@ -39,7 +52,7 @@ public:
     AudioCodec* GetAudioCodec() override { return &audio_codec_; }
 
     Display* GetDisplay() override {
-        static ChatAINoDisplay display;
+        static ChatAIDisplay display;
         return &display;
     }
 
