@@ -103,6 +103,7 @@ bool ShouldKeepDiagnostic(const char* stage, const char* result) {
         return true;
     }
     if (stage == nullptr) return false;
+    if (std::strcmp(stage, "OLED") == 0) return true;
     if (std::strcmp(stage, "VOICE_LATENCY") == 0 ||
         std::strcmp(stage, "XIAOZHI_TTS") == 0 ||
         std::strcmp(stage, "XIAOZHI_LISTEN") == 0 ||
@@ -217,8 +218,7 @@ void Clear() {
         g_log.clear();
     }
     ClearCrashContext();
-    std::lock_guard<std::mutex> boot_lock(g_boot_context_mutex);
-    ClearBootContextLocked();
+    std::lock_guard<std::mutex> boot_lock(g_boot_context_mutex);    ClearBootContextLocked();
 }
 
 void SetCrashContext(const char* stage, const char* detail) {
