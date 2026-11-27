@@ -35,7 +35,6 @@ constexpr size_t kPages = 8;
 constexpr int kGlyphWidth = 8;
 constexpr int kGlyphHeight = 12;
 constexpr int kFooterY = 52;
-constexpr TickType_t kScrollStepTicks = pdMS_TO_TICKS(120);
 
 i2c_master_bus_handle_t g_bus = nullptr;
 i2c_master_dev_handle_t g_display = nullptr;
@@ -53,9 +52,7 @@ std::atomic<int64_t> g_bluetooth_status_until_us{0};
 std::array<uint8_t, kWidth * kPages> g_frame{};
 std::array<uint8_t, kWidth * kPages> g_last_flushed_frame{};
 bool g_frame_flushed = false;
-char g_footer[96] = "CHATAI TPIOS - WIFI WAIT - SERVER WAIT";
-int g_footer_x = -static_cast<int>(sizeof("CHATAI TPIOS - WIFI WAIT - SERVER WAIT") - 1) * kGlyphWidth;
-TickType_t g_last_scroll_tick = 0;
+char g_footer[24] = "IP: WAIT";
 
 uint32_t DecodeUtf8(std::string_view text, size_t& offset) {
     const auto first = static_cast<uint8_t>(text[offset++]);
@@ -312,14 +309,10 @@ void UpdateFooter() {
         ? chatai::network::NetworkManager::GetIpAddress()
         : std::string{};
     const bool has_ip = !ip_address.empty() && ip_address != "0.0.0.0";
-    const bool server_ready = chatai::xiaozhi::IsReady();
     char next[sizeof(g_footer)]{};
-    std::snprintf(next, sizeof(next), "CHATAI TPIOS - IP: %s - SERVER %s",
-                  has_ip ? ip_address.c_str() : "WAIT",
-                  server_ready ? "READY" : "WAIT");
-    if (std::strcmp(next, g_footer) == 0) return;
+    std::snprintf(next, sizeof(next), "IP: %s",
+                  has_ip ? ip_address.c_str() : "WAIT");
     std::snprintf(g_footer, sizeof(g_footer), "%s", next);
-    g_footer_x = -TextWidth(g_footer);
 }
 
 const char* StatusText(chatai::xiaozhi::RuntimeState state) {
@@ -422,24 +415,22 @@ void RenderStatus() {
         const char* status = !g_audio_ready.load()
             ? "LỖI ÂM THANH"
             : StatusText(chatai::xiaozhi::GetDisplayRuntimeState());
-        DrawText((kWidth - TextWidth(status)) / 2, 20, status);
+        // Fixed vertical hierarchy: live state, latest chat line, separator, IP.
+        DrawText((kWidth - TextWidth(status)) / 2, 18, status);
         if (chat_message[0] != '\0') {
-            DrawText((kWidth - TextWidth(chat_message)) / 2, 34, chat_message);
+            const int message_width = TextWidth(chat_message);
+            const int message_x = message_width <= 120 ? (kWidth - message_width) / 2 : 4;
+            DrawText(message_x, 33, chat_message);
         }
 
-        for (int x = 0; x < kWidth; x += 2) {
-            const int y = 46;
+        for (int x = 4; x < kWidth - 4; x += 2) {
+            const int y = 48;
             g_frame[(y / 8) * kWidth + x] |= static_cast<uint8_t>(1U << (y % 8));
         }
     }
 
-    const TickType_t now = xTaskGetTickCount();
-    if (static_cast<TickType_t>(now - g_last_scroll_tick) >= kScrollStepTicks) {
-        ++g_footer_x;
-        g_last_scroll_tick = now;
-        if (g_footer_x > kWidth) g_footer_x = -TextWidth(g_footer);
-    }
-    DrawText(g_footer_x, kFooterY, g_footer);
+    const int footer_width = TextWidth(g_footer);
+    DrawText((kWidth - footer_width) / 2, kFooterY, g_footer);
 
     const esp_err_t result = FlushFrame();
     if (result != ESP_OK) {
@@ -487,7 +478,6 @@ esp_err_t Initialize() {
     if (result != ESP_OK) return result;
 
     g_initialized = true;
-    g_last_scroll_tick = xTaskGetTickCount();
     if (xTaskCreate(DisplayTask, "chatai_oled", 4096, nullptr, 3, nullptr) != pdPASS) {
         g_initialized = false;
         return ESP_ERR_NO_MEM;
