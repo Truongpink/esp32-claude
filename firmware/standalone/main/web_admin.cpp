@@ -980,7 +980,7 @@ async function extractOtaBinFromZip(file) {
     } catch (_) {
       throw new Error("Tên tệp trong ZIP không phải UTF-8.");
     }
-    if (!name || name.includes("\\") || name.startsWith("/") || /^[A-Za-z]:/.test(name) ||
+    if (!name || name.includes("\") || name.startsWith("/") || /^[A-Za-z]:/.test(name) ||
         name.split("/").some(part => part === "..") || name.includes("\0")) {
       throw new Error("Tệp ZIP chứa đường dẫn không an toàn.");
     }
@@ -1204,8 +1204,8 @@ async function refreshChatEvents() {
   const response = await fetch("/api/diagnostics", {cache:"no-store"});
   if (!response.ok) throw new Error("Không đọc được sự kiện (HTTP " + response.status + ")");
   const text = await response.text();
-  const lines = text.trim().split("\\n").filter(Boolean).slice(-12);
-  document.getElementById("chatEventLog").textContent = lines.length ? lines.join("\\n") : "Chưa có sự kiện được ghi nhận.";
+  const lines = text.trim().split("\n").filter(Boolean).slice(-12);
+  document.getElementById("chatEventLog").textContent = lines.length ? lines.join("\n") : "Chưa có sự kiện được ghi nhận.";
 }
 async function refreshDeviceStatus() {
   const response = await fetch("/api/device/status", {cache:"no-store"});
@@ -1930,7 +1930,7 @@ esp_err_t ChatListenStartHandler(httpd_req_t* request) {
         return SendError(request, "409 Conflict", "Thiết bị chưa thể bắt đầu nghe ở trạng thái hiện tại");
     }
     return SendJson(request, "200 OK",
-                    "{\\"success\\":true,\\"message\\":\\"ESP32 đã nhận lệnh bắt đầu nghe.\\",\\"state\\":\\"listening\\"}");
+                    "{\"success\":true,\"message\":\"ESP32 đã nhận lệnh bắt đầu nghe.\",\"state\":\"listening\"}");
 }
 
 esp_err_t ChatDisplayClearHandler(httpd_req_t* request) {
@@ -1939,7 +1939,7 @@ esp_err_t ChatDisplayClearHandler(httpd_req_t* request) {
     }
     chatai::display::ClearChatMessages();
     return SendJson(request, "200 OK",
-                    "{\\"success\\":true,\\"message\\":\\"Đã xóa dòng hội thoại gần nhất khỏi màn hình.\\",\\"scope\\":\\"display_only\\"}");
+                    "{\"success\":true,\"message\":\"Đã xóa dòng hội thoại gần nhất khỏi màn hình.\",\"scope\":\"display_only\"}");
 }
 
 esp_err_t WifiConnectAdminHandler(httpd_req_t* request) {
