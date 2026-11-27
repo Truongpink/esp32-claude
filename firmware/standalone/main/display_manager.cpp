@@ -84,6 +84,16 @@ void LogOledInitFailure(const char* event, esp_err_t error) {
     LogOled("FAIL", event, detail);
 }
 
+void LogI2cLineLevels(const char* stage) {
+    const int sda_level = gpio_get_level(kSdaPin);
+    const int scl_level = gpio_get_level(kSclPin);
+    char detail[112]{};
+    std::snprintf(detail, sizeof(detail),
+                  "stage=%s SDA_GPIO41=%d SCL_GPIO42=%d",
+                  stage != nullptr ? stage : "unknown", sda_level, scl_level);
+    LogOled("INFO", "I2C_LINE_LEVELS", detail);
+}
+
 uint32_t DecodeUtf8(std::string_view text, size_t& offset) {
     const auto first = static_cast<uint8_t>(text[offset++]);
     if (first < 0x80) return first;
@@ -572,7 +582,44 @@ bool InitializeHardware() {
     }
 
     if (g_display == nullptr) {
-        const esp_err_t probe_result = i2c_master_probe(g_bus, kAddress, 100);
+        // If a previous recovery failed, restore the bus before attempting another probe.
+        if (g_bus_reset_required) {
+            const esp_err_t reset_result = i2c_master_bus_reset(g_bus);
+            char reset_detail[96]{};
+            std::snprintf(reset_detail, sizeof(reset_detail),
+                          "stage=pre_probe result=%s(%d)",
+                          esp_err_to_name(reset_result), static_cast<int>(reset_result));
+            LogOled(reset_result == ESP_OK ? "OK" : "FAIL",
+                    "I2C_BUS_RESET", reset_detail);
+            if (reset_result != ESP_OK) {
+                LogI2cLineLevels("pre_probe_reset_failed");
+                LogOledInitFailure("OLED_RETRY_BUS_RESET_FAILED", reset_result);
+                return false;
+            }
+            g_bus_reset_required = false;
+        }
+
+        LogI2cLineLevels("before_probe");
+        esp_err_t probe_result = i2c_master_probe(g_bus, kAddress, 100);
+        if (probe_result == ESP_ERR_TIMEOUT) {
+            LogI2cLineLevels("probe_timeout");
+            // The IDF master driver exposes bus reset to recover a busy/stuck bus.
+            const esp_err_t reset_result = i2c_master_bus_reset(g_bus);
+            char reset_detail[96]{};
+            std::snprintf(reset_detail, sizeof(reset_detail),
+                          "stage=probe_timeout result=%s(%d)",
+                          esp_err_to_name(reset_result), static_cast<int>(reset_result));
+            LogOled(reset_result == ESP_OK ? "WARN" : "FAIL",
+                    "I2C_BUS_RESET", reset_detail);
+            LogI2cLineLevels("after_probe_reset");
+            if (reset_result == ESP_OK) {
+                probe_result = i2c_master_probe(g_bus, kAddress, 100);
+                LogI2cLineLevels(probe_result == ESP_OK
+                    ? "probe_retry_ok" : "probe_retry_failed");
+            } else {
+                g_bus_reset_required = true;
+            }
+        }
         if (probe_result != ESP_OK) {
             LogOledInitFailure("OLED_ADDRESS_CHECK_FAILED", probe_result);
             return false;
@@ -590,15 +637,6 @@ bool InitializeHardware() {
             g_display = nullptr;
             return false;
         }
-    }
-
-    if (g_bus_reset_required) {
-        const esp_err_t reset_result = i2c_master_bus_reset(g_bus);
-        if (reset_result != ESP_OK) {
-            LogOledInitFailure("OLED_RETRY_BUS_RESET_FAILED", reset_result);
-            return false;
-        }
-        g_bus_reset_required = false;
     }
 
     const esp_err_t controller_result = InitializeController();
