@@ -33,8 +33,8 @@ constexpr uint16_t kAddress = 0x3C;
 constexpr int kWidth = 128;
 constexpr size_t kPages = 8;
 constexpr int kGlyphWidth = 8;
-constexpr int kGlyphHeight = 10;
-constexpr int kFooterY = 53;
+constexpr int kGlyphHeight = 12;
+constexpr int kFooterY = 52;
 constexpr TickType_t kScrollStepTicks = pdMS_TO_TICKS(60);
 
 i2c_master_bus_handle_t g_bus = nullptr;
@@ -77,23 +77,55 @@ uint32_t DecodeUtf8(std::string_view text, size_t& offset) {
     return '?';
 }
 
-const chatai::display::Glyph8x10* FindGlyph(uint32_t codepoint) {
+const chatai::display::Glyph8x12* FindGlyph(uint32_t codepoint) {
     const auto begin = std::begin(chatai::display::kVietnameseFont);
     const auto end = std::end(chatai::display::kVietnameseFont);
     const auto found = std::lower_bound(
         begin, end, codepoint,
-        [](const chatai::display::Glyph8x10& glyph, uint32_t value) {
+        [](const chatai::display::Glyph8x12& glyph, uint32_t value) {
             return glyph.codepoint < value;
         });
     return found != end && found->codepoint == codepoint ? &*found : nullptr;
 }
 
-// Every character occupies the same 8x10 cell; clipping also supports the
-// ticker entering from the left edge and moving toward the right.
+bool IsVietnameseCombiningMark(uint32_t codepoint) {
+    return codepoint == 0x0300 || codepoint == 0x0301 ||
+           codepoint == 0x0303 || codepoint == 0x0306 ||
+           codepoint == 0x0309 || codepoint == 0x031B ||
+           codepoint == 0x0323;
+}
+
+uint32_t ComposeVietnamese(uint32_t base, uint32_t mark) {
+    const auto begin = std::begin(chatai::display::kVietnameseCompositions);
+    const auto end = std::end(chatai::display::kVietnameseCompositions);
+    const uint64_t key = (static_cast<uint64_t>(base) << 32) | mark;
+    const auto found = std::lower_bound(
+        begin, end, key,
+        [](const chatai::display::UnicodeComposition& item, uint64_t value) {
+            return ((static_cast<uint64_t>(item.base) << 32) | item.mark) < value;
+        });
+    return found != end && found->base == base && found->mark == mark
+        ? found->composed : base;
+}
+
+// One 8x12 cell per Unicode character. Decomposed Vietnamese tone marks are
+// composed before lookup so NFC and NFD input render identically.
 void DrawText(int x, int y, std::string_view text) {
     size_t offset = 0;
     while (offset < text.size()) {
-        const uint32_t codepoint = DecodeUtf8(text, offset);
+        uint32_t codepoint = DecodeUtf8(text, offset);
+        if (IsVietnameseCombiningMark(codepoint)) continue;
+
+        while (offset < text.size()) {
+            const size_t next_offset = offset;
+            const uint32_t mark = DecodeUtf8(text, offset);
+            if (!IsVietnameseCombiningMark(mark)) {
+                offset = next_offset;
+                break;
+            }
+            codepoint = ComposeVietnamese(codepoint, mark);
+        }
+
         const auto* glyph = FindGlyph(codepoint);
         if (glyph != nullptr) {
             int min_column = kGlyphWidth;
@@ -128,7 +160,13 @@ void DrawText(int x, int y, std::string_view text) {
 }
 
 int TextWidth(std::string_view text) {
-    return static_cast<int>(text.size()) * kGlyphWidth;
+    size_t offset = 0;
+    int characters = 0;
+    while (offset < text.size()) {
+        const uint32_t codepoint = DecodeUtf8(text, offset);
+        if (!IsVietnameseCombiningMark(codepoint)) ++characters;
+    }
+    return characters * kGlyphWidth;
 }
 
 void SetPixel(int x, int y) {
