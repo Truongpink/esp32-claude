@@ -45,7 +45,7 @@ bool g_display_task_started = false;
 bool g_first_full_refresh_logged = false;
 bool g_bus_reset_required = false;
 int64_t g_last_init_error_log_us = 0;
-bool g_sntp_started = false;
+std::atomic<bool> g_sntp_started{false};
 std::atomic<bool> g_time_synced{false};
 std::atomic<bool> g_audio_ready{false};
 std::mutex g_content_mutex;
@@ -275,14 +275,13 @@ void DrawBatteryIcon() {
 void UpdateClockSync() {
     if (!chatai::network::NetworkManager::IsConnected()) return;
 
-    if (!g_sntp_started) {
+    if (!g_sntp_started.exchange(true)) {
         // POSIX TZ offsets use the opposite sign: UTC-7 means Vietnam (UTC+7).
         setenv("TZ", "UTC-7", 1);
         tzset();
         esp_sntp_setoperatingmode(SNTP_OPMODE_POLL);
         esp_sntp_setservername(0, "pool.ntp.org");
         esp_sntp_init();
-        g_sntp_started = true;
         ESP_LOGI(kTag, "SNTP started after Wi-Fi connection; timezone=UTC+7");
     }
 
@@ -709,6 +708,9 @@ void ClearChatMessages() {
 void GetWebSnapshot(WebSnapshot& snapshot) {
     snapshot = WebSnapshot{};
     snapshot.oled_ready = g_initialized.load();
+    // Keep Web Admin's shared status current even when the physical OLED cannot initialize.
+    UpdateFooter();
+    UpdateClockSync();
     const std::time_t now = std::time(nullptr);
     if (g_time_synced.load() && now >= 1700000000) {
         std::tm local_time{};
