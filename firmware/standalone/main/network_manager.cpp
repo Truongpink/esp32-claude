@@ -61,6 +61,7 @@ std::mutex g_connection_callback_mutex;
 chatai::network::NetworkManager::ConnectionCallback g_connection_callback;
 std::atomic<bool> g_internet_available{false};
 std::atomic<bool> g_provisioning_started{false};
+std::mutex g_provisioning_mutex;
 std::string g_provisioning_ssid;
 std::string g_form_token;
 bool g_dns_started = false;
@@ -865,6 +866,7 @@ esp_err_t StartHttpServer() {
 }
 
 esp_err_t StartProvisioning() {
+    std::lock_guard<std::mutex> provisioning_lock(g_provisioning_mutex);
     // Reapply APSTA/AP configuration even when provisioning was already
     // marked active: a failed STA association can leave the shared radio
     // on the router's channel and make the setup AP unreachable.
@@ -928,6 +930,7 @@ esp_err_t StartProvisioning() {
 }
 
 esp_err_t StopProvisioning() {
+    std::lock_guard<std::mutex> provisioning_lock(g_provisioning_mutex);
     if (!g_provisioning_started.exchange(false)) return ESP_OK;
     const esp_err_t result = esp_wifi_set_mode(WIFI_MODE_STA);
     ESP_LOGI(kTag, "Wi-Fi setup AP stopped after station connection");
