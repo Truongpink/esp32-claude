@@ -11,6 +11,7 @@
 namespace chatai::xiaozhi {
 
 extern std::atomic<bool> g_application_initialized;
+bool IsAwaitingAssistantResponse();
 
 namespace {
 constexpr char kTag[] = "ChatAI-Xiaozhi";
@@ -162,7 +163,9 @@ RuntimeState GetDisplayRuntimeState() {
         case kDeviceStateIdle:
             return RuntimeState::kWaiting;
         case kDeviceStateListening:
-            return RuntimeState::kListening;
+            return IsAwaitingAssistantResponse()
+                ? RuntimeState::kProcessing
+                : RuntimeState::kListening;
         case kDeviceStateSpeaking:
         case kDeviceStateNotifying:
             return RuntimeState::kSpeaking;
