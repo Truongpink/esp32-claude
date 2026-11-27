@@ -73,10 +73,11 @@ void ReportBootDiagnostics() {
     const size_t min_free_heap = heap_caps_get_minimum_free_size(MALLOC_CAP_8BIT);
     char detail[160]{};
     std::snprintf(detail, sizeof(detail),
-                  "boot_id=%08lx reset_reason=%s(%d) free_heap=%lu min_free_heap=%lu",
+                  "boot_id=%08lx reset_reason=%s(%d) free_heap=%lu min_free_heap=%lu build_number=%lu",
                   static_cast<unsigned long>(esp_random()), ResetReasonName(reason),
                   static_cast<int>(reason), static_cast<unsigned long>(free_heap),
-                  static_cast<unsigned long>(min_free_heap));
+                  static_cast<unsigned long>(min_free_heap),
+                  static_cast<unsigned long>(chatai::firmware::kBuildNumber));
     chatai::diagnostics::Add("BOOT", "INFO", detail);
     chatai::diagnostics::RestorePreviousCrashContext();
 }

@@ -31,32 +31,37 @@ jobs:
           echo "source_sha=${source_sha}" >> "$GITHUB_OUTPUT"
           echo "Building main commit: ${source_sha}"
 
-      - name: Determine next firmware Build Number
+      - name: Reserve next firmware Build Number
         id: version
         env:
           GH_TOKEN: ${{ github.token }}
+          SOURCE_SHA: ${{ steps.source.outputs.source_sha }}
         shell: bash
         run: |
           set -euo pipefail
-          gh api --paginate "repos/${GITHUB_REPOSITORY}/releases?per_page=100" --jq '.[].tag_name' > /tmp/chatai-release-tags.txt
-          latest_build="$(python3 - /tmp/chatai-release-tags.txt <<'PY'
+          gh api --paginate "repos/${GITHUB_REPOSITORY}/git/matching-refs/tags/build-" --jq '.[].ref' > /tmp/chatai-build-tags.txt
+          latest_build="$(python3 - /tmp/chatai-build-tags.txt <<'PY'
           import re
           import sys
 
           with open(sys.argv[1], encoding="utf-8") as tags_file:
               numbers = [
                   int(match.group(1))
-                  for tag in tags_file
-                  if (match := re.fullmatch(r"build-([0-9]+)", tag.strip()))
+                  for ref in tags_file
+                  if (match := re.fullmatch(r"refs/tags/build-([0-9]+)", ref.strip()))
               ]
 
           print(max(numbers, default=0))
           PY
           )"
           build_number=$((latest_build + 1))
+          tag="build-${build_number}"
+          gh api --method POST "repos/${GITHUB_REPOSITORY}/git/refs" \
+            -f ref="refs/tags/${tag}" \
+            -f sha="${SOURCE_SHA}" > /dev/null
           echo "build_number=${build_number}" >> "$GITHUB_OUTPUT"
-          echo "tag=build-${build_number}" >> "$GITHUB_OUTPUT"
-          echo "Firmware Build Number: #${build_number}"
+          echo "tag=${tag}" >> "$GITHUB_OUTPUT"
+          echo "Reserved firmware Build Number: #${build_number} for ${SOURCE_SHA}"
 
       - name: Build standalone firmware with ESP-IDF 6.1
         uses: espressif/esp-idf-ci-action@v1
