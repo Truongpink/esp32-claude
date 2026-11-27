@@ -154,7 +154,7 @@ void Add(const char* stage, const char* result, const char* detail) {
         gettimeofday(&wall_time, nullptr) == 0 &&
         wall_time.tv_sec >= 1735689600 && wall_time.tv_sec < 4102444800;
     const bool time_synchronized = wall_time_valid;
-    char real_time[48] = "UNSYNCED";
+    char real_time[96] = "UNSYNCED";
     if (wall_time_valid) {
         const std::time_t ict_seconds = wall_time.tv_sec + 7 * 60 * 60;
         std::tm ict_time{};
