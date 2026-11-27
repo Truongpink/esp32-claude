@@ -41,6 +41,8 @@ uint8_t g_protocol_start_retry_count = 0;
 // Activation owns ota_ until it signals completion. Network loss requests a
 // cooperative stop; the main task performs cleanup after completion.
 std::atomic<bool> g_activation_cancel_requested{false};
+// Suppress repeated OTA warning sounds across reconnect/activation retries in one boot.
+std::atomic<bool> g_startup_ota_alert_played{false};
 
 std::atomic<bool> g_turn_started{false};
 std::atomic<int64_t> g_turn_vad_end_us{0};
@@ -75,9 +77,13 @@ esp_err_t EnsureSystemTime() {
     static std::mutex mutex;
     std::lock_guard<std::mutex> lock(mutex);
 
+    const int64_t sync_started_us = esp_timer_get_time();
     if (IsSystemTimeValid()) {
         chatai::diagnostics::SetTimeSyncStatus(true, "SYSTEM_CLOCK");
-        chatai::diagnostics::Add("TIME_SYNC", "OK", "source=SYSTEM_CLOCK");
+        char detail[96]{};
+        std::snprintf(detail, sizeof(detail), "source=SYSTEM_CLOCK elapsed_ms=%lld",
+                      static_cast<long long>((esp_timer_get_time() - sync_started_us) / 1000));
+        chatai::diagnostics::Add("TIME_SYNC", "OK", detail);
         return ESP_OK;
     }
 
@@ -101,13 +107,19 @@ esp_err_t EnsureSystemTime() {
     }
     if (sync_result != ESP_OK || !IsSystemTimeValid()) {
         chatai::diagnostics::SetTimeSyncStatus(false);
-        chatai::diagnostics::Add("TIME_SYNC", "FAIL",
-                                 esp_err_to_name(sync_result));
+        char detail[96]{};
+        std::snprintf(detail, sizeof(detail), "error=%s elapsed_ms=%lld",
+                      esp_err_to_name(sync_result),
+                      static_cast<long long>((esp_timer_get_time() - sync_started_us) / 1000));
+        chatai::diagnostics::Add("TIME_SYNC", "FAIL", detail);
         return sync_result != ESP_OK ? sync_result : ESP_ERR_INVALID_STATE;
     }
 
     chatai::diagnostics::SetTimeSyncStatus(true, "SNTP");
-    chatai::diagnostics::Add("TIME_SYNC", "OK", "source=SNTP");
+    char detail[96]{};
+    std::snprintf(detail, sizeof(detail), "source=SNTP elapsed_ms=%lld",
+                  static_cast<long long>((esp_timer_get_time() - sync_started_us) / 1000));
+    chatai::diagnostics::Add("TIME_SYNC", "OK", detail);
     return ESP_OK;
 }
 
@@ -465,6 +477,9 @@ void Application::Run() {
 
 void Application::HandleNetworkConnectedEvent() {
     ESP_LOGI(TAG, "Network connected");
+    ESP_LOGI(TAG, "BOOT_STAGE stage=WIFI_CONNECTED uptime_ms=%lld",
+             static_cast<long long>(esp_timer_get_time() / 1000));
+    chatai::diagnostics::Add("BOOT_STAGE", "OK", "stage=WIFI_CONNECTED");
     auto state = GetDeviceState();
 
     if (state == kDeviceStateStarting || state == kDeviceStateWifiConfiguring) {
@@ -596,6 +611,10 @@ void Application::HandleActivationDoneEvent() {
     board.SetPowerSaveLevel(PowerSaveLevel::LOW_POWER);
 
     if (!has_error) {
+        chatai::diagnostics::Add("BOOT_READY", "OK", "state=PROTOCOL_INITIALIZED");
+        ESP_LOGI(TAG, "BOOT_READY uptime_ms=%lld",
+                 static_cast<long long>(esp_timer_get_time() / 1000));
+        chatai::diagnostics::Add("STARTUP_SOUND", "REQUEST", "sound=OGG_SUCCESS");
         Schedule([this]() {
             // Play the success sound to indicate the device is ready
             audio_service_.PlaySound(Lang::Sounds::OGG_SUCCESS);
@@ -604,6 +623,10 @@ void Application::HandleActivationDoneEvent() {
 }
 
 void Application::ActivationTask() {
+    ESP_LOGI(TAG, "BOOT_STAGE stage=ACTIVATION_START uptime_ms=%lld",
+             static_cast<long long>(esp_timer_get_time() / 1000));
+    chatai::diagnostics::Add("BOOT_STAGE", "START", "stage=ACTIVATION");
+
     // Create OTA object for activation process
     ota_ = std::make_unique<Ota>();
 
@@ -631,163 +654,143 @@ void Application::CheckAssetsVersion() {
 }
 
 void Application::CheckNewVersion() {
-    const int MAX_RETRY = 10;
-    int retry_count = 0;
-    int retry_delay = 10;  // Initial retry delay in seconds
-    bool alert_sound_played = false;
-    bool time_sync_ready = false;
+    if (IsActivationCancelled()) return;
 
-    auto& board = Board::GetInstance();
-    while (true) {
+    auto display = Board::GetInstance().GetDisplay();
+    display->SetStatus(Lang::Strings::CHECKING_NEW_VERSION);
+
+    const int64_t check_started_us = esp_timer_get_time();
+    const esp_err_t time_result = EnsureSystemTime();
+    if (time_result != ESP_OK) {
+        char detail[128]{};
+        std::snprintf(detail, sizeof(detail), "reason=TIME_SYNC_FAILED error=%s",
+                      esp_err_to_name(time_result));
+        chatai::diagnostics::Add("OTA_CHECK", "SKIPPED", detail);
+        ESP_LOGW(TAG, "Skipping OTA check; cached protocol configuration will be considered");
+        return;
+    }
+
+    if (IsActivationCancelled()) return;
+    chatai::diagnostics::Add("OTA_CHECK", "START", "attempt=1");
+    auto check = ota_->CheckVersion();
+    if (IsActivationCancelled()) return;
+
+    if (!check) {
+        char detail[224]{};
+        std::snprintf(detail, sizeof(detail), "attempt=1 max=1 elapsed_ms=%lld error=%.150s",
+                      static_cast<long long>((esp_timer_get_time() - check_started_us) / 1000),
+                      check.error().ToString().c_str());
+        chatai::diagnostics::Add("OTA_CHECK", "FAIL", detail);
+
+        // One warning sound at most per boot. OTA failure must not hold protocol
+        // startup in a long retry/backoff loop.
+        if (!g_startup_ota_alert_played.exchange(true)) {
+            chatai::diagnostics::Add("ALERT_SOUND", "REQUEST",
+                                     "reason=OTA_CHECK_FAILED attempt=1");
+            Alert(Lang::Strings::ERROR, "OTA check failed; trying saved connection settings",
+                  "cloud_off", Lang::Sounds::OGG_EXCLAMATION);
+        } else {
+            chatai::diagnostics::Add("ALERT_SOUND", "SKIPPED",
+                                     "reason=ALREADY_PLAYED_THIS_BOOT");
+        }
+        return;
+    }
+
+    char success_detail[96]{};
+    std::snprintf(success_detail, sizeof(success_detail), "attempt=1 elapsed_ms=%lld",
+                  static_cast<long long>((esp_timer_get_time() - check_started_us) / 1000));
+    chatai::diagnostics::Add("OTA_CHECK", "OK", success_detail);
+
+    if (ota_->HasNewVersion()) {
+        ESP_LOGW(TAG,
+                 "Firmware update %s is available; automatic Xiaozhi upgrades are disabled. "
+                 "Use ChatAI Web Admin manual OTA.",
+                 ota_->GetFirmwareVersion().c_str());
+    }
+
+    // Bootloader OTA confirmation is owned by app_main after ChatAI and
+    // Xiaozhi Application initialization; do not confirm it from this task.
+    if (!ota_->HasActivationCode() && !ota_->HasActivationChallenge()) {
+        return;
+    }
+
+    display->SetStatus(Lang::Strings::ACTIVATION);
+    if (ota_->HasActivationCode()) {
+        ShowActivationCode(ota_->GetActivationCode(), ota_->GetActivationMessage());
+    }
+
+    // Preserve the existing activation handshake and its bounded retry behavior.
+    for (int i = 0; i < 10; ++i) {
         if (IsActivationCancelled()) return;
-        if (!time_sync_ready) {
-            const esp_err_t time_result = EnsureSystemTime();
-            if (time_result != ESP_OK) {
-                ++retry_count;
-                char time_failure[128]{};
-                std::snprintf(time_failure, sizeof(time_failure),
-                              "attempt=%d max=%d reason=SNTP error=%s",
-                              retry_count, MAX_RETRY, esp_err_to_name(time_result));
-                chatai::diagnostics::Add("OTA_CHECK", "FAIL", time_failure);
-                chatai::diagnostics::Add("ALERT_SOUND", "SKIPPED",
-                                         "reason=TIME_SYNC_FAILED");
-                if (retry_count >= MAX_RETRY) {
-                    ESP_LOGE(TAG, "Time synchronization retry limit reached; skipping OTA check");
-                    return;
-                }
-                ESP_LOGW(TAG, "System time sync failed; retry in %d seconds (%d/%d)",
-                         retry_delay, retry_count, MAX_RETRY);
-                for (int i = 0; i < retry_delay * 10; ++i) {
-                    vTaskDelay(pdMS_TO_TICKS(100));
-                    if (IsActivationCancelled()) return;
-                }
-                retry_delay = std::min(retry_delay * 2, 60);
-                continue;
-            }
-        }
-        auto display = board.GetDisplay();
-        display->SetStatus(Lang::Strings::CHECKING_NEW_VERSION);
-
-        char check_detail[64]{};
-        std::snprintf(check_detail, sizeof(check_detail), "attempt=%d",
-                      retry_count + 1);
-        chatai::diagnostics::Add("OTA_CHECK", "START", check_detail);
-        auto check = ota_->CheckVersion();
+        ESP_LOGI(TAG, "Activating... %d/%d", i + 1, 10);
+        const esp_err_t activation_result = ota_->Activate();
         if (IsActivationCancelled()) return;
-        if (!check) {
-            retry_count++;
-            char failure_detail[224]{};
-            std::snprintf(failure_detail, sizeof(failure_detail),
-                          "attempt=%d max=%d error=%.150s",
-                          retry_count, MAX_RETRY, check.error().ToString().c_str());
-            chatai::diagnostics::Add("OTA_CHECK", "FAIL", failure_detail);
-            if (retry_count >= MAX_RETRY) {
-                ESP_LOGE(TAG, "Too many retries, exit version check");
-                return;
-            }
+        if (activation_result == ESP_OK) break;
 
-            const auto& err = check.error();
-            char error_message[160];
-            int error_message_length =
-                snprintf(error_message, sizeof(error_message), "%s", err.ToString().c_str());
-            if (error_message_length < 0 ||
-                error_message_length >= static_cast<int>(sizeof(error_message))) {
-                snprintf(error_message, sizeof(error_message), "%s", err.Message());
-            }
-
-            char buffer[320];
-            int alert_message_length =
-                snprintf(buffer, sizeof(buffer), Lang::Strings::CHECK_NEW_VERSION_FAILED,
-                         retry_delay, error_message);
-            if (alert_message_length < 0 ||
-                alert_message_length >= static_cast<int>(sizeof(buffer))) {
-                snprintf(buffer, sizeof(buffer), "%s", err.Message());
-            }
-            char alert_detail[96]{};
-            std::snprintf(alert_detail, sizeof(alert_detail),
-                          "reason=OTA_CHECK_FAILED attempt=%d retry_delay_s=%d",
-                          retry_count, retry_delay);
-            if (!alert_sound_played) {
-                chatai::diagnostics::Add("ALERT_SOUND", "REQUEST", alert_detail);
-                Alert(Lang::Strings::ERROR, buffer, "cloud_off",
-                      Lang::Sounds::OGG_EXCLAMATION);
-                alert_sound_played = true;
-            } else {
-                chatai::diagnostics::Add("ALERT_SOUND", "SKIPPED",
-                                         "reason=REPEATED_OTA_FAILURE");
-            }
-
-            ESP_LOGW(TAG, "Check new version failed, retry in %d seconds (%d/%d)", retry_delay,
-                     retry_count, MAX_RETRY);
-            for (int i = 0; i < retry_delay * 10; i++) {
-                vTaskDelay(pdMS_TO_TICKS(100));
-                if (IsActivationCancelled()) return;
-                if (GetDeviceState() == kDeviceStateIdle) {
-                    break;
-                }
-            }
-            retry_delay = std::min(retry_delay * 2, 60);  // Cap retry delay at 60 seconds
-            continue;
-        }
-        chatai::diagnostics::Add("OTA_CHECK", "OK", "version_check=passed");
-        retry_count = 0;
-        retry_delay = 10;  // Reset retry delay
-
-        if (ota_->HasNewVersion()) {
-            ESP_LOGW(TAG,
-                     "Firmware update %s is available; automatic Xiaozhi upgrades are disabled. "
-                     "Use ChatAI Web Admin manual OTA.",
-                     ota_->GetFirmwareVersion().c_str());
-        }
-
-        // Bootloader OTA confirmation is owned by app_main after ChatAI and
-        // Xiaozhi Application initialization; do not confirm it from this retry task.
-        if (!ota_->HasActivationCode() && !ota_->HasActivationChallenge()) {
-            // Exit the loop if done checking new version
-            break;
-        }
-
-        display->SetStatus(Lang::Strings::ACTIVATION);
-        // Activation code is shown to the user and waiting for the user to input
-        if (ota_->HasActivationCode()) {
-            ShowActivationCode(ota_->GetActivationCode(), ota_->GetActivationMessage());
-        }
-
-        // This will block the loop until the activation is done or timeout
-        for (int i = 0; i < 10; ++i) {
+        const int delay_ms = activation_result == ESP_ERR_TIMEOUT ? 3000 : 10000;
+        for (int elapsed = 0; elapsed < delay_ms; elapsed += 100) {
+            vTaskDelay(pdMS_TO_TICKS(100));
             if (IsActivationCancelled()) return;
-            ESP_LOGI(TAG, "Activating... %d/%d", i + 1, 10);
-            esp_err_t err = ota_->Activate();
-            if (IsActivationCancelled()) return;
-            if (err == ESP_OK) {
-                break;
-            }
-            const int delay_ms = err == ESP_ERR_TIMEOUT ? 3000 : 10000;
-            for (int elapsed = 0; elapsed < delay_ms; elapsed += 100) {
-                vTaskDelay(pdMS_TO_TICKS(100));
-                if (IsActivationCancelled()) return;
-            }
-            if (GetDeviceState() == kDeviceStateIdle) {
-                break;
-            }
         }
+        if (GetDeviceState() == kDeviceStateIdle) break;
     }
 }
 
 void Application::InitializeProtocol() {
+    const int64_t protocol_started_us = esp_timer_get_time();
+    chatai::diagnostics::Add("PROTOCOL_START", "START", "source=OTA_OR_CACHED_NVS");
     auto& board = Board::GetInstance();
     auto display = board.GetDisplay();
     auto codec = board.GetAudioCodec();
 
     display->SetStatus(Lang::Strings::LOADING_PROTOCOL);
 
-    if (ota_->HasMqttConfig()) {
+    bool has_mqtt_config = ota_ != nullptr && ota_->HasMqttConfig();
+    bool has_websocket_config = ota_ != nullptr && ota_->HasWebsocketConfig();
+
+    if (!has_mqtt_config && !has_websocket_config) {
+        // Ota::CheckVersion persists successful server settings in these NVS
+        // namespaces. Reuse only a complete cached transport configuration.
+        Settings mqtt_settings("mqtt", false);
+        const bool cached_mqtt_valid =
+            !mqtt_settings.GetString("endpoint").empty() &&
+            !mqtt_settings.GetString("client_id").empty() &&
+            !mqtt_settings.GetString("username").empty() &&
+            !mqtt_settings.GetString("publish_topic").empty();
+
+        Settings websocket_settings("websocket", false);
+        const std::string cached_websocket_url = websocket_settings.GetString("url");
+        const bool cached_websocket_valid =
+            cached_websocket_url.rfind("wss://", 0) == 0 ||
+            cached_websocket_url.rfind("ws://", 0) == 0;
+
+        if (cached_mqtt_valid) {
+            has_mqtt_config = true;
+            chatai::diagnostics::Add("OTA_FALLBACK", "NVS",
+                                     "transport=MQTT config_valid=1");
+        } else if (cached_websocket_valid) {
+            has_websocket_config = true;
+            chatai::diagnostics::Add("OTA_FALLBACK", "NVS",
+                                     "transport=WEBSOCKET config_valid=1");
+        } else {
+            chatai::diagnostics::Add("OTA_FALLBACK", "UNAVAILABLE",
+                                     "reason=NO_VALID_CACHED_PROTOCOL_CONFIG");
+            protocol_.reset();
+            last_error_message_ = "No valid cached MQTT or WebSocket configuration";
+            g_protocol_start_failed.store(true);
+            ESP_LOGE(TAG, "No valid cached protocol configuration; waiting for OTA/network recovery");
+            return;
+        }
+    }
+
+    if (has_mqtt_config) {
         protocol_ = std::make_unique<MqttProtocol>();
-    } else if (ota_->HasWebsocketConfig()) {
+        ESP_LOGI(TAG, "Protocol selected: MQTT%s",
+                 ota_->HasMqttConfig() ? " (fresh OTA config)" : " (cached NVS config)");
+    } else if (has_websocket_config) {
         protocol_ = std::make_unique<WebsocketProtocol>();
-    } else {
-        ESP_LOGW(TAG, "No protocol specified in the OTA config, using MQTT");
-        protocol_ = std::make_unique<MqttProtocol>();
+        ESP_LOGI(TAG, "Protocol selected: WebSocket%s",
+                 ota_->HasWebsocketConfig() ? " (fresh OTA config)" : " (cached NVS config)");
     }
 
     protocol_->OnConnected([this]() { DismissAlert(); });
@@ -970,12 +973,19 @@ void Application::InitializeProtocol() {
     });
 
     if (!protocol_->Start()) {
+        chatai::diagnostics::Add("PROTOCOL_START", "FAIL",
+                                 "reason=TRANSPORT_START_FAILED");
         g_protocol_start_failed.store(true);
         ESP_LOGE(TAG, "Xiaozhi protocol failed to start");
         if (last_error_message_.empty()) {
             last_error_message_ = Lang::Strings::SERVER_NOT_CONNECTED;
         }
         xEventGroupSetBits(event_group_, MAIN_EVENT_ERROR);
+    } else {
+        char detail[96]{};
+        std::snprintf(detail, sizeof(detail), "result=OK elapsed_ms=%lld",
+                      static_cast<long long>((esp_timer_get_time() - protocol_started_us) / 1000));
+        chatai::diagnostics::Add("PROTOCOL_START", "OK", detail);
     }
 }
 
