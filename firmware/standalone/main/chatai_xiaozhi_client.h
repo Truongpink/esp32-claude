@@ -21,6 +21,7 @@ bool IsChatEnabled();
 void SetPushToTalk(bool pressed);
 bool IsListening();
 RuntimeState GetRuntimeState();
+RuntimeState GetDisplayRuntimeState();
 BootAction HandleBootToggle();
 AudioUplinkDiagnostics GetAudioUplinkDiagnostics();
 }  // namespace chatai::xiaozhi
