@@ -7,7 +7,6 @@
 namespace chatai::display {
 esp_err_t Initialize();
 void SetAudioReady(bool ready);
-void SetXiaozhiStatus(const char* status);
 void SetChatMessage(const char* role, const char* message);
 void ClearChatMessages();
 enum class BluetoothStatus : uint8_t {
