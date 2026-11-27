@@ -5,7 +5,7 @@ The Standalone firmware provides a responsive mobile Web Admin for Wi-Fi provisi
 ## Access
 
 - After the device joins the same home Wi-Fi network as the phone or computer, open `http://chatai.local/` or `http://chatai.local/admin`.
-- The `.local` address is provided by mDNS; a fixed DHCP address is not required.
+- The `.local` address is provided by mDNS; a fixed DHCP address is not required. LAN Web Admin does not require XiaoZhi/Gemini service connectivity.
 - If the router or client network blocks mDNS multicast, use the device's current LAN IP as a fallback.
 - During Wi-Fi provisioning, connect to the open setup access point `ChatAI-TPIOS-XXXXXX` and open `http://192.168.50.1/`. Captive DNS redirects HTTP connectivity checks to the setup page.
 
@@ -13,7 +13,7 @@ The Standalone firmware provides a responsive mobile Web Admin for Wi-Fi provisi
 
 The Web Admin supports:
 
-- Scan nearby Wi-Fi networks and connect to a selected SSID; new credentials are committed only after Internet verification.
+- Scan nearby Wi-Fi networks and connect to a selected SSID; credentials are committed to NVS immediately after the station receives an IPv4 address. DNS/TCP checks to AI services run independently.
 - View whether an API Key is configured (the key value is never returned).
 - Save or replace a Gemini API Key.
 - Delete the saved Gemini API Key.
@@ -38,7 +38,7 @@ OTA updates do not erase the NVS namespaces used by Wi-Fi (`chatai_net`), Gemini
 | GET | `/admin` | Web Admin page |
 | GET | `/api/wifi/scan` | Scans nearby Wi-Fi networks while connected or provisioning |
 | GET | `/api/wifi/status` | Returns Wi-Fi connection/provisioning state |
-| POST | `/api/wifi/connect` | Starts a Wi-Fi connection; commits credentials after Internet verification |
+| POST | `/api/wifi/connect` | Starts a Wi-Fi connection; credentials are saved after STA receives IPv4, independently of AI-server reachability |
 | GET | `/api/gemini/status` | Returns only whether a key is configured |
 | GET | `/api/gemini/settings` | Returns saved voice and System Prompt; never returns the API Key |
 | POST | `/api/gemini/voice` | Validates and saves a supported Live API prebuilt voice |
@@ -68,3 +68,26 @@ NVS encryption is not enabled in the current partition configuration. Do not exp
 The manual-only Standalone workflow builds `firmware/standalone` and publishes one file: `ChatAI_TPIOS.bin`. A normal build reuses the latest official Build Number. Selecting the explicit `publish_release` input computes the next number from published `build-N` GitHub releases and creates that release only after the build and slot-size checks pass. Failed build attempts do not consume a Build Number. It does not package bootloader or partition-table binaries.
 
 GitHub Actions downloadable artifacts are wrapped in a ZIP container by the platform. The downloaded ZIP contains only the single application BIN.
+
+
+## ECC Shin — Wi-Fi Architecture Standard
+
+**Status: PENDING VALIDATION.** This implementation is the candidate reference architecture; it is not marked verified until hardware tests pass.
+
+- **Layer 1 — Router Wi-Fi:** connect to the home router, obtain an IPv4 address, and persist SSID/password in NVS immediately after STA receives that address. Credential persistence must not wait for Internet access or any AI service.
+- **Layer 2 — AI services:** XiaoZhi, Gemini, DNS, TLS, WebSocket, and API reachability are independent service states. A service failure must not erase credentials, disconnect STA, or disable LAN Web Admin.
+- **Layer 3 — Local administration:** keep Web Admin reachable through the router LAN while STA is connected, regardless of AI-server or WAN status. Retain the setup SoftAP during provisioning/recovery and stop it only after STA has remained connected for 60 seconds.
+- **OTA:** a locally supplied application BIN can be uploaded to the device over LAN or its setup SoftAP without external Internet access. Downloading a firmware file from an external host still requires Internet on the phone/source side.
+- **Portability:** reuse these architectural invariants on future ECC Shin platforms; adapt the implementation to each platform rather than copying ESP32-specific code.
+
+### Required hardware validation before VERIFIED
+
+1. Connect to a router, confirm IPv4, and reboot; saved credentials must reconnect.
+2. Make XiaoZhi unavailable; STA and LAN Web Admin must remain available.
+3. Make Gemini unavailable; STA and LAN Web Admin must remain available.
+4. Break DNS/TLS or WAN access; saved credentials and LAN Web Admin must remain available.
+5. Upload a locally stored BIN through Web Admin over LAN/SoftAP; verify OTA separately.
+6. Disconnect the router, verify reconnect/recovery SoftAP, then restore the router.
+7. Confirm OTA preserves Wi-Fi and Gemini NVS settings.
+
+Only promote this standard to **VERIFIED** after recording firmware build, commit, test results, and device logs for all applicable checks.
