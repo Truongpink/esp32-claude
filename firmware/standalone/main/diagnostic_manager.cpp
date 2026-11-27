@@ -5,7 +5,6 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
-#include <ctime>
 #include <mutex>
 #include <string>
 
@@ -141,34 +140,9 @@ void SetTimeSyncStatus(bool synchronized, const char* source) {
 
 void Add(const char* stage, const char* result, const char* detail) {
     if (!ShouldKeepDiagnostic(stage, result)) return;
-    constexpr std::time_t kMinimumValidTime = 1700000000;
-    constexpr std::time_t kVietnamOffsetSeconds = 7 * 60 * 60;
-    const std::time_t now = std::time(nullptr);
-    const bool epoch_valid = now >= kMinimumValidTime;
-    const bool synchronized = epoch_valid && g_time_synchronized.load();
-    char ict_timestamp[24]{};
-    if (epoch_valid) {
-        std::tm ict_info{};
-        const std::time_t ict_epoch = now + kVietnamOffsetSeconds;
-        gmtime_r(&ict_epoch, &ict_info);
-        std::strftime(ict_timestamp, sizeof(ict_timestamp), "%Y-%m-%d %H:%M:%S", &ict_info);
-    }
-
-    std::string line;
-    if (epoch_valid) {
-        line = "[";
-        line += ict_timestamp;
-        line += " ICT]";
-    } else {
-        line = "[UPTIME_MS=";
-        line += std::to_string(static_cast<long long>(esp_timer_get_time() / 1000));
-        line += "]";
-    }
-    if (stage != nullptr && std::strcmp(stage, "BOOT") == 0) {
-        line += "[TIME_SYNC=";
-        line += synchronized ? g_time_source.load() : "UNVERIFIED";
-        line += "]";
-    }
+    std::string line = "[UPTIME_MS=";
+    line += std::to_string(static_cast<long long>(esp_timer_get_time() / 1000));
+    line += "]";
     line += "[";
     line += stage != nullptr ? stage : "SYSTEM";
     line += "][";
