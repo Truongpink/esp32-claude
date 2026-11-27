@@ -62,6 +62,21 @@ ECC Shin: Điều tra lỗi [mô tả lỗi].
 với giả thuyết. Đề xuất thay đổi tối thiểu và chờ tôi duyệt.
 ```
 
+### Sửa lỗi theo nguyên nhân gốc
+
+```text
+ECC Shin: Điều tra và xử lý lỗi [mô tả lỗi].
+Kiểm tra source, luồng chạy và log thực tế trên main.
+Nếu đã đủ bằng chứng xác định nguyên nhân, hãy đề xuất
+sửa đúng nguyên nhân và thêm log xác minh có mục tiêu
+trong cùng đợt thay đổi. Không chỉ thêm log rồi chờ tôi
+chạy lại nếu đã có đủ cơ sở để sửa.
+Nếu chưa đủ bằng chứng, chỉ đề xuất phép kiểm tra/log
+cụ thể để phân biệt các giả thuyết còn lại.
+Nêu rõ file, rủi ro và kế hoạch kiểm tra; chờ tôi duyệt
+trước khi sửa. Không tự chạy build/Actions/flash/OTA.
+```
+
 ### Lập kế hoạch tính năng mới
 
 ```text
