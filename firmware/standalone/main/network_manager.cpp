@@ -42,7 +42,6 @@ constexpr char kFirmwareBuildKey[] = "fw_build";
 
 constexpr size_t kMaxFormLength = 512;
 constexpr uint32_t kStaStableConnectionMs = 60000;
-constexpr uint32_t kInternetStableBeforeApStopMs = 30000;
 constexpr uint32_t kApStartRetryMs = 5000;
 
 esp_netif_t* g_sta_netif = nullptr;
@@ -57,7 +56,6 @@ std::atomic<TickType_t> g_next_reconnect_ticks{0};
 std::atomic<TickType_t> g_sta_outage_started_ticks{0};
 std::atomic<TickType_t> g_sta_connected_since_ticks{0};
 std::atomic<TickType_t> g_next_ap_retry_ticks{0};
-std::atomic<TickType_t> g_internet_stable_since_ticks{0};
 std::atomic<bool> g_connected{false};
 std::mutex g_connection_callback_mutex;
 chatai::network::NetworkManager::ConnectionCallback g_connection_callback;
@@ -75,7 +73,6 @@ std::atomic<bool> g_connection_pending{false};
 // Distinguish the disconnect requested while replacing Wi-Fi credentials
 // from a failure of the new connection attempt.
 std::atomic<bool> g_expected_reconfigure_disconnect{false};
-std::atomic<TickType_t> g_attempt_started_ticks{0};
 std::mutex g_pending_credentials_mutex;
 std::string g_pending_ssid;
 std::string g_pending_password;
@@ -120,6 +117,17 @@ void WifiReconnectTask(void*) {
                 g_reconnect_attempts.store(0);
                 g_next_reconnect_ticks.store(0);
                 g_next_ap_retry_ticks.store(0);
+                if (g_provisioning_started.load() && !g_connection_pending.load()) {
+                    const esp_err_t stop_result = StopProvisioning();
+                    if (stop_result == ESP_OK) {
+                        chatai::diagnostics::Add(
+                            "WIFI_RECOVERY", "AP_STOPPED",
+                            "STA remained connected for 60000 ms; router LAN is stable");
+                    } else {
+                        chatai::diagnostics::Add(
+                            "WIFI_RECOVERY", "AP_STOP_FAILED", esp_err_to_name(stop_result));
+                    }
+                }
             }
         } else if (g_has_credentials.load() && !g_connection_pending.load() && g_initialized) {
             MarkStaOutageStarted();
@@ -255,19 +263,14 @@ void InternetCheckTask(void*) {
     while (true) {
         if (!g_connected.load()) {
             g_internet_available.store(false);
-            g_internet_stable_since_ticks.store(0);
             vTaskDelay(pdMS_TO_TICKS(1000));
             continue;
         }
 
+        // Persist router credentials as soon as STA has an IP. This is
+        // deliberately independent of DNS/TCP reachability to any AI server.
+        SavePendingCredentials();
         const bool available = ProbeXiaozhiServer();
-        const TickType_t now = xTaskGetTickCount();
-        if (available) {
-            TickType_t expected = 0;
-            g_internet_stable_since_ticks.compare_exchange_strong(expected, now == 0 ? 1 : now);
-        } else {
-            g_internet_stable_since_ticks.store(0);
-        }
         const bool previous = g_internet_available.exchange(available);
         if (available != previous) {
             if (available) {
@@ -280,46 +283,11 @@ void InternetCheckTask(void*) {
         }
 
         if (available) {
-            if (g_connection_pending.load()) {
-                std::string ssid, password;
-                {
-                    std::lock_guard<std::mutex> lock(g_pending_credentials_mutex);
-                    ssid = g_pending_ssid;
-                    password = g_pending_password;
-                }
-                const esp_err_t save_result = SaveCredentials(ssid, password);
-                if (save_result == ESP_OK) {
-                    g_connection_pending.store(false);
-                    g_has_credentials.store(true);
-                    g_wifi_setup_state.store(3);
-                    chatai::diagnostics::Add("WIFI", "OK", "Credentials saved after Internet verification");
-                    chatai::display::Notify("WI-FI", "Da co Internet");
-                } else {
-                    ESP_LOGE(kTag, "Could not save verified Wi-Fi credentials: %s",
-                             esp_err_to_name(save_result));
-                    g_wifi_setup_state.store(5);
-                }
-            }
-            if (g_provisioning_started.load() && !g_connection_pending.load()) {
-                const TickType_t stable_since = g_internet_stable_since_ticks.load();
-                if (stable_since != 0 &&
-                    now - stable_since >= pdMS_TO_TICKS(kInternetStableBeforeApStopMs)) {
-                    const esp_err_t stop_result = StopProvisioning();
-                    if (stop_result == ESP_OK) {
-                        chatai::diagnostics::Add(
-                            "WIFI_RECOVERY", "AP_STOPPED",
-                            "Internet remained available for 30000 ms");
-                    } else {
-                        chatai::diagnostics::Add(
-                            "WIFI_RECOVERY", "AP_STOP_FAILED", esp_err_to_name(stop_result));
-                    }
-                }
-            }
-        } else if (g_connection_pending.load() &&
-                   g_wifi_setup_state.load() == 2 &&
-                   (xTaskGetTickCount() - g_attempt_started_ticks.load()) > pdMS_TO_TICKS(30000)) {
+            if (g_has_credentials.load()) g_wifi_setup_state.store(3);
+        } else if (g_has_credentials.load()) {
+            // This probe targets api.tenclass.net only; it does not determine
+            // whether the router connection or LAN Web Admin is available.
             g_wifi_setup_state.store(5);
-            chatai::display::Notify("WI-FI", "Chua co Internet");
         }
 
         vTaskDelay(pdMS_TO_TICKS(available ? 10000 : 5000));
@@ -410,6 +378,27 @@ esp_err_t SaveCredentials(const std::string& ssid, const std::string& password) 
     if (result == ESP_OK) result = nvs_commit(handle);
     nvs_close(handle);
     return result;
+}
+
+void SavePendingCredentials() {
+    if (!g_connection_pending.load()) return;
+    std::lock_guard<std::mutex> lock(g_pending_credentials_mutex);
+    if (!g_connection_pending.load()) return;
+
+    const esp_err_t result = SaveCredentials(g_pending_ssid, g_pending_password);
+    if (result != ESP_OK) {
+        ESP_LOGE(kTag, "Could not save router Wi-Fi credentials: %s", esp_err_to_name(result));
+        chatai::diagnostics::Add("WIFI", "CREDENTIAL_SAVE_FAILED", esp_err_to_name(result));
+        chatai::display::Notify("WI-FI", "Loi luu cau hinh");
+        return;
+    }
+
+    g_connection_pending.store(false);
+    g_has_credentials.store(true);
+    g_wifi_setup_state.store(3);
+    chatai::diagnostics::Add("WIFI", "CREDENTIALS_SAVED",
+                             "Router credentials committed after STA received IPv4");
+    chatai::display::Notify("WI-FI", "Da luu mang nha");
 }
 
 int HexValue(char c) {
@@ -773,8 +762,8 @@ esp_err_t WifiStatusHandler(httpd_req_t* request) {
     const char* message = "Chưa cấu hình Wi-Fi.";
     switch (state) {
         case 1: message = "Đang kết nối router Wi-Fi..."; break;
-        case 2: message = "Đã nhận IP từ router; đang kiểm tra DNS và Internet..."; break;
-        case 3: message = "Đã kết nối Internet thành công."; break;
+        case 2: message = "Đã nhận IP từ router; đang lưu cấu hình Wi-Fi..."; break;
+        case 3: message = "Đã kết nối router và lưu cấu hình Wi-Fi. Máy chủ AI được kiểm tra riêng."; break;
         case 4:
             if (reason == WIFI_REASON_AUTH_FAIL ||
                 reason == WIFI_REASON_4WAY_HANDSHAKE_TIMEOUT ||
@@ -786,7 +775,7 @@ esp_err_t WifiStatusHandler(httpd_req_t* request) {
                 message = "Router không chấp nhận kết nối Wi-Fi. Anh kiểm tra mạng và thử lại.";
             }
             break;
-        case 5: message = "Đã kết nối router nhưng chưa truy cập được Internet. Điểm truy cập cấu hình vẫn hoạt động; thiết bị sẽ tiếp tục kiểm tra."; break;
+        case 5: message = "Wi-Fi nhà vẫn kết nối và đã lưu. Endpoint api.tenclass.net chưa truy cập được; Web Admin qua LAN vẫn độc lập."; break;
         default: break;
     }
     const std::string ip = chatai::network::NetworkManager::GetIpAddress();
@@ -962,7 +951,6 @@ void EventHandler(void*, esp_event_base_t event_base, int32_t event_id, void* ev
 
         const bool was_connected = g_connected.exchange(false);
         g_sta_connected_since_ticks.store(0);
-        g_internet_stable_since_ticks.store(0);
         g_internet_available.store(false);
         if (was_connected) NotifyConnectionState(false);
         const auto* disconnected = static_cast<const wifi_event_sta_disconnected_t*>(event_data);
@@ -1004,7 +992,6 @@ void EventHandler(void*, esp_event_base_t event_base, int32_t event_id, void* ev
     if (event_base == IP_EVENT && event_id == IP_EVENT_STA_GOT_IP) {
         const auto* event = static_cast<const ip_event_got_ip_t*>(event_data);
         g_next_reconnect_ticks.store(0);
-        g_internet_stable_since_ticks.store(0);
         const bool was_connected = g_connected.exchange(true);
         if (!was_connected) {
             TickType_t connected_since = xTaskGetTickCount();
@@ -1017,8 +1004,8 @@ void EventHandler(void*, esp_event_base_t event_base, int32_t event_id, void* ev
         chatai::diagnostics::Add("WIFI", "OK", "STA connected and received IPv4 address");
         if (g_connection_pending.load()) {
             g_wifi_setup_state.store(2);
-            g_attempt_started_ticks.store(xTaskGetTickCount());
-            chatai::display::Notify("WI-FI", "Dang kiem tra Internet");
+            chatai::display::Notify("WI-FI", "Dang luu mang Wi-Fi");
+            SavePendingCredentials();
         }
         return;
     }
@@ -1026,7 +1013,6 @@ void EventHandler(void*, esp_event_base_t event_base, int32_t event_id, void* ev
     if (event_base == IP_EVENT && event_id == IP_EVENT_STA_LOST_IP) {
         const bool was_connected = g_connected.exchange(false);
         g_sta_connected_since_ticks.store(0);
-        g_internet_stable_since_ticks.store(0);
         g_internet_available.store(false);
         if (was_connected) NotifyConnectionState(false);
         MarkStaOutageStarted();
@@ -1145,7 +1131,6 @@ esp_err_t NetworkManager::Connect(
     g_connection_pending.store(false);
     g_sta_outage_started_ticks.store(0);
     g_sta_connected_since_ticks.store(0);
-    g_internet_stable_since_ticks.store(0);
     g_next_ap_retry_ticks.store(0);
 
     // esp_wifi_disconnect() emits WIFI_EVENT_STA_DISCONNECTED asynchronously
@@ -1172,7 +1157,6 @@ esp_err_t NetworkManager::Connect(
     g_wifi_disconnect_reason.store(0);
     g_wifi_setup_state.store(1);
     g_connection_pending.store(true);
-    g_attempt_started_ticks.store(xTaskGetTickCount());
     g_reconnect_attempts = 0;
     const bool was_connected = g_connected.exchange(false);
     g_internet_available.store(false);
