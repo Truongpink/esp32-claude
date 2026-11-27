@@ -89,6 +89,7 @@ void NotifyConnectionState(bool connected) {
 }
 
 esp_err_t SaveCredentials(const std::string& ssid, const std::string& password);
+void SavePendingCredentials();
 esp_err_t StopProvisioning();
 esp_err_t StartProvisioning();
 
