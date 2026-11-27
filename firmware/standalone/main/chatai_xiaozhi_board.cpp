@@ -25,7 +25,8 @@ public:
     }
 
     void SetStatus(const char* status) override {
-        chatai::display::SetXiaozhiStatus(status);
+        // OLED reads the live XiaoZhi device state in its renderer.
+        (void)status;
     }
 
     void SetChatMessage(const char* role, const char* message) override {
