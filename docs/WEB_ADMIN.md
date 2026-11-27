@@ -80,19 +80,20 @@ GitHub Actions downloadable artifacts are wrapped in a ZIP container by the plat
 
 - **Layer 1 — Router Wi-Fi:** on boot, use credentials already stored in NVS directly without scanning. Connect to the home router, obtain an IPv4 address, and persist replacement SSID/password in NVS immediately after STA receives that address. Credential persistence must not wait for Internet access or any AI service. Failed replacement credentials must not overwrite the last saved credentials.
 - **Layer 2 — AI services:** XiaoZhi, Gemini, DNS, TLS, WebSocket, and API reachability are independent service states. A service failure must not erase credentials, disconnect STA, or disable LAN Web Admin.
-- **Layer 3 — Local administration:** keep Web Admin reachable through the router LAN while STA is connected, regardless of AI-server or WAN status. Retain or restore the setup SoftAP during provisioning/recovery; if saved credentials fail authentication, report the authentication failure and restore the setup AP immediately. Stop the setup AP only after STA has remained connected for 60 seconds; show the user the LAN IP and instruct the phone to join the same router network to continue Web Admin.
+- **Layer 3 — Local administration:** start the setup SoftAP on every boot, including when saved router credentials exist, and connect STA concurrently in APSTA mode. This gives the phone an immediate local management/recovery path after power-on. Keep Web Admin reachable through the router LAN while STA is connected, regardless of AI-server or WAN status. If STA disconnects or loses IPv4, restore the setup SoftAP immediately while STA reconnects; if AP startup fails, retry and record diagnostics. If saved credentials fail authentication, report the authentication failure and retain/restore the setup AP. Stop the setup AP only after STA has remained connected for 60 seconds; show the user the LAN IP and instruct the phone to join the same router network to continue Web Admin.
 - **OTA:** a locally supplied application BIN can be uploaded to the device over LAN or its setup SoftAP without external Internet access. Downloading a firmware file from an external host still requires Internet on the phone/source side.
 - **Portability:** reuse these architectural invariants on future ECC Shin platforms; adapt the implementation to each platform rather than copying ESP32-specific code.
 
 ### Required hardware validation before VERIFIED
 
-1. Connect to a router, confirm IPv4, and reboot; saved credentials must reconnect directly without scanning.
-2. Enter an incorrect replacement password; show an authentication error, restore/retain SoftAP, and keep the previous NVS credentials unchanged.
-3. Change the router's saved password; on next boot, detect authentication failure and restore SoftAP immediately so the user can scan/select the network and enter the new password.
-4. Verify the password visibility control on both the provisioning page and main Web Admin.
-5. Make XiaoZhi/Gemini unavailable or break DNS/TLS/WAN; STA and LAN Web Admin must remain available and the router status must remain connected.
-6. Upload a locally stored BIN through Web Admin over LAN/SoftAP; verify OTA separately.
-7. Disconnect the router, verify reconnect/recovery SoftAP, then restore the router.
-8. Confirm OTA preserves Wi-Fi and Gemini NVS settings.
+1. Connect to a router, confirm IPv4, and reboot; the setup SoftAP must appear immediately on every boot while saved credentials reconnect directly without scanning. After STA is stable for 60 seconds, confirm the AP stops and LAN Web Admin remains reachable.
+2. Disconnect the router after the AP has stopped; confirm the setup SoftAP is restored immediately while STA reconnects.
+3. Enter an incorrect replacement password; show an authentication error, restore/retain SoftAP, and keep the previous NVS credentials unchanged.
+4. Change the router's saved password; on next boot, detect authentication failure and retain the setup AP so the user can scan/select the network and enter the new password.
+5. Verify the password visibility control on both the provisioning page and main Web Admin.
+6. Make XiaoZhi/Gemini unavailable or break DNS/TLS/WAN; STA and LAN Web Admin must remain available and the router status must remain connected.
+7. Upload a locally stored BIN through Web Admin over LAN and separately over SoftAP; verify OTA separately on each path.
+8. Restore the router and confirm STA reconnects; verify SoftAP stops only after 60 seconds of stable STA.
+9. Confirm OTA preserves Wi-Fi and Gemini NVS settings.
 
 Only promote this standard to **VERIFIED** after recording firmware build, commit, test results, and device logs for all applicable checks.

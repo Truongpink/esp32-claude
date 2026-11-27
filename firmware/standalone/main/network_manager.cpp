@@ -1006,6 +1006,18 @@ void EventHandler(void*, esp_event_base_t event_base, int32_t event_id, void* ev
         ESP_LOGW(kTag, "Wi-Fi disconnected; reason=%d", reason);
         chatai::diagnostics::Add("WIFI", "DISCONNECTED", "station connection lost; reconnect worker scheduled");
         if (g_has_credentials.load()) {
+            // Restore the local management path immediately on router loss;
+            // do not wait for the 60-second STA stability/recovery timer.
+            const esp_err_t ap_result = StartProvisioning();
+            if (ap_result != ESP_OK) {
+                g_next_ap_retry_ticks.store(
+                    xTaskGetTickCount() + pdMS_TO_TICKS(kApStartRetryMs));
+                ESP_LOGE(kTag, "Could not restore setup AP after STA disconnect: %s",
+                         esp_err_to_name(ap_result));
+                chatai::diagnostics::Add(
+                    "WIFI_RECOVERY", "AP_DISCONNECT_RECOVERY_FAILED",
+                    esp_err_to_name(ap_result));
+            }
             const uint8_t attempt = g_reconnect_attempts.load();
             const uint32_t backoff_ms = std::min<uint32_t>(
                 1000u << std::min<unsigned>(attempt > 0 ? attempt - 1 : 0, 5), 30000u);
@@ -1053,6 +1065,18 @@ void EventHandler(void*, esp_event_base_t event_base, int32_t event_id, void* ev
         ESP_LOGW(kTag, "Wi-Fi station lost its IPv4 address");
         chatai::diagnostics::Add("WIFI", "FAIL", "station lost IPv4 address");
         if (g_has_credentials.load() && !g_connection_pending.load()) {
+            // Losing the router IP also restores SoftAP immediately so the
+            // phone can keep managing the device while STA reconnects.
+            const esp_err_t ap_result = StartProvisioning();
+            if (ap_result != ESP_OK) {
+                g_next_ap_retry_ticks.store(
+                    xTaskGetTickCount() + pdMS_TO_TICKS(kApStartRetryMs));
+                ESP_LOGE(kTag, "Could not restore setup AP after STA lost IP: %s",
+                         esp_err_to_name(ap_result));
+                chatai::diagnostics::Add(
+                    "WIFI_RECOVERY", "AP_LOST_IP_RECOVERY_FAILED",
+                    esp_err_to_name(ap_result));
+            }
             g_next_reconnect_ticks.store(xTaskGetTickCount() + pdMS_TO_TICKS(1000));
         }
     }
@@ -1119,12 +1143,11 @@ esp_err_t NetworkManager::Initialize() {
                   static_cast<unsigned long>(esp_random()));
     g_form_token = token;
 
-    // Start the setup AP before the HTTP server so a server startup
-    // failure cannot silently leave a first-boot device without its Wi-Fi AP.
-    if (!g_has_credentials) {
-        result = StartProvisioning();
-        if (result != ESP_OK) return result;
-    }
+    // Always start the setup AP alongside STA. This gives the user a
+    // local recovery/OTA path immediately after power-on, even when saved
+    // router credentials exist or the router is unavailable.
+    result = StartProvisioning();
+    if (result != ESP_OK) return result;
 
     result = StartHttpServer();
     if (result != ESP_OK) return result;
@@ -1139,9 +1162,11 @@ esp_err_t NetworkManager::Initialize() {
     }
 
     if (g_has_credentials) {
-        ESP_LOGI(kTag, "Wi-Fi station initialized; saved network will be connected");
+        ESP_LOGI(kTag, "Wi-Fi AP+STA initialized; setup AP is available while saved router connects");
+        chatai::diagnostics::Add("WIFI", "APSTA_READY",
+                                 "Setup AP active; saved router connection started independently");
     } else {
-        ESP_LOGI(kTag, "No saved Wi-Fi network; open setup AP started");
+        ESP_LOGI(kTag, "No saved Wi-Fi network; setup AP started for provisioning");
     }
     return ESP_OK;
 }
